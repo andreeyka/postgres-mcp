@@ -87,8 +87,8 @@ docker-compose up --build --force-recreate
 
 ## Access
 
-- **MCP server**: http://localhost:8000/mcp
-- **PostgreSQL**: 
+- **MCP server**: <http://localhost:8000/mcp>
+- **PostgreSQL**:
   - From host: `localhost:5432`
   - From Docker network: `postgres:5432`
   - Default user: `postgres` / Password: `postgres`
@@ -96,6 +96,7 @@ docker-compose up --build --force-recreate
 ## Network
 
 All services run in an isolated Docker network `mcp-network`.
+
 - Port 8000 for the MCP server is published externally
 - Port 5432 for PostgreSQL is published externally (for testing)
 - Services communicate via hostname `postgres` inside the network
@@ -106,6 +107,7 @@ The MCP server uses `docker/config.json` which is mounted as `/app/config.json` 
 This configuration includes all 4 test databases with their respective access modes.
 
 To modify the configuration:
+
 1. Edit `docker/config.json`
 2. Restart the MCP server: `docker-compose restart mcp-server`
 
@@ -124,6 +126,7 @@ ports:
 ### Database connection issues
 
 Check that PostgreSQL is healthy:
+
 ```bash
 docker-compose ps
 docker-compose logs postgres
@@ -132,11 +135,13 @@ docker-compose logs postgres
 ### MCP server not starting
 
 Check MCP server logs:
+
 ```bash
 docker-compose logs mcp-server
 ```
 
 Verify the config.json is valid:
+
 ```bash
 docker-compose exec mcp-server cat /app/config.json | python -m json.tool
 ```

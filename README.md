@@ -1,26 +1,5 @@
-<div align="center">
 
 # Postgres MCP Pro (FastMCP Fork)
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![PyPI - Version](https://img.shields.io/pypi/v/postgres-fastmcp)](https://pypi.org/project/postgres-fastmcp/)
-
-<h3>A Postgres MCP server with index tuning, explain plans, health checks, and safe SQL execution. Built on FastMCP.</h3>
-
-<p><em>Fork of <a href="https://github.com/crystaldba/postgres-fastmcp">postgres-fastmcp</a> rewritten to use <a href="https://gofastmcp.com/">FastMCP</a> framework</em></p>
-
-<div class="toc">
-  <a href="#overview">Overview</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#multi-server-architecture">Multi-Server Architecture</a> •
-  <a href="#technical-details">Technical Details</a> •
-  <a href="#mcp-api">MCP API</a> •
-  <a href="#configuration-examples">Configuration Examples</a> •
-  <a href="#development">Development</a>
-</div>
-
-</div>
 
 ## Overview
 
@@ -47,35 +26,10 @@ This fork of the original [postgres-fastmcp](https://github.com/crystaldba/postg
 ### Prerequisites
 
 Before getting started, ensure you have:
+
 1. Access credentials for your database
 2. Python 3.12 or higher
 3. `uv` for dependency management (recommended)
-
-### Installation
-
-#### Install via uv
-
-```bash
-# Install uv if not already installed
-curl -sSL https://astral.sh/uv/install.sh | sh
-
-# Install postgres-fastmcp
-uv pip install postgres-fastmcp
-```
-
-#### Install from source
-
-```bash
-# Clone the repository
-git clone https://github.com/your-username/postgres-fastmcp.git
-cd postgres-fastmcp
-
-# Install dependencies
-uv sync
-
-# Install package in development mode
-uv pip install -e .
-```
 
 ### Running the Server
 
@@ -86,6 +40,7 @@ The server can be run in several modes depending on your needs:
 For quick start with a single database, use CLI parameters:
 
 **HTTP mode:**
+
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
@@ -96,6 +51,7 @@ uv run postgres-fastmcp \
 ```
 
 **STDIO mode (for MCP clients like Claude Desktop):**
+
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
@@ -105,6 +61,7 @@ uv run postgres-fastmcp \
 ```
 
 **With custom tool prefix:**
+
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
@@ -119,6 +76,7 @@ uv run postgres-fastmcp \
 Create a `config.json` file in the current directory:
 
 **Basic multi-database configuration:**
+
 ```json
 {
     "name": "postgres-fastmcp",
@@ -144,6 +102,7 @@ Create a `config.json` file in the current directory:
 ```
 
 **With separate endpoints:**
+
 ```json
 {
     "name": "postgres-fastmcp",
@@ -171,6 +130,7 @@ Create a `config.json` file in the current directory:
 ```
 
 Then run:
+
 ```bash
 uv run postgres-fastmcp
 ```
@@ -196,6 +156,7 @@ uv run postgres-fastmcp
 #### 4. Mixed Configuration
 
 You can combine configuration sources. Priority order (highest to lowest):
+
 1. CLI parameters
 2. `config.json` file
 3. Environment variables
@@ -235,6 +196,7 @@ Determines SQL access level:
 | `full` | `unrestricted` | All (9) | Full access (DDL) | All |
 
 **Default values:**
+
 - `role`: `"user"` (default)
 - `access_mode`: `"restricted"` (default)
 - Default combination: `role="user"` + `access_mode="restricted"` (maximum security)
@@ -246,11 +208,13 @@ The server supports three transport types, each suitable for different use cases
 #### HTTP Transport
 
 HTTP transport allows running the server as a web application. This is ideal for:
+
 - Integration with web-based MCP clients (like Cursor)
 - Multiple clients connecting to the same server
 - Production deployments
 
 **Single database:**
+
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
@@ -284,6 +248,7 @@ Tools will be available as: `db1_list_objects`, `db2_list_objects`, etc.
 #### Streamable-HTTP Transport
 
 Streamable-HTTP provides streaming data transfer for large responses. This is useful for:
+
 - Large query results
 - Long-running operations
 - Real-time data streaming
@@ -291,6 +256,7 @@ Streamable-HTTP provides streaming data transfer for large responses. This is us
 **Note:** Currently, MCP tools do not use streaming. Streamable-HTTP transport is available for future use and protocol-level streaming support.
 
 **Global streamable-http transport:**
+
 ```json
 {
     "transport": "streamable-http",
@@ -308,6 +274,7 @@ Streamable-HTTP provides streaming data transfer for large responses. This is us
 ```
 
 **Per-server streamable-http transport (for servers with endpoint=true):**
+
 ```json
 {
     "transport": "http",
@@ -331,11 +298,13 @@ Each server can have its own transport type (`"http"` or `"streamable-http"`). W
 #### STDIO Transport
 
 STDIO transport is used for integration with MCP clients via standard input/output. This is ideal for:
+
 - Desktop MCP clients (like Claude Desktop)
 - Direct process communication
 - Development and testing
 
 **Single database:**
+
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
@@ -447,6 +416,7 @@ DATABASES__PRODUCTION__ACCESS_MODE=restricted
 For HTTP transport, configure Cursor in `~/.cursor/mcp.json`:
 
 **Single database:**
+
 ```json
 {
     "mcpServers": {
@@ -459,6 +429,7 @@ For HTTP transport, configure Cursor in `~/.cursor/mcp.json`:
 ```
 
 **Multiple databases with separate endpoints:**
+
 ```json
 {
     "mcpServers": {
@@ -475,6 +446,7 @@ For HTTP transport, configure Cursor in `~/.cursor/mcp.json`:
 ```
 
 **Multiple databases with Server Composition (single endpoint with prefixes):**
+
 ```json
 {
     "mcpServers": {
@@ -493,6 +465,7 @@ Tools will be available as: `production_list_objects`, `development_list_objects
 For stdio transport, configure Claude Desktop in `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 **Single database:**
+
 ```json
 {
     "mcpServers": {
@@ -508,6 +481,7 @@ For stdio transport, configure Claude Desktop in `~/Library/Application Support/
 ```
 
 **Multiple databases:**
+
 ```json
 {
     "mcpServers": {
@@ -538,6 +512,7 @@ The server supports two mounting modes for multiple databases:
 When `endpoint=false` (default), all databases are mounted in the main endpoint using FastMCP's Server Composition feature. Tools are automatically prefixed with the server name to prevent conflicts.
 
 **Configuration:**
+
 ```json
 {
     "transport": "http",
@@ -555,6 +530,7 @@ When `endpoint=false` (default), all databases are mounted in the main endpoint 
 ```
 
 **Result:**
+
 - All tools available at: `http://localhost:8000/mcp`
 - Tools prefixed: `production_list_objects`, `development_list_objects`, etc.
 - Single endpoint for all databases
@@ -564,6 +540,7 @@ When `endpoint=false` (default), all databases are mounted in the main endpoint 
 When `endpoint=true`, each database gets its own HTTP endpoint. This allows different transport types per server and better isolation.
 
 **Configuration:**
+
 ```json
 {
     "transport": "http",
@@ -583,6 +560,7 @@ When `endpoint=true`, each database gets its own HTTP endpoint. This allows diff
 ```
 
 **Result:**
+
 - App1 tools at: `http://localhost:8000/app1/mcp`
 - App2 tools at: `http://localhost:8000/app2/mcp`
 - Each endpoint can have different transport types
@@ -593,6 +571,7 @@ When `endpoint=true`, each database gets its own HTTP endpoint. This allows diff
 Tool prefixes are automatically added based on the server name to prevent conflicts when multiple MCP servers are connected to a single agent.
 
 **Rules:**
+
 - Single server with no explicit prefix: no prefix (tools: `list_objects`, `execute_sql`)
 - Single server with explicit prefix: uses prefix (tools: `mydb_list_objects`, `mydb_execute_sql`)
 - Multiple servers: always prefixed with server name (tools: `db1_list_objects`, `db2_list_objects`)
@@ -615,6 +594,7 @@ This fork has been completely rewritten on top of [FastMCP](https://gofastmcp.co
 The project supports working with multiple databases simultaneously. Each database is configured separately with its own access mode and connection parameters.
 
 When using HTTP transport with multiple databases configured:
+
 - With `endpoint=false`: tools available at main endpoint with prefixes (Server Composition)
 - With `endpoint=true`: each database gets its own endpoint at `/{server_name}/mcp`
 
@@ -680,6 +660,7 @@ If your Postgres database is running on a cloud provider managed service (AWS RD
 ### Installing Extensions on Self-Managed Postgres
 
 If you are managing your own Postgres installation, you may need to do additional work:
+
 - Before loading the `pg_stat_statements` extension, ensure it is listed in `shared_preload_libraries` in the Postgres configuration file
 - The `hypopg` extension may require additional system-level installation (e.g., via your package manager) because it does not always ship with Postgres
 
@@ -714,6 +695,7 @@ Separate production (read-only) and development (read-write) databases:
 ```
 
 Tools available at `http://localhost:8000/mcp`:
+
 - `production_list_objects`, `production_execute_sql` (read-only)
 - `development_list_objects`, `development_execute_sql` (read-write)
 
@@ -748,6 +730,7 @@ Each application gets its own endpoint:
 ```
 
 Endpoints:
+
 - Analytics: `http://localhost:8000/analytics/mcp` (streamable-http transport)
 - Main: `http://localhost:8000/main/mcp` (standard HTTP)
 
@@ -850,6 +833,7 @@ Ask your AI agent:
 ### Running Tests
 
 **Prerequisites:**
+
 - Docker must be installed and running
 - Docker images will be built automatically on first test run, or you can prepare them manually:
 
@@ -859,16 +843,19 @@ uv run python tests/prepare_docker_images.py
 ```
 
 **Run all tests:**
+
 ```bash
 uv run python -m pytest
 ```
 
 **Run specific test file:**
+
 ```bash
 uv run python -m pytest tests/unit/index/test_dta_calc.py -v
 ```
 
 **Run tests with real database (integration tests):**
+
 ```bash
 uv run python -m pytest tests/integration/ -v
 ```
@@ -894,13 +881,13 @@ uv run mypy src/
 
 This fork differs from the original [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) with the following key changes:
 
-| Original Project | This Fork |
+|Original Project|This Fork|
 |------------------|-----------|
-| Standard MCP implementation | FastMCP framework |
-| Single database per server | Multiple databases |
-| Modes: restricted/unrestricted | Modes: role (user/full) + access_mode (restricted/unrestricted) |
-| SSE transport only | HTTP, stdio, streamable-http |
-| Configuration via CLI/env | Configuration via config.json + env |
+|Standard MCP implementation|FastMCP framework|
+|Single database per server|Multiple databases|
+|Modes: restricted/unrestricted|Modes: role (user/full) + access_mode (restricted/unrestricted)|
+|SSE transport only|HTTP, stdio, streamable-http|
+|Configuration via CLI/env|Configuration via config.json + env|
 
 ## Technical Notes
 
@@ -911,6 +898,7 @@ The index tuning implementation follows the same approach as the original projec
 ### Database Health
 
 Database health checks are adapted from [PgHero](https://github.com/ankane/pghero) and include:
+
 - Index Health (unused, duplicate, bloated indexes)
 - Buffer Cache Hit Rate
 - Connection Health
@@ -926,6 +914,7 @@ The project uses [psycopg3](https://www.psycopg.org/) for asynchronous I/O conne
 ### Protected SQL Execution
 
 The project implements multi-layered SQL protection:
+
 - SQL parsing using `pglast` to detect and reject unsafe statements
 - Read-only transactions for restricted modes
 - Timeout limits for query execution
