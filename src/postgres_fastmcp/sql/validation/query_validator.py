@@ -1,0 +1,156 @@
+"""SQL query validator: parse and validate AST for safe execution."""
+
+import logging
+import re
+
+import pglast
+from pglast.ast import (
+    A_Const,
+    A_Expr,
+    CreateExtensionStmt,
+    DefElem,
+    ExplainStmt,
+    FuncCall,
+    Node,
+    RangeVar,
+    RawStmt,
+    SelectStmt,
+)
+from pglast.enums import A_Expr_Kind
+
+from postgres_fastmcp.sql.validation.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
+from postgres_fastmcp.sql.validation.schema_guard import validate_schema_access
+from postgres_fastmcp.sql.validation.statement_policies import ALLOWED_STMT_TYPES, DML_STMT_TYPES
+
+
+logger = logging.getLogger(__name__)
+
+PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
+
+
+class QueryValidator:
+    """Validates SQL query strings for safe execution (read-only or controlled DML)."""
+
+    def __init__(
+        self,
+        *,
+        allowed_schema: str | None = None,
+        table_prefix: str | None = None,
+        read_only: bool = True,
+    ) -> None:
+        """Initialize validator with schema/prefix and read-only policy.
+
+        Args:
+            allowed_schema: If set, only this schema is allowed.
+            table_prefix: If set with allowed_schema, table names must start with this.
+            read_only: If True, only read statements allowed; if False, DML allowed too.
+        """
+        self.allowed_schema = allowed_schema
+        self.table_prefix = table_prefix
+        self.read_only = read_only
+
+    def validate(self, query: str) -> None:
+        """Validate query; raise ValueError or TypeError if not safe.
+
+        Args:
+            query: SQL query string.
+
+        Raises:
+            ValueError: Query is not safe (e.g. DDL, disallowed function).
+            TypeError: Statement type not allowed.
+        """
+        try:
+            parsed = pglast.parse_sql(query)
+        except pglast.parser.ParseError as e:
+            raise ValueError("Failed to parse SQL statement") from e
+
+        allowed_stmt_types = set(ALLOWED_STMT_TYPES)
+        if not self.read_only:
+            allowed_stmt_types |= DML_STMT_TYPES
+
+        for stmt in parsed:
+            stmt_node = stmt.stmt if isinstance(stmt, RawStmt) else stmt
+            if not isinstance(stmt_node, tuple(allowed_stmt_types)):
+                if self.read_only:
+                    msg = (
+                        "Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other "
+                        "read-only statements are allowed. "
+                        f"Received: {type(stmt_node).__name__}"
+                    )
+                else:
+                    msg = (
+                        "Only SELECT, INSERT, UPDATE, DELETE, ANALYZE, VACUUM, EXPLAIN, "
+                        "SHOW and other allowed statements are permitted. "
+                        "DDL operations (CREATE, DROP, ALTER) are not allowed. "
+                        f"Received: {type(stmt_node).__name__}"
+                    )
+                raise TypeError(msg)
+
+            stmt_type_name = type(stmt_node).__name__
+            if ("Create" in stmt_type_name or "Drop" in stmt_type_name or "Alter" in stmt_type_name) and not isinstance(
+                stmt_node, CreateExtensionStmt
+            ):
+                raise ValueError(f"DDL operations are not allowed. Received: {stmt_type_name}")
+
+            self._validate_node(stmt)
+
+    def _validate_node(self, node: Node) -> None:
+        """Recursively validate AST node and children."""
+        allowed = set(ALLOWED_NODE_TYPES)
+        if not self.read_only:
+            allowed |= DML_STMT_TYPES
+
+        if not isinstance(node, tuple(allowed)):
+            raise TypeError(f"Node type {type(node)} is not allowed")
+
+        if isinstance(node, RangeVar):
+            validate_schema_access(
+                node,
+                allowed_schema=self.allowed_schema,
+                table_prefix=self.table_prefix,
+            )
+
+        if isinstance(node, A_Expr) and node.kind in (
+            A_Expr_Kind.AEXPR_LIKE,
+            A_Expr_Kind.AEXPR_ILIKE,
+        ):
+            if not (
+                isinstance(node.rexpr, A_Const)
+                and node.rexpr.val is not None
+                and hasattr(node.rexpr.val, "sval")
+                and node.rexpr.val.sval is not None
+            ):
+                raise ValueError("LIKE pattern must be a constant string")
+
+        if isinstance(node, FuncCall):
+            func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
+            match = PG_CATALOG_PATTERN.match(func_name)
+            unqualified = match.group(1) if match else func_name
+            if unqualified not in ALLOWED_FUNCTIONS:
+                raise ValueError(f"Function {func_name} is not allowed")
+
+        if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
+            raise ValueError("Locking clause on select is prohibited")
+
+        if isinstance(node, ExplainStmt):
+            for option in node.options or []:
+                if isinstance(option, DefElem) and option.defname == "analyze":
+                    raise ValueError("EXPLAIN ANALYZE is not supported")
+
+        if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
+            raise ValueError(f"CREATE EXTENSION {node.extname} is not supported")
+
+        for attr_name in node.__slots__:
+            if attr_name.startswith("_"):
+                continue
+            try:
+                attr = getattr(node, attr_name)
+            except AttributeError as e:
+                logger.debug("Attribute %s does not exist on %s: %s", attr_name, type(node).__name__, e)
+                continue
+            if isinstance(attr, (list, tuple)):
+                for item in attr:
+                    if isinstance(item, Node):
+                        self._validate_node(item)
+            elif isinstance(attr, Node):
+                self._validate_node(attr)

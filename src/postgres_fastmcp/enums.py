@@ -1,7 +1,5 @@
 """Types for MCP server configuration."""
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Literal
 
@@ -38,6 +36,13 @@ class TransportHttpApp(StrEnum):
     STREAMABLE_HTTP = "streamable-http"
 
 
+class ToolTag(StrEnum):
+    """Tags for tool filtering (basic vs full)."""
+
+    BASIC = "basic"
+    FULL = "full"
+
+
 class ToolName(StrEnum):
     """Available tool names."""
 
@@ -52,7 +57,7 @@ class ToolName(StrEnum):
     GET_TOP_QUERIES = "get_top_queries"
 
     @classmethod
-    def available_tools(cls) -> list[ToolName]:
+    def available_tools(cls) -> list["ToolName"]:
         """Get list of all available tools that can be enabled/disabled."""
         return [
             cls.LIST_SCHEMAS,
@@ -67,7 +72,17 @@ class ToolName(StrEnum):
         ]
 
     @classmethod
-    def admin_tools(cls) -> list[ToolName]:
+    def basic_tools(cls) -> list["ToolName"]:
+        """Get list of basic tools (available for both USER and FULL roles)."""
+        return [
+            cls.LIST_OBJECTS,
+            cls.GET_OBJECT_DETAILS,
+            cls.EXPLAIN_QUERY,
+            cls.EXECUTE_SQL,
+        ]
+
+    @classmethod
+    def admin_tools(cls) -> list["ToolName"]:
         """Get list of admin tools that are only available for FULL role."""
         return [
             cls.LIST_SCHEMAS,

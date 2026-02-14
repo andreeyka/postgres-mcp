@@ -27,7 +27,6 @@
         },
         "caching": {
             "enabled": true,
-            "use_redis": false,
             "max_item_size": 1048576,
             "call_tool_ttl": 300,
             "read_resource_ttl": 300,

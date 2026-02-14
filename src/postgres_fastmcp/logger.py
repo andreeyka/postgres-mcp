@@ -1,7 +1,5 @@
 """Module for configuring logging with Rich."""
 
-from __future__ import annotations
-
 import logging
 from typing import Literal
 
