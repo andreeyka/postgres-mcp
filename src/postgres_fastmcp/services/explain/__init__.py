@@ -1,1 +1,1 @@
-"""PostgreSQL explain plan tools."""
+"""Инструменты EXPLAIN планов PostgreSQL."""

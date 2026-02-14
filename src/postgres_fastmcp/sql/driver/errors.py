@@ -1,19 +1,19 @@
-"""SQL driver and connection errors.
+"""Ошибки SQL-драйвера и подключения.
 
-All errors inherit from BaseApplicationError per project error handling rules.
+Все ошибки наследуются от BaseApplicationError по правилам обработки ошибок проекта.
 """
 
 from postgres_fastmcp.common.errors import BaseApplicationError
 
 
 class ConnectionFailedError(BaseApplicationError):
-    """Database connection or pool initialization failed."""
+    """Сбой подключения к базе данных или инициализации пула."""
 
     def __init__(self, error_details: str | None) -> None:
-        """Initialize with connection error details (e.g. obfuscated message).
+        """Инициализация с деталями ошибки подключения (например, обфусцированное сообщение).
 
         Args:
-            error_details: Connection error details (passwords obfuscated).
+            error_details: Детали ошибки подключения (пароли обфусцированы).
         """
         message = f"Connection attempt failed: {error_details}"
         super().__init__(message)

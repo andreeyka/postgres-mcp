@@ -1,1 +1,1 @@
-"""Objects module: catalog listing (tables, views, sequences, extensions) and details."""
+"""Модуль объектов: каталог (таблицы, представления, последовательности, расширения) и детали."""

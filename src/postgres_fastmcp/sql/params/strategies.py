@@ -1,4 +1,4 @@
-"""Strategies for replacing $N parameters with concrete values from stats or context."""
+"""Стратегии замены параметров $N конкретными значениями из статистики или контекста."""
 
 import re
 from typing import Any
@@ -8,7 +8,7 @@ MIN_HISTOGRAM_BOUNDS = 3
 
 
 def parse_pg_array_value(value: str) -> Any:  # noqa: ANN401
-    """Parse a single value from a PostgreSQL array literal (e.g. from pg_stats)."""
+    """Разбор одного значения из PostgreSQL массива (например, из pg_stats)."""
     value = value.strip()
     if value == "null":
         return None
@@ -23,7 +23,7 @@ def parse_pg_array_value(value: str) -> Any:  # noqa: ANN401
 
 
 def get_bound_values(stats: dict[str, Any], *, is_lower: bool) -> Any:  # noqa: ANN401
-    """Return a bound value for BETWEEN from column stats (lower or upper)."""
+    """Возвращает граничное значение для BETWEEN из статистики столбца (нижнее или верхнее)."""
     data_type = (stats.get("data_type") or "").lower()
     common_vals = stats.get("common_vals")
     common_freqs = stats.get("common_freqs")
@@ -73,7 +73,7 @@ def get_bound_values(stats: dict[str, Any], *, is_lower: bool) -> Any:  # noqa: 
 
 
 def get_replacement_value(stats: dict[str, Any], context: str) -> str:
-    """Return a replacement value string from column stats and query context."""
+    """Возвращает строку замены из статистики столбца и контекста запроса."""
     data_type = (stats.get("data_type") or "").lower()
     common_vals = stats.get("common_vals")
     histogram_bounds = stats.get("histogram_bounds")
@@ -106,7 +106,7 @@ def get_replacement_value(stats: dict[str, Any], context: str) -> str:
 
 
 def get_generic_replacement(context: str) -> str:
-    """Return a generic replacement when column type is unknown."""
+    """Возвращает общую замену когда тип столбца неизвестен."""
     ctx = context.lower()
     if any(w in ctx.split() for w in ["date", "timestamp", "time"]):
         return "'2023-01-01'"
@@ -122,7 +122,7 @@ def get_generic_replacement(context: str) -> str:
 
 
 def context_replace(match: re.Match[str], op: str) -> str:
-    """Replace a single $N match based on column name context."""
+    """Замена одного $N на основе контекста имени столбца."""
     col_name = match.group(1).lower()
     if col_name.endswith(("id", "_id")) or col_name == "id":
         return f"{col_name} {op} 46"

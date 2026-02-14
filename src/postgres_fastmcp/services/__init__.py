@@ -1,1 +1,1 @@
-"""Services layer for PostgreSQL MCP tools."""
+"""Слой сервисов для инструментов PostgreSQL MCP."""

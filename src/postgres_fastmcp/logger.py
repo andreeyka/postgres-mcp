@@ -1,4 +1,4 @@
-"""Module for configuring logging with Rich."""
+"""Модуль для настройки логирования с использованием Rich."""
 
 import logging
 from typing import Literal
@@ -16,15 +16,16 @@ def configure_logging(  # noqa: PLR0913
     tracebacks_max_frames: int = 3,
     disable: bool = False,
 ) -> None:
-    """Configure logging with Rich.
+    """Настроить логирование с использованием Rich.
 
     Args:
-        level: Log level.
-        omit_repeated_times: Omit repeated timestamps.
-        show_path: Show file path in logs.
-        rich_tracebacks: Enable rich tracebacks.
-        tracebacks_max_frames: Maximum number of frames in traceback.
-        disable: If True, disable all logging (useful for stdio mode to avoid interfering with MCP protocol).
+        level: Уровень логирования.
+        omit_repeated_times: Не отображать повторяющиеся метки времени.
+        show_path: Показывать путь файла в логах.
+        rich_tracebacks: Включить красивые трассировки.
+        tracebacks_max_frames: Максимальное количество кадров в трассировке.
+        disable: Если True, отключить все логирование (полезно для режима stdio,
+                 чтобы не мешать протоколу MCP).
     """
     # Get root logger
     root_logger = logging.getLogger()
@@ -73,12 +74,12 @@ def configure_logging(  # noqa: PLR0913
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a logger with the specified name.
+    """Получить логгер с указанным именем.
 
     Args:
-        name: Logger name (usually __name__ of the module).
+        name: Имя логгера (обычно __name__ модуля).
 
     Returns:
-        Configured logger.
+        Настроенный логгер.
     """
     return logging.getLogger(name)

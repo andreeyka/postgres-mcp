@@ -10,6 +10,9 @@ from postgres_fastmcp.services.health.service import HealthService
 def get_health_service(db: DbAccessService = DbAccessServiceProvider) -> HealthService:
     """Получить сервис для проверки здоровья БД.
 
+    Args:
+        db: Сервис доступа к БД.
+
     Returns:
         Экземпляр HealthService.
     """

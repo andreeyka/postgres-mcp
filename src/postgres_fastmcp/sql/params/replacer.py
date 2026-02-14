@@ -1,4 +1,4 @@
-"""Parameter replacer: replace $1, $2, ... with values from pg_stats or context."""
+"""Замена параметров $1, $2, ... значениями из pg_stats или контекста."""
 
 import logging
 import re
@@ -54,7 +54,7 @@ ORDER BY table_name, ordinal_position
 
 
 class SqlParamReplacer:
-    """Replaces $N placeholders using column statistics and context. Implements ParamReplacerPort."""
+    """Заменяет параметры $N с использованием статистики столбцов и контекста. Реализует ParamReplacerPort."""
 
     def __init__(
         self,
@@ -72,12 +72,12 @@ class SqlParamReplacer:
         self._column_stats_cache: dict[str, dict[str, Any] | None] = {}
 
     async def _run_param_query(self, query: str, params: list[Any]) -> list[RowResult] | None:
-        """Execute a parameterized query (render then execute)."""
+        """Выполнение параметризованного запроса (рендеринг затем выполнение)."""
         rendered = self._template.render(query, params)
         return await self._executor.execute(rendered, params=None, readonly=True)
 
     async def _get_column_statistics(self, table_name: str, column_name: str) -> dict[str, Any] | None:
-        """Fetch column stats from pg_stats; cache result."""
+        """Получение статистики столбцов из pg_stats; кэширование результата."""
         cache_key = f"{table_name}.{column_name}"
         if cache_key in self._column_stats_cache:
             return self._column_stats_cache[cache_key]
@@ -100,7 +100,7 @@ class SqlParamReplacer:
             return self._column_stats_cache[cache_key]
 
     def _identify_parameter_column(self, context: str, table_columns: dict[str, set[str]]) -> tuple[str, str] | None:
-        """Identify (table, column) for a parameter from surrounding context."""
+        """Определение (таблица, столбец) для параметра из окружающего контекста."""
         for table, columns in table_columns.items():
             for column in columns:
                 patterns = [
@@ -119,7 +119,7 @@ class SqlParamReplacer:
         return None
 
     def _replace_parameters_generic(self, query: str) -> str:
-        """Fallback replacement when we cannot resolve columns."""
+        """Резервная замена когда не удается разрешить столбцы."""
         try:
             modified = re.sub(r"like \$\d+", "like '%'", query)
             modified = re.sub(r"(\w+)\s*=\s*\$\d+", lambda m: context_replace(m, "="), modified)
@@ -138,7 +138,7 @@ class SqlParamReplacer:
             return modified
 
     async def replace_parameters(self, query: str) -> str:  # noqa: C901
-        """Replace $N placeholders with values from stats or context. Raises ValueError on error."""
+        """Замена параметров $N значениями из статистики или контекста. Вызывает ValueError при ошибке."""
         try:
             modified_query = query
             param_matches = list(re.finditer(r"\$\d+", query))
@@ -230,7 +230,7 @@ class SqlParamReplacer:
             return modified_query
 
     def extract_columns(self, query: str, column_cache: dict[str, set[str]] | None = None) -> dict[str, set[str]]:
-        """Extract table -> columns from query (delegate to ast.extraction)."""
+        """Извлечение таблицы -> столбцов из запроса (делегирование в ast.extraction)."""
         return extract_columns(query, column_cache=column_cache)
 
     def extract_stmt_columns(
@@ -238,11 +238,11 @@ class SqlParamReplacer:
         stmt: Any,  # noqa: ANN401  SelectStmt from pglast
         column_cache: dict[str, set[str]] | None = None,
     ) -> dict[str, set[str]]:
-        """Extract table -> columns from SelectStmt (delegate to ast)."""
+        """Извлечение таблицы -> столбцов из SelectStmt (делегирование в ast)."""
         return extract_stmt_columns(stmt, column_cache=column_cache)
 
     async def build_column_cache(self, tables: set[str], schema: str = "public") -> dict[str, set[str]]:
-        """Build table -> set of column names from information_schema."""
+        """Создание таблицы -> множества имен столбцов из information_schema."""
         if not tables:
             return {}
         column_cache: dict[str, set[str]] = {}

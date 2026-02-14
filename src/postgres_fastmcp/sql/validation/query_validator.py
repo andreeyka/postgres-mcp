@@ -1,4 +1,4 @@
-"""SQL query validator: parse and validate AST for safe execution."""
+"""Валидатор SQL запросов: разбор и валидация AST для безопасного выполнения."""
 
 import logging
 import re
@@ -29,7 +29,7 @@ PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
 
 
 class QueryValidator:
-    """Validates SQL query strings for safe execution (read-only or controlled DML)."""
+    """Валидация строк SQL запросов для безопасного выполнения (только чтение или контролируемый DML)."""
 
     def __init__(
         self,
@@ -50,14 +50,14 @@ class QueryValidator:
         self.read_only = read_only
 
     def validate(self, query: str) -> None:
-        """Validate query; raise ValueError or TypeError if not safe.
+        """Валидация запроса; вызывает ValueError или TypeError если не безопасно.
 
         Args:
-            query: SQL query string.
+            query: Строка SQL запроса.
 
         Raises:
-            ValueError: Query is not safe (e.g. DDL, disallowed function).
-            TypeError: Statement type not allowed.
+            ValueError: Запрос не безопасен (например, DDL, запрещенная функция).
+            TypeError: Тип оператора не разрешен.
         """
         try:
             parsed = pglast.parse_sql(query)
@@ -95,7 +95,7 @@ class QueryValidator:
             self._validate_node(stmt)
 
     def _validate_node(self, node: Node) -> None:
-        """Recursively validate AST node and children."""
+        """Рекурсивная валидация AST узла и его детей."""
         allowed = set(ALLOWED_NODE_TYPES)
         if not self.read_only:
             allowed |= DML_STMT_TYPES

@@ -1,1 +1,1 @@
-"""Index optimization and tuning tools for PostgreSQL."""
+"""Инструменты оптимизации и настройки индексов для PostgreSQL."""

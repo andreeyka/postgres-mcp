@@ -6,15 +6,15 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 @dataclass
 class ConnectionHealthMetrics:
-    """Metrics for database connection health check.
+    """Метрики для проверки состояния соединений базы данных.
 
     Attributes:
-        total_connections: Current total number of connections.
-        idle_connections: Current number of idle connections.
-        max_total_connections: Maximum allowed total connections.
-        max_idle_connections: Maximum allowed idle connections.
-        is_total_connections_healthy: Whether total connections are within limits.
-        is_idle_connections_healthy: Whether idle connections are within limits.
+        total_connections: Текущее общее количество соединений.
+        idle_connections: Текущее количество простаивающих соединений.
+        max_total_connections: Максимально допустимое общее количество соединений.
+        max_idle_connections: Максимально допустимое количество простаивающих соединений.
+        is_total_connections_healthy: Допустимо ли общее количество соединений.
+        is_idle_connections_healthy: Допустимо ли количество простаивающих соединений.
     """
 
     total_connections: int
@@ -26,16 +26,16 @@ class ConnectionHealthMetrics:
 
     @property
     def is_healthy(self) -> bool:
-        """Check if all connection metrics are healthy.
+        """Проверка всех метрик соединения на здоровье.
 
         Returns:
-            True if both total and idle connections are healthy.
+            True если общие и простаивающие соединения в допустимых пределах.
         """
         return self.is_total_connections_healthy and self.is_idle_connections_healthy
 
 
 class ConnectionHealthCalc:
-    """Calculator for database connection health checks."""
+    """Калькулятор для проверок состояния соединений базы данных."""
 
     def __init__(
         self,

@@ -1,4 +1,4 @@
-"""Extension availability and hypopg status. Implements ExtensionInspectorPort adapter."""
+"""Доступность расширений и статус hypopg. Реализует адаптер ExtensionInspectorPort."""
 
 import logging
 from typing import Any, Literal, cast
@@ -14,7 +14,7 @@ EXT_AVAILABLE_QUERY = "SELECT default_version FROM pg_available_extensions WHERE
 
 
 class ExtensionInspectorAdapter:
-    """Adapter that implements ExtensionInspectorPort using an executor and connection id."""
+    """Адаптер, реализующий ExtensionInspectorPort с использованием исполнителя и идентификатора подключения."""
 
     def __init__(
         self,
@@ -22,7 +22,7 @@ class ExtensionInspectorAdapter:
         template: Any,
         connection_id: str,
     ) -> None:
-        """Initialize with executor, template (for param queries), and connection id for cache."""
+        """Инициализация с исполнителем, шаблоном (для параметризованных запросов) и идентификатором подключения для кэша."""
         self._executor = executor
         self._template = template
         self._connection_id = connection_id
@@ -33,10 +33,10 @@ class ExtensionInspectorAdapter:
     async def check_postgres_version_requirement(self, min_version: int, feature_name: str) -> tuple[bool, str]:
         version = await self.get_postgres_version()
         if version >= min_version:
-            return True, f"PostgreSQL version {version} meets the requirement for {feature_name}"
+            return True, f"Версия PostgreSQL {version} соответствует требованию для {feature_name}"
         return False, (
-            f"This feature ({feature_name}) requires PostgreSQL {min_version} or later. "
-            f"Your current version is PostgreSQL {version or 'unknown'}."
+            f"Для этой функции ({feature_name}) требуется PostgreSQL {min_version} или выше. "
+            f"Ваша текущая версия PostgreSQL {version or 'неизвестна'}."
         )
 
     async def _run_param(self, query: str, params: list[Any]) -> list[Any] | None:

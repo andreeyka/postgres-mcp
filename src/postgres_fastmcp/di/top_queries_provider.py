@@ -12,6 +12,9 @@ def get_top_queries_service(
 ) -> TopQueriesService:
     """Получить сервис для топ запросов.
 
+    Args:
+        db: Сервис доступа к БД.
+
     Returns:
         Экземпляр TopQueriesService.
     """

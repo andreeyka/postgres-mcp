@@ -1,4 +1,4 @@
-"""Port and DTO for PostgreSQL extension inspection."""
+"""Порт и DTO для проверки расширений PostgreSQL."""
 
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -6,7 +6,7 @@ from typing import Literal, Protocol
 
 @dataclass
 class ExtensionStatus:
-    """Result of checking an extension."""
+    """Результат проверки расширения."""
 
     is_installed: bool
     is_available: bool
@@ -16,14 +16,14 @@ class ExtensionStatus:
 
 
 class ExtensionInspectorPort(Protocol):
-    """Port for PostgreSQL version and extension checks."""
+    """Порт для проверки версии PostgreSQL и расширений."""
 
     async def get_postgres_version(self) -> int:
-        """Return major PostgreSQL version (e.g. 16)."""
+        """Возвращает основную версию PostgreSQL (например, 16)."""
         ...
 
     async def check_postgres_version_requirement(self, min_version: int, feature_name: str) -> tuple[bool, str]:
-        """Return (meets_requirement, message)."""
+        """Возвращает (соответствие требованиям, сообщение)."""
         ...
 
     async def check_extension(
@@ -33,11 +33,11 @@ class ExtensionInspectorPort(Protocol):
         include_messages: bool = True,
         message_type: Literal["plain", "markdown"] = "plain",
     ) -> ExtensionStatus:
-        """Check if extension is installed or available."""
+        """Проверка, установлено ли расширение или доступно ли оно."""
         ...
 
     async def check_hypopg_installation_status(
         self, message_type: Literal["plain", "markdown"] = "markdown"
     ) -> tuple[bool, str]:
-        """Return (installed_ok, message) for hypopg extension."""
+        """Возвращает (установка успешна, сообщение) для расширения hypopg."""
         ...

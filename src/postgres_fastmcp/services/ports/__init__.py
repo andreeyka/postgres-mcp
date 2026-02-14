@@ -1,4 +1,4 @@
-"""Application ports (Protocols) for SQL execution, templating, param replacement, extensions."""
+"""Прикладные порты (Протоколы) для выполнения SQL, шаблонизации, замены параметров, расширений."""
 
 from postgres_fastmcp.services.ports.executor import QueryExecutorPort, QueryTemplatePort
 from postgres_fastmcp.services.ports.extensions import ExtensionInspectorPort, ExtensionStatus

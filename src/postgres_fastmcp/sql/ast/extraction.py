@@ -1,4 +1,4 @@
-"""Extract tables and columns from SQL query strings or AST."""
+"""Извлечение таблиц и столбцов из строк SQL запросов или AST."""
 
 import logging
 
@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def extract_tables_from_query(query: str) -> set[str]:
-    """Extract table names from a SELECT query.
+    """Извлечение имен таблиц из SQL SELECT запроса.
 
     Args:
-        query: SQL query string.
+        query: Строка SQL запроса.
 
     Returns:
-        Set of table names.
+        Множество имен таблиц.
     """
     try:
         parsed = parse_sql(query)
@@ -39,14 +39,14 @@ def extract_columns(
     query: str,
     column_cache: dict[str, set[str]] | None = None,
 ) -> dict[str, set[str]]:
-    """Extract table -> columns from a SELECT query.
+    """Извлечение таблицы -> столбцов из SQL SELECT запроса.
 
     Args:
-        query: SQL query string.
-        column_cache: Optional cache for column existence checks.
+        query: Строка SQL запроса.
+        column_cache: Необязательный кэш для проверок существования столбцов.
 
     Returns:
-        Dict mapping table name to set of column names.
+        Словарь, сопоставляющий имя таблицы с множеством имен столбцов.
     """
     try:
         parsed = parse_sql(query)
@@ -65,14 +65,14 @@ def extract_stmt_columns(
     stmt: SelectStmt,
     column_cache: dict[str, set[str]] | None = None,
 ) -> dict[str, set[str]]:
-    """Extract table -> columns from a SelectStmt node.
+    """Извлечение таблицы -> столбцов из узла SelectStmt.
 
     Args:
-        stmt: Parsed SelectStmt.
-        column_cache: Optional cache for column existence.
+        stmt: Разобранный SelectStmt.
+        column_cache: Необязательный кэш для существования столбцов.
 
     Returns:
-        Dict mapping table name to set of column names.
+        Словарь, сопоставляющий имя таблицы с множеством имен столбцов.
     """
     try:
         collector = ColumnCollector(column_cache=column_cache)
@@ -84,14 +84,14 @@ def extract_stmt_columns(
 
 
 def get_table_aliases(query: str, table_name: str) -> list[str]:
-    """Return list of aliases for the given table (including the table name itself).
+    """Возвращает список алиасов для заданной таблицы (включая само имя таблицы).
 
     Args:
-        query: SQL query string.
-        table_name: Table name to find aliases for.
+        query: Строка SQL запроса.
+        table_name: Имя таблицы для поиска алиасов.
 
     Returns:
-        List of alias names.
+        Список имен алиасов.
     """
     try:
         parsed = parse_sql(query)

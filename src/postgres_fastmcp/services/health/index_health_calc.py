@@ -5,7 +5,7 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 
 class IndexHealthCalc:
-    """Calculator for database index health checks."""
+    """Калькулятор для проверок состояния индексов базы данных."""
 
     _cached_indexes: list[dict[str, Any]] | None = None
 
@@ -13,10 +13,10 @@ class IndexHealthCalc:
         self.sql_driver = sql_driver
 
     async def invalid_index_check(self) -> str:
-        """Check for invalid indexes in the database.
+        """Проверка недействительных индексов в базе данных.
 
         Returns:
-            String describing any invalid indexes found.
+            Строка с описанием найденных недействительных индексов.
         """
         indexes = await self._indexes()
         # Check for invalid indexes being created
@@ -29,10 +29,10 @@ class IndexHealthCalc:
         )
 
     async def duplicate_index_check(self) -> str:
-        """Check for duplicate or redundant indexes in the database.
+        """Проверка дублирующихся или избыточных индексов в базе данных.
 
         Returns:
-            String describing any duplicate indexes found.
+            Строка с описанием найденных дублирующихся индексов.
         """
         indexes = await self._indexes()
         dup_indexes = []
@@ -90,13 +90,13 @@ class IndexHealthCalc:
         return "\n".join(result)
 
     async def index_bloat(self, min_size: int = 104857600) -> str:
-        """Check for bloated indexes that are larger than min_size bytes.
+        """Проверка индексов с раздуванием, превышающих размер min_size байт.
 
         Args:
-            min_size: Minimum size in bytes to consider an index as bloated (default 100MB).
+            min_size: Минимальный размер в байтах для считания индекса раздувшимся (по умолчанию 100MB).
 
         Returns:
-            String describing any bloated indexes found.
+            Строка с описанием найденных раздувшихся индексов.
         """
         bloated_indexes = await self.sql_driver.execute(
             """
@@ -251,10 +251,10 @@ class IndexHealthCalc:
         return "\n".join(result)
 
     async def _indexes(self) -> list[dict[str, Any]]:
-        """Get all indexes from the database.
+        """Получение всех индексов из базы данных.
 
         Returns:
-            List of index dictionaries with metadata.
+            Список словарей индексов с метаданными.
         """
         if self._cached_indexes:
             return self._cached_indexes
@@ -321,25 +321,25 @@ class IndexHealthCalc:
         return indexes
 
     def _index_covers(self, indexed_columns: list[str], columns: list[str]) -> bool:
-        """Check if indexed_columns cover the columns by comparing their prefixes.
+        """Проверка, покрывают ли indexed_columns столбцы путем сравнения их префиксов.
 
         Args:
-            indexed_columns: The columns of the potentially covering index
-            columns: The columns being checked for coverage
+            indexed_columns: Столбцы потенциально покрывающего индекса
+            columns: Столбцы, проверяемые на покрытие
 
         Returns:
-            True if indexed_columns cover columns, False otherwise
+            True если indexed_columns покрывают columns, False иначе
         """
         return indexed_columns[: len(columns)] == columns
 
     async def unused_indexes(self, max_scans: int = 50) -> str:
-        """Check for unused or rarely used indexes.
+        """Проверка неиспользуемых или редко используемых индексов.
 
         Args:
-            max_scans: Maximum number of scans to consider an index as unused (default 50).
+            max_scans: Максимальное количество сканирований для считания индекса неиспользуемым (по умолчанию 50).
 
         Returns:
-            String describing any unused indexes found.
+            Строка с описанием найденных неиспользуемых индексов.
         """
         unused = await self.sql_driver.execute(
             """

@@ -1,1 +1,1 @@
-"""SQL validation: policies, schema guard, query validator."""
+"""Валидация SQL: политики, охрана схемы, валидатор запросов."""

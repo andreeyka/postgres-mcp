@@ -6,12 +6,12 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 @dataclass
 class ReplicationSlot:
-    """Information about a replication slot.
+    """Информация о репликационном слоте.
 
     Attributes:
-        slot_name: Name of the replication slot.
-        database: Database name for the slot.
-        active: Whether the slot is currently active.
+        slot_name: Имя репликационного слота.
+        database: Имя базы данных для слота.
+        active: Активен ли слот в данный момент.
     """
 
     slot_name: str
@@ -21,13 +21,13 @@ class ReplicationSlot:
 
 @dataclass
 class ReplicationMetrics:
-    """Metrics for database replication health check.
+    """Метрики для проверки состояния репликации базы данных.
 
     Attributes:
-        is_replica: Whether this database is a replica.
-        replication_lag_seconds: Replication lag in seconds, None if not available.
-        is_replicating: Whether replication is currently active.
-        replication_slots: List of replication slots.
+        is_replica: Является ли эта база данных репликой.
+        replication_lag_seconds: Задержка репликации в секундах, None если недоступно.
+        is_replicating: Активна ли репликация в данный момент.
+        replication_slots: Список репликационных слотов.
     """
 
     is_replica: bool
@@ -37,9 +37,9 @@ class ReplicationMetrics:
 
 
 class ReplicationCalc:
-    """Calculator for database replication health checks."""
+    """Калькулятор для проверок состояния репликации базы данных."""
 
-    # PostgreSQL version constants (format: major*10000 + minor*100 + patch)
+    # Константы версий PostgreSQL (формат: major*10000 + minor*100 + patch)
     MIN_VERSION_REPLICATION_SLOTS = 90400  # PostgreSQL 9.4.0
     MIN_VERSION_WAL_FUNCTIONS = 100000  # PostgreSQL 10.0.0
 
@@ -49,10 +49,10 @@ class ReplicationCalc:
         self._feature_support: dict[str, bool] = {}
 
     async def replication_health_check(self) -> str:
-        """Check replication health including lag and slots.
+        """Проверка состояния репликации, включая задержку и слоты.
 
         Returns:
-            String describing the replication health status.
+            Строка с описанием состояния репликации.
         """
         metrics = await self._get_replication_metrics()
         result = []
@@ -96,10 +96,10 @@ class ReplicationCalc:
         return "\n".join(result)
 
     async def _get_replication_metrics(self) -> ReplicationMetrics:
-        """Get comprehensive replication metrics.
+        """Получение комплексной метрики репликации.
 
         Returns:
-            ReplicationMetrics object with all replication information.
+            Объект ReplicationMetrics со всей информацией о репликации.
         """
         return ReplicationMetrics(
             is_replica=await self._is_replica(),
@@ -109,20 +109,20 @@ class ReplicationCalc:
         )
 
     async def _is_replica(self) -> bool:
-        """Check if this database is a replica.
+        """Проверка, является ли эта база данных репликой.
 
         Returns:
-            True if the database is in recovery mode (replica), False otherwise.
+            True если база данных в режиме восстановления (реплика), False иначе.
         """
         result = await self.sql_driver.execute("SELECT pg_is_in_recovery()", params=None, readonly=True)
         result_list = [dict(x.cells) for x in result] if result is not None else []
         return bool(result_list[0]["pg_is_in_recovery"]) if result_list else False
 
     async def _get_replication_lag(self) -> float | None:
-        """Get replication lag in seconds.
+        """Получение задержки репликации в секундах.
 
         Returns:
-            Replication lag in seconds, or None if not available or not a replica.
+            Задержка репликации в секундах, или None если недоступна или не является репликой.
         """
         if not self._feature_supported("replication_lag"):
             return None
@@ -153,10 +153,10 @@ class ReplicationCalc:
             return None
 
     async def _get_replication_slots(self) -> list[ReplicationSlot]:
-        """Get information about replication slots.
+        """Получение информации о репликационных слотах.
 
         Returns:
-            List of ReplicationSlot objects.
+            Список объектов ReplicationSlot.
         """
         if await self._get_server_version() < self.MIN_VERSION_REPLICATION_SLOTS or not self._feature_supported(
             "replication_slots"
@@ -191,10 +191,10 @@ class ReplicationCalc:
             return []
 
     async def _is_replicating(self) -> bool:
-        """Check if replication is active.
+        """Проверка активности репликации.
 
         Returns:
-            True if replication is active, False otherwise.
+            True если репликация активна, False иначе.
         """
         if not self._feature_supported("replicating"):
             return False
@@ -208,10 +208,10 @@ class ReplicationCalc:
             return False
 
     async def _get_server_version(self) -> int:
-        """Get PostgreSQL server version as a number.
+        """Получение версии сервера PostgreSQL в виде числа.
 
         Returns:
-            Server version number (e.g. 100000 for version 10.0).
+            Номер версии сервера (например, 100000 для версии 10.0).
         """
         if self._server_version is None:
             result = await self.sql_driver.execute("SHOW server_version_num", params=None, readonly=True)
@@ -220,12 +220,12 @@ class ReplicationCalc:
         return self._server_version
 
     def _feature_supported(self, feature: str) -> bool:
-        """Check if a feature is supported and cache the result.
+        """Проверка поддержки функции и кэширование результата.
 
         Args:
-            feature: Feature name to check.
+            feature: Имя функции для проверки.
 
         Returns:
-            True if the feature is supported, False otherwise.
+            True если функция поддерживается, False иначе.
         """
         return self._feature_support.get(feature, True)

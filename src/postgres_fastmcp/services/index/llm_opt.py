@@ -1,4 +1,4 @@
-"""LLM-based index optimization implementation."""
+"""Имплементация оптимизации индексов на основе LLM."""
 
 import json
 import logging
@@ -24,58 +24,58 @@ logger = logging.getLogger(__name__)
 # We introduce a Pydantic index class to facilitate communication with the LLM
 # via MCP Context sampling.
 class Index(BaseModel):
-    """Pydantic model representing an index for LLM communication.
+    """Модель Pydantic для представления индекса при общении с LLM.
 
-    This class is used to facilitate structured communication with the LLM
-    via MCP Context sampling for index recommendations.
+    Этот класс используется для структурированного общения с LLM
+    через выборку контекста MCP для рекомендаций индексов.
     """
 
     table_name: str
     columns: tuple[str, ...]
 
     def __hash__(self) -> int:
-        """Calculate hash for the index.
+        """Вычислить хеш для индекса.
 
         Returns:
-            Hash value based on table name and columns.
+            Значение хеша на основе имени таблицы и столбцов.
         """
         return hash((self.table_name, self.columns))
 
     def __eq__(self, other: object) -> bool:
-        """Check equality with another object.
+        """Проверить равенство с другим объектом.
 
         Args:
-            other: Object to compare with.
+            other: Объект для сравнения.
 
         Returns:
-            True if objects are equal, False otherwise.
+            True если объекты равны, False иначе.
         """
         if not isinstance(other, Index):
             return False
         return self.table_name == other.table_name and self.columns == other.columns
 
     def to_index_recommendation(self) -> IndexRecommendation:
-        """Convert to IndexRecommendation.
+        """Преобразовать в IndexRecommendation.
 
         Returns:
-            IndexRecommendation instance.
+            Экземпляр IndexRecommendation.
         """
         return IndexRecommendation(table=self.table_name, columns=self.columns)
 
     def to_index_definition(self) -> IndexDefinition:
-        """Convert to IndexDefinition.
+        """Преобразовать в IndexDefinition.
 
         Returns:
-            IndexDefinition instance.
+            Экземпляр IndexDefinition.
         """
         return IndexDefinition(table=self.table_name, columns=self.columns)
 
 
 class IndexingAlternative(BaseModel):
-    """Pydantic model for LLM response containing alternative index configurations.
+    """Модель Pydantic для ответа LLM с альтернативными конфигурациями индексов.
 
-    This model represents the structured response from the LLM containing
-    multiple alternative sets of indexes to evaluate.
+    Эта модель представляет структурированный ответ от LLM, содержащий
+    несколько альтернативных наборов индексов для оценки.
     """
 
     alternatives: list[set[Index]]
@@ -83,10 +83,10 @@ class IndexingAlternative(BaseModel):
 
 @dataclass
 class ScoredIndexes:
-    """Data class representing a scored index configuration.
+    """Класс данных для представления оценённой конфигурации индексов.
 
-    Contains the indexes, execution cost, index size, and calculated
-    objective score for a particular index configuration.
+    Содержит индексы, стоимость выполнения, размер индексов и вычисленную
+    целевую оценку для конкретной конфигурации индексов.
     """
 
     indexes: set[Index]
@@ -96,7 +96,7 @@ class ScoredIndexes:
 
 
 class LLMOptimizerTool(IndexTuningBase):
-    """LLM-based index optimization tool."""
+    """Инструмент оптимизации индексов на основе LLM."""
 
     def __init__(
         self,
@@ -106,7 +106,7 @@ class LLMOptimizerTool(IndexTuningBase):
         max_no_progress_attempts: int = 5,
         pareto_alpha: float = 2.0,
     ) -> None:
-        """Initialize LLMOptimizerTool.
+        """Инициализация LLMOptimizerTool.
 
         Args:
             sql_driver: SQL executor for database access.

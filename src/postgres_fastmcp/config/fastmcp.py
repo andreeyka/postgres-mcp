@@ -1,29 +1,29 @@
-"""FastMCP configuration."""
+"""Конфигурация FastMCP."""
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class FastMCPSettings(BaseSettings):
-    """FastMCP settings."""
+    """Настройки FastMCP."""
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore")
 
-    server_name: str = Field(default="postgres-fastmcp", description="MCP server name (MCP_SERVER_NAME)")
+    server_name: str = Field(default="postgres-fastmcp", description="Имя MCP-сервера (MCP_SERVER_NAME)")
     instructions: str = Field(
         default=(
-            "MCP server for PostgreSQL: schema discovery, query execution, "
-            "EXPLAIN analysis, index recommendations, and database health checks."
+            "MCP-сервер для PostgreSQL: обнаружение схемы, выполнение запросов, "
+            "анализ EXPLAIN, рекомендации по индексам и проверка состояния базы данных."
         ),
-        description="Instructions describing the server's purpose for LLM clients (MCP_INSTRUCTIONS)",
+        description="Инструкции, описывающие назначение сервера для LLM-клиентов (MCP_INSTRUCTIONS)",
     )
     mask_error_details: bool = Field(
-        default=True, description="Mask internal error details for security (MCP_MASK_ERROR_DETAILS)"
+        default=True, description="Скрывает внутренние детали ошибок для безопасности (MCP_MASK_ERROR_DETAILS)"
     )
     return_errors_as_strings: bool = Field(
         default=True,
-        description="Return errors as strings in LLM responses instead of standard MCP errors",
+        description="Возвращает ошибки как строки в ответах LLM вместо стандартных ошибок MCP",
     )
     error_traceback_in_strings: bool = Field(
-        default=False, description="Include traceback in error strings when return_errors_as_strings=True"
+        default=False, description="Включает traceback в строках ошибок при return_errors_as_strings=True"
     )

@@ -1,4 +1,4 @@
-"""Common helpers for MCP tool registration."""
+"""Общие вспомогательные функции для регистрации MCP-инструментов."""
 
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.enums import AccessMode, UserRole

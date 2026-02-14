@@ -10,6 +10,9 @@ from postgres_fastmcp.services.objects.service import ObjectsService
 def get_objects_service(db: DbAccessService = DbAccessServiceProvider) -> ObjectsService:
     """Получить сервис для работы с объектами БД.
 
+    Args:
+        db: Сервис доступа к БД.
+
     Returns:
         Экземпляр ObjectsService.
     """

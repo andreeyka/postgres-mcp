@@ -1,1 +1,1 @@
-"""SQL execution module: run read-only or unrestricted SQL."""
+"""Модуль выполнения SQL: только чтение или неограниченный доступ."""

@@ -1,4 +1,4 @@
-"""Constants for MCP tool handlers (descriptions, errors, log messages)."""
+"""Константы для обработчиков MCP-инструментов (описания, ошибки, сообщения лога)."""
 
 from postgres_fastmcp.services.health.database_health import HealthType
 

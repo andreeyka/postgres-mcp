@@ -1,4 +1,4 @@
-"""Index definition model for hypothetical index creation."""
+"""Модель определения индекса для гипотетического создания индекса."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -6,17 +6,17 @@ from typing import Any
 
 @dataclass(frozen=True)
 class IndexDefinition:
-    """Immutable index configuration for hashing and CREATE INDEX generation."""
+    """Немутабельная конфигурация индекса для хеширования и генерации CREATE INDEX."""
 
     table: str
     columns: tuple[str, ...]
     using: str = "btree"
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary (e.g. for serialization).
+        """Преобразование в словарь (например, для сериализации).
 
         Returns:
-            Dict with table, columns, using, definition.
+            Словарь с table, columns, using, definition.
         """
         return {
             "table": self.table,
@@ -27,12 +27,12 @@ class IndexDefinition:
 
     @property
     def definition(self) -> str:
-        """SQL CREATE INDEX statement for this index."""
+        """SQL оператор CREATE INDEX для этого индекса."""
         return f"CREATE INDEX {self.name} ON {self.table} USING {self.using} ({', '.join(self.columns)})"
 
     @property
     def name(self) -> str:
-        """Generated index name from table, columns, and method."""
+        """Сгенерированное имя индекса из имени таблицы, столбцов и метода."""
         cleaned_columns = []
         for col in self.columns:
             cleaned = col.replace("(", "_").replace(")", "_").replace(" ", "_").replace(",", "_")
@@ -46,7 +46,9 @@ class IndexDefinition:
         return f"{base}{suffix}"
 
     def __str__(self) -> str:
+        """Строковое представление определения индекса."""
         return self.definition
 
     def __repr__(self) -> str:
+        """Точное строковое представление объекта IndexDefinition."""
         return f"IndexDefinition(table='{self.table}', columns={self.columns}, using='{self.using}')"

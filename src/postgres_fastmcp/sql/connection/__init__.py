@@ -1,1 +1,1 @@
-"""Connection pool and related configuration."""
+"""Пул соединений и связанная конфигурация."""

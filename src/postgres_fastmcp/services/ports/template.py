@@ -1,11 +1,11 @@
-"""Port for rendering parameterized queries to a single string."""
+"""Порт для рендеринга параметризованного запроса в одну строку."""
 
 from typing import Any, Protocol
 
 
 class QueryTemplatePort(Protocol):
-    """Protocol for substituting parameters into a query template."""
+    """Протокол для подстановки параметров в шаблон запроса."""
 
     def render(self, query: str, params: list[Any]) -> str:
-        """Return query string with params inlined (e.g. psycopg {} placeholders)."""
+        """Возвращает строку запроса с встроенными параметрами (например, psycopg {} плейсхолдеры)."""
         ...

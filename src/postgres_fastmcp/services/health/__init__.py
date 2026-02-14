@@ -1,1 +1,1 @@
-"""Health module: database health checks."""
+"""Модуль здоровья: проверки состояния базы данных."""

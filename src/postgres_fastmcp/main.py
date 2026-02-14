@@ -1,4 +1,4 @@
-"""Main entry point for the MCP server."""
+"""Точка входа в MCP сервер."""
 
 import sys
 
@@ -56,10 +56,10 @@ def main(  # noqa: PLR0913
     access_mode: str | None = None,
     role: str | None = None,
 ) -> None:
-    """Main function to start the server.
+    """Основная функция для запуска сервера.
 
-    Uses mcp.run(transport=...) for both stdio and HTTP modes.
-    Lifespan manager automatically closes resources via AsyncExitStack.
+    Использует mcp.run(transport=...) для обоих режимов: stdio и HTTP.
+    Менеджер жизненного цикла автоматически закрывает ресурсы через AsyncExitStack.
     """
     configure_logging(level="INFO", omit_repeated_times=False)
 

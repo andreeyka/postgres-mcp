@@ -1,4 +1,4 @@
-"""Database access service: pool, executor, and safe wrapper."""
+"""Сервис доступа к базе данных: пул, исполнитель и безопасная обертка."""
 
 from types import TracebackType
 from typing import Self
@@ -15,19 +15,19 @@ from postgres_fastmcp.sql.validation.query_validator import QueryValidator
 
 logger = get_logger(__name__)
 
-ERROR_DB_NOT_INITIALIZED = "Database connection is not initialized"
-ERROR_DB_URL_NOT_SET = "Database connection URL is not set"
-LOG_UNRESTRICTED = "Using unrestricted SqlExecutor (UNRESTRICTED mode)"
+ERROR_DB_NOT_INITIALIZED = "Соединение с базой данных не инициализировано"
+ERROR_DB_URL_NOT_SET = "URL подключения к базе данных не задан"
+LOG_UNRESTRICTED = "Используется SqlExecutor без ограничений (режим UNRESTRICTED)"
 
 
 class DbAccessService:
-    """Service for database access: pool and executor (plain or safe)."""
+    """Сервис доступа к базе данных: пул и исполнитель (обычный или безопасный)."""
 
     def __init__(self, config: DatabaseConfig) -> None:
-        """Initialize with database config.
+        """Инициализация с конфигурацией базы данных.
 
         Args:
-            config: Database configuration.
+            config: Конфигурация базы данных.
         """
         self.config = config
         self.access_mode = config.access_mode
@@ -40,7 +40,7 @@ class DbAccessService:
         self._executor: SqlExecutor | SafeSqlExecutor | None = None
 
     async def __aenter__(self) -> Self:
-        logger.debug("Entering DbAccessService context manager")
+        logger.debug("Вход в контекстный менеджер DbAccessService")
         return self
 
     async def __aexit__(
@@ -49,17 +49,17 @@ class DbAccessService:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        logger.debug("Exiting DbAccessService context manager, closing database connections")
+        logger.debug("Выход из контекстного менеджера DbAccessService, закрытие соединений с базой данных")
         if self.db_connection:
             try:
                 await self.db_connection.close()
-                logger.debug("Database connection pool closed successfully")
+                logger.debug("Пул подключений к базе данных успешно закрыт")
             except Exception as e:
-                logger.error("Error closing database connection pool: %s", e)
+                logger.error("Ошибка при закрытии пула подключений к базе данных: %s", e)
 
     @property
     def sql_driver(self) -> SqlExecutor | SafeSqlExecutor:
-        """Executor for SQL (plain or safe). Lazy-created, reused."""
+        """Исполнитель для SQL (обычный или безопасный). Создается лениво, переиспользуется."""
         if self._executor is not None:
             return self._executor
 
@@ -109,7 +109,7 @@ class DbAccessService:
 
     @property
     def connection_id(self) -> str:
-        """Stable id for this connection (e.g. for version/extension cache)."""
+        """Устойчивый идентификатор для этого соединения (например, для кэша версий/расширений)."""
         if not self.db_connection or not self.db_connection.connection_url:
             return ""
         return self.db_connection.connection_url

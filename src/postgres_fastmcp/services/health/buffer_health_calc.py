@@ -5,7 +5,7 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 
 class BufferHealthCalc:
-    """Calculator for database buffer cache health checks."""
+    """Калькулятор для проверок состояния кэша буферов базы данных."""
 
     _cached_indexes: list[dict[str, Any]] | None = None
 
@@ -13,13 +13,13 @@ class BufferHealthCalc:
         self.sql_driver = sql_driver
 
     async def index_hit_rate(self, threshold: float = 0.95) -> str:
-        """Calculate the index cache hit rate.
+        """Вычисление коэффициента попаданий в кэш индексов.
 
         Args:
-            threshold: Minimum hit rate threshold (default: 0.95).
+            threshold: Минимальный порог коэффициента попаданий (по умолчанию 0.95).
 
         Returns:
-            String describing the index cache hit rate as a percentage and comparison to threshold.
+            Строка с коэффициентом попаданий в кэш индексов в процентах и сравнением с порогом.
         """
         result = await self.sql_driver.execute(
             """
@@ -45,13 +45,13 @@ class BufferHealthCalc:
         return f"Index cache hit rate: {hit_rate:.1f}% (below {threshold_pct:.1f}% threshold)"
 
     async def table_hit_rate(self, threshold: float = 0.95) -> str:
-        """Calculate the table cache hit rate.
+        """Вычисление коэффициента попаданий в кэш таблиц.
 
         Args:
-            threshold: Minimum hit rate threshold (default: 0.95).
+            threshold: Минимальный порог коэффициента попаданий (по умолчанию 0.95).
 
         Returns:
-            String describing the table cache hit rate as a percentage and comparison to threshold.
+            Строка с коэффициентом попаданий в кэш таблиц в процентах и сравнением с порогом.
         """
         result = await self.sql_driver.execute(
             """

@@ -1,4 +1,4 @@
-"""Schema and table-prefix access checks for safe SQL."""
+"""Проверки доступа к схеме и префиксам таблиц для безопасного SQL."""
 
 from pglast.ast import RangeVar
 
@@ -9,15 +9,15 @@ def validate_schema_access(
     allowed_schema: str | None,
     table_prefix: str | None,
 ) -> None:
-    """Check that the table is in an allowed schema and matches optional prefix.
+    """Проверка того, что таблица находится в разрешенной схеме и соответствует необязательному префиксу.
 
     Args:
-        range_var: AST node for the table reference.
-        allowed_schema: If set, only this schema is allowed (e.g. 'public').
-        table_prefix: If set with allowed_schema, table name must start with this.
+        range_var: AST узел для ссылки на таблицу.
+        allowed_schema: Если задан, разрешена только эта схема (например, 'public').
+        table_prefix: Если задан вместе с allowed_schema, имена таблиц должны начинаться с этого.
 
     Raises:
-        ValueError: If schema or table is not allowed.
+        ValueError: Если схема или таблица не разрешена.
     """
     if not allowed_schema:
         return

@@ -1,7 +1,7 @@
-"""Custom exception classes for the application.
+"""Пользовательские классы исключений для приложения.
 
-All errors inherit from BaseApplicationError. Error messages are in English
-(consistent with tooling, search, and ops). See AGENTS.md Error Handling Rules.
+Все ошибки наследуются от BaseApplicationError. Сообщения об ошибках на английском
+(согласовано с инструментами, поиском и операциями). См. правила обработки ошибок в AGENTS.md.
 """
 
 
@@ -12,14 +12,14 @@ class BaseApplicationError(Exception):
         """Инициализация с сообщением об ошибке.
 
         Args:
-            message: Текст сообщения (на английском).
+            message: Текст сообщения.
         """
         super().__init__(message)
         self.message = message
 
 
 class SchemaAccessError(BaseApplicationError):
-    """Access to the requested schema is not allowed (e.g. user role, non-public schema)."""
+    """Доступ к запрашиваемой схеме не разрешен (например, роль пользователя или непубличная схема)."""
 
     def __init__(self, schema_name: str) -> None:
         """Инициализация с именем схемы.
@@ -33,7 +33,7 @@ class SchemaAccessError(BaseApplicationError):
 
 
 class UnsupportedObjectTypeError(BaseApplicationError):
-    """Requested object type is not supported."""
+    """Запрашиваемый тип объекта не поддерживается."""
 
     def __init__(self, object_type: str) -> None:
         """Инициализация с типом объекта.
@@ -47,35 +47,35 @@ class UnsupportedObjectTypeError(BaseApplicationError):
 
 
 class ExplainPlanError(BaseApplicationError):
-    """Error while generating or processing an EXPLAIN plan."""
+    """Ошибка при генерации или обработке плана EXPLAIN."""
 
     def __init__(self, message: str) -> None:
         """Инициализация с сообщением.
 
         Args:
-            message: Описание ошибки (на английском).
+            message: Описание ошибки.
         """
         super().__init__(message)
 
 
 class ExplainAnalyzeWithHypotheticalError(BaseApplicationError):
-    """Cannot use analyze and hypothetical indexes together."""
+    """Нельзя использовать analyze и гипотетические индексы вместе."""
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Cannot use analyze and hypothetical indexes together.")
+        super().__init__("Нельзя использовать analyze и гипотетические индексы вместе.")
 
 
 class EmptyQueriesError(BaseApplicationError):
-    """Empty list of queries provided where at least one is required."""
+    """Пустой список запросов, где требуется хотя бы один."""
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Please provide a non-empty list of queries to analyze.")
+        super().__init__("Пожалуйста, предоставьте непустой список запросов для анализа.")
 
 
 class QueriesLimitError(BaseApplicationError):
-    """Too many queries in the list (exceeds allowed limit)."""
+    """Слишком много запросов в списке (превышен допустимый лимит)."""
 
     def __init__(self, limit: int) -> None:
         """Инициализация с лимитом.
@@ -83,53 +83,53 @@ class QueriesLimitError(BaseApplicationError):
         Args:
             limit: Допустимое максимальное количество запросов.
         """
-        message = f"Please provide a list of up to {limit} queries to analyze."
+        message = f"Пожалуйста, предоставьте список не более чем из {limit} запросов для анализа."
         super().__init__(message)
         self.limit = limit
 
 
 class ContextRequiredError(BaseApplicationError):
-    """Context is required for this operation (e.g. LLM optimization)."""
+    """Контекст требуется для этой операции (например, оптимизация LLM)."""
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Context is required for LLM optimization method.")
+        super().__init__("Контекст требуется для метода оптимизации LLM.")
 
 
 class InvalidSortCriteriaError(BaseApplicationError):
-    """Invalid sort criteria for top queries."""
+    """Неверный критерий сортировки для топ-запросов."""
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.")
+        super().__init__("Неверный критерий сортировки. Пожалуйста, используйте 'resources', 'mean_time' или 'total_time'.")
 
 
 class SqlExecutionError(BaseApplicationError):
-    """Error executing SQL (e.g. no results, driver error)."""
+    """Ошибка выполнения SQL (например, нет результатов или ошибка драйвера)."""
 
     def __init__(self, message: str) -> None:
         """Инициализация с сообщением.
 
         Args:
-            message: Описание ошибки (на английском).
+            message: Описание ошибки.
         """
         super().__init__(message)
 
 
 class HypopgNotInstalledError(BaseApplicationError):
-    """HypoPG extension is not installed or not available."""
+    """Расширение HypoPG не установлено или недоступно."""
 
     def __init__(self, message: str) -> None:
         """Инициализация с сообщением.
 
         Args:
-            message: Текст от check_hypopg_installation_status.
+            message: Текст результата проверки установки HypoPG.
         """
         super().__init__(message)
 
 
 class InvalidHealthTypeError(BaseApplicationError):
-    """Invalid health check type(s) provided."""
+    """Предоставлен(ы) неверный тип(ы) проверки состояния."""
 
     def __init__(self, health_type: str, valid_values: str) -> None:
         """Инициализация.
@@ -139,9 +139,9 @@ class InvalidHealthTypeError(BaseApplicationError):
             valid_values: Список допустимых значений.
         """
         message = (
-            f"Invalid health types provided: '{health_type}'. "
-            f"Valid values are: {valid_values}. "
-            "Please try again with a comma-separated list of valid health types."
+            f"Предоставлен(ы) неверный тип(ы) проверки состояния: '{health_type}'. "
+            f"Допустимые значения: {valid_values}. "
+            "Пожалуйста, попробуйте снова с comma-разделенным списком допустимых типов проверки состояния."
         )
         super().__init__(message)
         self.health_type = health_type

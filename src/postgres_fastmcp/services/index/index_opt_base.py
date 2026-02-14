@@ -1,4 +1,4 @@
-"""Base classes and utilities for index optimization."""
+"""Базовые классы и утилиты для оптимизации индексов."""
 
 import json
 import logging
@@ -27,20 +27,20 @@ MAX_NUM_INDEX_TUNING_QUERIES = 10
 
 
 def pp_list(lst: list[Any]) -> str:
-    """Pretty print a list for debugging.
+    """Красиво вывести список для отладки.
 
     Args:
-        lst: List to pretty print.
+        lst: Список для красивого вывода.
 
     Returns:
-        Formatted string representation of the list.
+        Форматированная строка с представлением списка.
     """
     return ("\n  - " if len(lst) > 0 else "") + "\n  - ".join([str(item) for item in lst])
 
 
 @dataclass
 class IndexRecommendation:
-    """Represents a database index with size estimation and definition."""
+    """Представляет индекс базы данных с оценкой размера и определением."""
 
     _definition: IndexDefinition
     estimated_size_bytes: int = 0
@@ -54,14 +54,14 @@ class IndexRecommendation:
         estimated_size_bytes: int = 0,
         potential_problematic_reason: str | None = None,
     ) -> None:
-        """Initialize IndexRecommendation.
+        """Инициализация IndexRecommendation.
 
         Args:
-            table: Table name.
-            columns: Tuple of column names.
-            using: Index type (default: "btree").
-            estimated_size_bytes: Estimated size in bytes.
-            potential_problematic_reason: Reason if index is potentially problematic.
+            table: Имя таблицы.
+            columns: Кортеж имен столбцов.
+            using: Тип индекса (по умолчанию "btree").
+            estimated_size_bytes: Оценочный размер в байтах.
+            potential_problematic_reason: Причина если индекс потенциально проблематичен.
         """
         self._definition = IndexDefinition(table, columns, using)
         self.estimated_size_bytes = estimated_size_bytes
@@ -69,55 +69,55 @@ class IndexRecommendation:
 
     @property
     def index_definition(self) -> IndexDefinition:
-        """Get the index definition object.
+        """Получить объект определения индекса.
 
         Returns:
-            IndexDefinition object containing table, columns, and index type.
+            Объект IndexDefinition с именем таблицы, столбцами и типом индекса.
         """
         return self._definition
 
     @property
     def definition(self) -> str:
-        """Get the SQL definition string for this index.
+        """Получить строку SQL определения для этого индекса.
 
         Returns:
-            SQL CREATE INDEX statement string.
+            Строка с SQL CREATE INDEX.
         """
         return self._definition.definition
 
     @property
     def name(self) -> str:
-        """Get the generated index name.
+        """Получить сгенерированное имя индекса.
 
         Returns:
-            Index name string.
+            Строка с именем индекса.
         """
         return self._definition.name
 
     @property
     def columns(self) -> tuple[str, ...]:
-        """Get the column names for this index.
+        """Получить имена столбцов для этого индекса.
 
         Returns:
-            Tuple of column names.
+            Кортеж имен столбцов.
         """
         return self._definition.columns
 
     @property
     def table(self) -> str:
-        """Get the table name for this index.
+        """Получить имя таблицы для этого индекса.
 
         Returns:
-            Table name string.
+            Строка с именем таблицы.
         """
         return self._definition.table
 
     @property
     def using(self) -> str:
-        """Get the index type (e.g., 'btree', 'hash').
+        """Получить тип индекса (например, 'btree', 'hash').
 
         Returns:
-            Index type string.
+            Строка с типом индекса.
         """
         return self._definition.using
 
@@ -138,7 +138,7 @@ class IndexRecommendation:
 
 @dataclass
 class IndexRecommendationAnalysis:
-    """Represents a recommended index with benefit estimation."""
+    """Представляет рекомендованный индекс с оценкой выгоды."""
 
     index_recommendation: IndexRecommendation
 
@@ -151,79 +151,79 @@ class IndexRecommendationAnalysis:
 
     @property
     def table(self) -> str:
-        """Get the table name for this index recommendation.
+        """Получить имя таблицы для этой рекомендации индекса.
 
         Returns:
-            Table name string.
+            Строка с именем таблицы.
         """
         return self.index_recommendation.table
 
     @property
     def columns(self) -> tuple[str, ...]:
-        """Get the column names for this index recommendation.
+        """Получить имена столбцов для этой рекомендации индекса.
 
         Returns:
-            Tuple of column names.
+            Кортеж имен столбцов.
         """
         return self.index_recommendation.columns
 
     @property
     def using(self) -> str:
-        """Get the index type for this recommendation.
+        """Получить тип индекса для этой рекомендации.
 
         Returns:
-            Index type string (e.g., 'btree', 'hash').
+            Строка с типом индекса (например, 'btree', 'hash').
         """
         return self.index_recommendation.using
 
     @property
     def progressive_improvement_multiple(self) -> float:
-        """Calculate the progressive percentage improvement from this recommendation.
+        """Вычислить процентное улучшение по прогрессивной рекомендации.
 
         Returns:
-            Improvement multiple as a float.
+            Множитель улучшения как число с плавающей точкой.
         """
         return calculate_improvement_multiple(self.progressive_base_cost, self.progressive_recommendation_cost)
 
     @property
     def potential_problematic_reason(self) -> str | None:
-        """Get the reason if this index is potentially problematic.
+        """Получить причину если индекс потенциально проблематичен.
 
         Returns:
-            Problem description string or None if no issues.
+            Строка с описанием проблемы или None если нет проблем.
         """
         return self.index_recommendation.potential_problematic_reason
 
     @property
     def estimated_size_bytes(self) -> int:
-        """Get the estimated size of this index in bytes.
+        """Получить оценочный размер этого индекса в байтах.
 
         Returns:
-            Estimated size in bytes.
+            Оценочный размер в байтах.
         """
         return self.index_recommendation.estimated_size_bytes
 
     @property
     def individual_improvement_multiple(self) -> float:
-        """Calculate the individual percentage improvement from this recommendation.
+        """Вычислить процентное улучшение по индивидуальной рекомендации.
 
         Returns:
-            Improvement multiple as a float.
+            Множитель улучшения как число с плавающей точкой.
         """
         return calculate_improvement_multiple(self.individual_base_cost, self.individual_recommendation_cost)
 
     def to_index(self) -> IndexRecommendation:
-        """Convert this analysis to an IndexRecommendation.
+        """Преобразовать этот анализ в IndexRecommendation.
 
         Returns:
-            IndexRecommendation object.
+            Объект IndexRecommendation.
         """
         return self.index_recommendation
 
 
 @dataclass
 class IndexTuningResult:
-    """Results of index tuning analysis."""
+    """Результаты анализа настройки индексов."""
 
     # Session ID for tracing
     session_id: str
@@ -242,30 +242,30 @@ class IndexTuningResult:
 def candidate_str(
     indexes: Iterable[IndexDefinition] | Iterable[IndexRecommendation] | Iterable[IndexRecommendationAnalysis],
 ) -> str:
-    """Convert indexes to a string representation.
+    """Преобразовать индексы в строковое представление.
 
     Args:
-        indexes: Iterable of index definitions or recommendations.
+        indexes: Итерируемый объект определений или рекомендаций индексов.
 
     Returns:
-        String representation of indexes.
+        Строковое представление индексов.
     """
     return ", ".join(f"{idx.table}({','.join(idx.columns)})" for idx in indexes) if indexes else "(no indexes)"
 
 
 class IndexTuningBase(ABC):
-    """Base class for index tuning algorithms."""
+    """Базовый класс для алгоритмов настройки индексов."""
 
     def __init__(
         self,
         sql_driver: SqlExecutor | SafeSqlExecutor,
         connection_id: str = "",
     ) -> None:
-        """Initialize IndexTuningBase.
+        """Инициализация IndexTuningBase.
 
         Args:
-            sql_driver: SQL executor for database access.
-            connection_id: Stable connection id for extension/version cache.
+            sql_driver: SQL исполнитель для доступа к базе данных.
+            connection_id: Стабильный идентификатор соединения для кэша версии/расширения.
         """
         self.sql_driver = sql_driver
         self._connection_id = connection_id
@@ -292,25 +292,25 @@ class IndexTuningBase(ABC):
         limit: int = MAX_NUM_INDEX_TUNING_QUERIES,
         max_index_size_mb: int = -1,
     ) -> IndexTuningResult:
-        """Analyze query workload and recommend indexes.
+        """Анализировать нагрузку запросов и рекомендовать индексы.
 
-        This method can analyze workload from three different sources (in order of priority):
-        1. Explicit workload passed as a parameter
-        2. Direct list of SQL queries passed as query_list
-        3. SQL file with queries
-        4. Query statistics from pg_stat_statements
+        Этот метод может анализировать нагрузку из трёх разных источников (в порядке приоритета):
+        1. Явная нагрузка переданная как параметр
+        2. Прямой список SQL запросов переданный как query_list
+        3. SQL файл с запросами
+        4. Статистика запросов из pg_stat_statements
 
         Args:
-            workload: Optional explicit workload data
-            sql_file: Optional path to a file containing SQL queries
-            query_list: Optional list of SQL query strings to analyze
-            min_calls: Minimum number of calls for a query to be considered (for pg_stat_statements)
-            min_avg_time_ms: Minimum average execution time in ms (for pg_stat_statements)
-            limit: Maximum number of queries to analyze (for pg_stat_statements)
-            max_index_size_mb: Maximum total size of recommended indexes in MB
+            workload: Необязательные явные данные нагрузки
+            sql_file: Необязательный путь к файлу с SQL запросами
+            query_list: Необязательный список строк SQL запросов для анализа
+            min_calls: Минимальное количество вызовов для учета запроса (для pg_stat_statements)
+            min_avg_time_ms: Минимальное среднее время выполнения в мс (для pg_stat_statements)
+            limit: Максимальное количество запросов для анализа (для pg_stat_statements)
+            max_index_size_mb: Максимальный общий размер рекомендуемых индексов в МБ
 
         Returns:
-            IndexTuningResult with analysis results
+            IndexTuningResult с результатами анализа
         """
         session_id = str(int(time.time()))
         self._analysis_start_time = time.time()
@@ -398,13 +398,13 @@ class IndexTuningBase(ABC):
         return session
 
     async def _run_prechecks(self, session: IndexTuningResult) -> IndexTuningResult | None:
-        """Run pre-checks before analysis and return a session with error if any check fails.
+        """Выполнить предварительные проверки перед анализом и вернуть сессию с ошибкой если какая-либо проверка не пройдена.
 
         Args:
-            session: The current DTASession object
+            session: Текущий объект DTASession
 
         Returns:
-            The DTASession with error information if any check fails, None if all checks pass
+            DTASession с информацией об ошибке если какая-либо проверка не пройдена, None если все проверки пройдены
         """
         # Pre-check 1: Check HypoPG with more granular feedback
         # Use our new utility function to check HypoPG status
@@ -435,7 +435,7 @@ class IndexTuningBase(ABC):
         return None
 
     async def _validate_and_parse_workload(self, workload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Validate the workload to ensure it is analyzable."""
+        """Валидировать нагрузку для обеспечения ее аналитичности."""
         validated_workload = []
         for q in workload:
             query_text = q["query"]
@@ -462,11 +462,11 @@ class IndexTuningBase(ABC):
         return validated_workload
 
     def _covert_workload_to_query_weights(self, workload: list[dict[str, Any]]) -> list[tuple[str, SelectStmt, float]]:
-        """Convert workload to query weights based on query frequency."""
+        """Преобразовать нагрузку в веса запросов на основе частоты запросов."""
         return [(q["query"], q["stmt"], self.convert_query_info_to_weight(q)) for q in workload]
 
     def convert_query_info_to_weight(self, query_info: dict[str, Any]) -> float:
-        """Convert query info to weight based on query frequency."""
+        """Преобразовать информацию о запросе в вес на основе частоты запросов."""
         calls_value: Any = query_info.get("calls", 1.0)
         avg_exec_time_value: Any = query_info.get("avg_exec_time", 1.0)
         calls = float(calls_value) if calls_value is not None else 1.0
@@ -476,16 +476,16 @@ class IndexTuningBase(ABC):
     async def get_explain_plan_with_indexes(
         self, query_text: str, indexes: frozenset[IndexDefinition]
     ) -> dict[str, Any]:
-        """Get the explain plan for a query with a specific set of indexes.
+        """Получить план объяснения для запроса с заданным набором индексов.
 
-        Results are memoized to avoid redundant explain operations.
+        Результаты кэшируются для избежания повторных операций объяснения.
 
         Args:
-            query_text: The SQL query to explain
-            indexes: A frozenset of IndexConfig objects representing the indexes to enable
+            query_text: SQL запрос для объяснения
+            indexes: Frozenset объектов IndexDefinition представляющих включаемые индексы
 
         Returns:
-            The explain plan as a dictionary
+            План объяснения в виде словаря
         """
         # Create a cache key from the query and indexes
         cache_key = (query_text, indexes)
@@ -510,16 +510,16 @@ class IndexTuningBase(ABC):
         return plan
 
     def _get_workload_from_file(self, file_path: str) -> list[dict[str, Any]]:
-        """Load queries from an SQL file.
+        """Загрузить запросы из SQL файла.
 
         Args:
-            file_path: Path to the SQL file.
+            file_path: Путь к SQL файлу.
 
         Returns:
-            List of workload dictionaries.
+            Список словарей нагрузки.
 
         Raises:
-            ValueError: If file cannot be read.
+            ValueError: Если файл не может быть прочитан.
         """
         try:
             with Path(file_path).open() as f:
@@ -544,15 +544,15 @@ class IndexTuningBase(ABC):
             return queries
 
     async def _get_query_stats(self, min_calls: int, min_avg_time_ms: float, limit: int) -> list[dict[str, Any]]:
-        """Get query statistics from pg_stat_statements.
+        """Получить статистику запросов из pg_stat_statements.
 
         Args:
-            min_calls: Minimum number of calls.
-            min_avg_time_ms: Minimum average execution time in milliseconds.
-            limit: Maximum number of queries to return.
+            min_calls: Минимальное количество вызовов.
+            min_avg_time_ms: Минимальное среднее время выполнения в миллисекундах.
+            limit: Максимальное количество возвращаемых запросов.
 
         Returns:
-            List of query statistics dictionaries.
+            Список словарей статистики запросов.
         """
         # Reference to original implementation
         return await self._get_query_stats_direct(min_calls, min_avg_time_ms, limit)
@@ -560,15 +560,15 @@ class IndexTuningBase(ABC):
     async def _get_query_stats_direct(
         self, min_calls: int = 50, min_avg_time_ms: float = 5.0, limit: int = 100
     ) -> list[dict[str, Any]]:
-        """Direct implementation of query stats collection.
+        """Прямая реализация сбора статистики запросов.
 
         Args:
-            min_calls: Minimum number of calls.
-            min_avg_time_ms: Minimum average execution time in milliseconds.
-            limit: Maximum number of queries to return.
+            min_calls: Минимальное количество вызовов.
+            min_avg_time_ms: Минимальное среднее время выполнения в миллисекундах.
+            limit: Максимальное количество возвращаемых запросов.
 
         Returns:
-            List of query statistics dictionaries.
+            Список словарей статистики запросов.
         """
         query = """
         SELECT queryid, query, calls, total_exec_time/calls as avg_exec_time
@@ -586,13 +586,13 @@ class IndexTuningBase(ABC):
         return [dict(row.cells) for row in result] if result else []
 
     def _is_analyzable_stmt(self, stmt: Node) -> bool:
-        """Check if a statement can be analyzed for index recommendations.
+        """Проверить, может ли оператор быть проанализирован для рекомендаций индексов.
 
         Args:
-            stmt: Parsed statement AST node.
+            stmt: Разобранный узел AST оператора.
 
         Returns:
-            True if statement can be analyzed, False otherwise.
+            True если оператор может быть проанализирован, False иначе.
         """
         # It should be a SelectStmt
         if not isinstance(stmt, SelectStmt):
@@ -605,10 +605,10 @@ class IndexTuningBase(ABC):
         return not all(table.startswith(("pg_", "aurora_")) for table in visitor.tables)
 
     def dta_trace(self, message: str) -> None:
-        """Convenience function to log DTA thinking process.
+        """Удобная функция для логирования процесса мышления DTA.
 
         Args:
-            message: Message to log.
+            message: Сообщение для логирования.
         """
         # Always log to debug
         logger.debug(message)
@@ -620,7 +620,7 @@ class IndexTuningBase(ABC):
         weighted_workload: list[tuple[str, SelectStmt, float]],
         indexes: frozenset[IndexDefinition],
     ) -> float:
-        """Evaluate total cost with selective enabling and caching."""
+        """Оценить общую стоимость с выборочным включением и кэшированием."""
         # Use indexes as cache key
         if indexes in self.cost_cache:
             self.dta_trace(f"  - Using cached cost for configuration: {candidate_str(indexes)}")
@@ -662,17 +662,17 @@ class IndexTuningBase(ABC):
             return avg_cost
 
     async def _estimate_index_size(self, table: str, columns: list[str]) -> int:
-        """Estimate the size of an index.
+        """Оценить размер индекса.
 
         Args:
-            table: Table name.
-            columns: List of column names.
+            table: Имя таблицы.
+            columns: Список имен столбцов.
 
         Returns:
-            Estimated size in bytes.
+            Оценочный размер в байтах.
 
         Raises:
-            ValueError: If estimation fails.
+            ValueError: Если оценка не удалась.
         """
         # Create a hashable key for the cache
         cache_key = (table, frozenset(columns))
@@ -707,13 +707,13 @@ class IndexTuningBase(ABC):
             return 0
 
     def _estimate_index_size_internal(self, stats: dict[str, Any]) -> int:
-        """Estimate index size from statistics.
+        """Оценить размер индекса по статистике.
 
         Args:
-            stats: Dictionary containing column statistics.
+            stats: Словарь содержащий статистику столбцов.
 
         Returns:
-            Estimated size in bytes.
+            Оценочный размер в байтах.
         """
         width = (stats["total_width"] or 0) + 8  # 8 bytes for the heap TID
         ndistinct = stats["total_distinct"] or 1.0
@@ -724,14 +724,14 @@ class IndexTuningBase(ABC):
     async def _format_recommendations(
         self, query_weights: list[tuple[str, SelectStmt, float]], best_config: tuple[set[IndexRecommendation], float]
     ) -> list[IndexRecommendationAnalysis]:
-        """Format recommendations into a list of IndexRecommendationAnalysis objects.
+        """Форматировать рекомендации в список объектов IndexRecommendationAnalysis.
 
         Args:
-            query_weights: List of tuples containing query text, parsed statement, and weight.
-            best_config: Tuple of best index set and cost.
+            query_weights: Список кортежей с текстом запроса, разобранным оператором и весом.
+            best_config: Кортеж лучшего набора индексов и стоимости.
 
         Returns:
-            List of formatted index recommendation analyses.
+            Список отформатированных анализов рекомендаций индексов.
         """
         # build final recommendations from best_config
         recommendations: list[IndexRecommendationAnalysis] = []
@@ -780,16 +780,16 @@ class IndexTuningBase(ABC):
 
     @staticmethod
     def extract_cost_from_json_plan(plan_data: dict[str, Any]) -> float:
-        """Extract total cost from JSON EXPLAIN plan data.
+        """Извлечь общую стоимость из данных JSON EXPLAIN плана.
 
         Args:
-            plan_data: Dictionary containing EXPLAIN plan data.
+            plan_data: Словарь содержащий данные EXPLAIN плана.
 
         Returns:
-            Total cost value.
+            Общее значение стоимости.
 
         Raises:
-            ValueError: If cost cannot be extracted.
+            ValueError: Если стоимость не может быть извлечена.
         """
         try:
             if not plan_data:
@@ -813,15 +813,15 @@ class IndexTuningBase(ABC):
             raise ValueError(error_msg) from e
 
     async def _get_table_size(self, table: str) -> int:
-        """Get the total size of a table including indexes and toast tables.
+        """Получить полный размер таблицы включая индексы и toast таблицы.
 
-        Uses memoization to avoid repeated database queries.
+        Использует мемоизацию для избежания повторных запросов к базе данных.
 
         Args:
-            table: The name of the table
+            table: Имя таблицы
 
         Returns:
-            Size of the table in bytes
+            Размер таблицы в байтах
         """
         # Check if we have a cached result
         if table in self._table_size_cache:
@@ -851,13 +851,13 @@ class IndexTuningBase(ABC):
             return size
 
     async def _estimate_table_size(self, table: str) -> int:
-        """Estimate the size of a table if we can't get it from the database.
+        """Оценить размер таблицы если мы не можем получить его из базы данных.
 
         Args:
-            table: Table name.
+            table: Имя таблицы.
 
         Returns:
-            Estimated size in bytes.
+            Оценочный размер в байтах.
         """
         try:
             # Try a simple query to get row count and then estimate size
@@ -878,4 +878,4 @@ class IndexTuningBase(ABC):
     async def _generate_recommendations(
         self, query_weights: list[tuple[str, SelectStmt, float]]
     ) -> tuple[set[IndexRecommendation], float]:
-        """Generate index tuning queries."""
+        """Генерировать запросы настройки индексов."""

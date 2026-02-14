@@ -1,4 +1,4 @@
-"""Safe SQL executor: validation + timeout + search_path around a delegate executor."""
+"""Исполнитель безопасного SQL: валидация + таймаут + search_path вокруг делегирующего исполнителя."""
 
 import asyncio
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class SafeSqlExecutor:
-    """Compositional wrapper: validates SQL, sets search_path/timeout, then delegates execution."""
+    """Композиционная обертка: валидация SQL, установка search_path/timeout, затем делегирование выполнения."""
 
     def __init__(
         self,
@@ -23,12 +23,12 @@ class SafeSqlExecutor:
         validator: QueryValidator,
         config: SafeSqlConfig,
     ) -> None:
-        """Initialize with delegate executor, validator, and config.
+        """Инициализация с делегирующим исполнителем, валидатором и конфигурацией.
 
         Args:
-            delegate: Executor with async execute(query, params=..., readonly=...) -> list[RowResult]|None.
-            validator: Validator used to validate each query before execution.
-            config: Safe SQL config (tag, timeout, schema, read_only, prefix).
+            delegate: Исполнитель с асинхронным execute(query, params=..., readonly=...) -> list[RowResult]|None.
+            validator: Валидатор, используемый для валидации каждого запроса перед выполнением.
+            config: Конфигурация безопасного SQL (тег, таймаут, схема, read_only, префикс).
         """
         self._delegate = delegate
         self._validator = validator
@@ -41,15 +41,15 @@ class SafeSqlExecutor:
         *,
         readonly: bool = True,
     ) -> list[RowResult] | None:
-        """Validate query then execute via delegate (with search_path and optional timeout).
+        """Валидация запроса, затем выполнение через делегата (с search_path и необязательным таймаутом).
 
         Args:
-            query: SQL to execute.
-            params: Optional parameters (will be rendered into query before execution).
-            readonly: Ignored; self._config.read_only is used.
+            query: SQL для выполнения.
+            params: Необязательные параметры (будут встроены в запрос перед выполнением).
+            readonly: Игнорируется; используется self._config.read_only.
 
         Returns:
-            Rows or None for no-result statements.
+            Строки или None для операторов без результата.
         """
         self._validator.validate(query)
         readonly_effective = self._config.read_only
@@ -68,13 +68,13 @@ class SafeSqlExecutor:
                     )
             except TimeoutError as e:
                 logger.warning(
-                    "Query execution timed out after %s seconds: %s...",
+                    "Выполнение запроса превысило таймаут %s секунд: %s...",
                     self._config.timeout,
                     query[:100],
                 )
                 raise ValueError(
-                    f"Query execution timed out after {self._config.timeout} seconds in restricted mode. "
-                    "Consider simplifying your query or increasing the timeout."
+                    f"Выполнение запроса превысило таймаут {self._config.timeout} секунд в режиме ограничения. "
+                    "Рассмотрите возможность упрощения запроса или увеличения таймаута."
                 ) from e
         return cast(
             "list[RowResult] | None",
@@ -82,14 +82,14 @@ class SafeSqlExecutor:
         )
 
     def render(self, query: str, params: list[Any]) -> str:
-        """Render parameterized query to a single string (for execution without server-side params).
+        """Рендер параметризованного запроса в одну строку (для выполнения без параметров на стороне сервера).
 
         Args:
-            query: Query with {} placeholders (psycopg style).
-            params: Values to substitute.
+            query: Запрос с {} плейсхолдерами (стиль psycopg).
+            params: Значения для подстановки.
 
         Returns:
-            Query string with values inlined (tagged).
+            Строка запроса с встроенными значениями (с тегом).
         """
         composables = [p if isinstance(p, Composable) else Literal(p) for p in params]
         rendered = SQL(query).format(*composables).as_string()

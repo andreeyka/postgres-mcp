@@ -1,4 +1,4 @@
-"""Database Tuning Advisor implementation for index recommendations."""
+"""Реализация Database Tuning Advisor для рекомендаций индексов."""
 
 import logging
 import time

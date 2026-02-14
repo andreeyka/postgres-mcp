@@ -1,4 +1,4 @@
-"""Explain MCP tools registration."""
+"""Регистрация MCP-инструментов объяснения планов (EXPLAIN)."""
 
 from typing import Annotated, Any
 
@@ -19,7 +19,12 @@ from postgres_fastmcp.tools.descriptions import DESC_HYPOTHETICAL_INDEXES
 
 
 def register_explain_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register explain tools (plain / analyze / hypothetical) on the provider."""
+    """Зарегистрировать инструменты объяснения планов (plain / analyze / hypothetical) в провайдере.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.explain_query,
@@ -51,7 +56,11 @@ def register_explain_tools(provider: LocalProvider, descriptions: ToolDescriptio
         explain_analyze_service: ExplainService = ExplainAnalyzeServiceProvider,
         explain_hypothetical_service: ExplainService = ExplainHypotheticalServiceProvider,
     ) -> ToolResult:
-        """Explain SQL query execution plan."""
+        """Объяснить план выполнения SQL-запроса.
+
+        Returns:
+            ToolResult с текстом плана выполнения или сообщением об ошибке.
+        """
         try:
             if analyze and hypothetical_indexes:
                 raise ExplainAnalyzeWithHypotheticalError  # noqa: TRY301

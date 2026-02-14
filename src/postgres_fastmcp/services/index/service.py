@@ -1,4 +1,4 @@
-"""Index analysis service (facade for index module)."""
+"""Сервис анализа индексов (фасад модуля index)."""
 
 from typing import Any, Literal
 
@@ -13,15 +13,25 @@ from postgres_fastmcp.services.index.presentation import TextPresentation
 
 
 class IndexAnalysisService:
-    """Service for analyzing workload and query indexes."""
+    """Сервис для анализа нагрузки и индексов запросов."""
 
     def __init__(self, db: DbAccessService, method: Literal["dta", "llm"]) -> None:
-        """Initialize with database access service."""
+        """Инициализация сервиса с подключением к базе данных и методом анализа."""
         self.db = db
         self._method = method
 
     def _create_index_tuning(self, ctx: Context | None) -> IndexTuningBase:
-        """Create index tuning strategy based on configured method."""
+        """Создать стратегию настройки индексов на основе выбранного метода.
+
+        Args:
+            ctx: Контекст MCP для метода LLM (опционально).
+
+        Returns:
+            Экземпляр IndexTuningBase (DatabaseTuningAdvisor или LLMOptimizerTool).
+
+        Raises:
+            ContextRequiredError: Если метод LLM требует контекст, но он не предоставлен.
+        """
         sql_driver = self.db.sql_driver
         connection_id = self.db.connection_id
         if self._method == "dta":
@@ -35,10 +45,17 @@ class IndexAnalysisService:
         max_index_size_mb: int = 10000,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Analyze frequently executed queries and recommend optimal indexes.
+        """Проанализировать часто выполняемые запросы и рекомендовать оптимальные индексы.
+
+        Args:
+            max_index_size_mb: Максимальный размер индексов в МБ (по умолчанию 10000).
+            ctx: Контекст MCP для метода LLM (опционально).
+
+        Returns:
+            Словарь с результатами анализа и рекомендациями.
 
         Raises:
-            ContextRequiredError: LLM method requires context.
+            ContextRequiredError: Если метод LLM требует контекст.
         """
         sql_driver = self.db.sql_driver
         index_tuning = self._create_index_tuning(ctx)
@@ -51,12 +68,20 @@ class IndexAnalysisService:
         max_index_size_mb: int = 10000,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Analyze a list of SQL queries and recommend optimal indexes.
+        """Проанализировать список SQL запросов и рекомендовать оптимальные индексы.
+
+        Args:
+            queries: Список SQL запросов для анализа.
+            max_index_size_mb: Максимальный размер индексов в МБ (по умолчанию 10000).
+            ctx: Контекст MCP для метода LLM (опционально).
+
+        Returns:
+            Словарь с результатами анализа и рекомендациями.
 
         Raises:
-            EmptyQueriesError: Empty list of queries.
-            QueriesLimitError: Too many queries.
-            ContextRequiredError: LLM method requires context.
+            EmptyQueriesError: Если список запросов пуст.
+            QueriesLimitError: Если слишком много запросов.
+            ContextRequiredError: Если метод LLM требует контекст.
         """
         if len(queries) == 0:
             raise EmptyQueriesError()

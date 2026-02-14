@@ -1,4 +1,4 @@
-"""Object metadata MCP tools registration."""
+"""Регистрация MCP-инструментов метаданных объектов БД."""
 
 from typing import Annotated
 
@@ -14,7 +14,12 @@ from postgres_fastmcp.tools.common import ToolDescriptions
 
 
 def register_objects_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register object listing and details tools."""
+    """Зарегистрировать инструменты списка объектов и деталей объектов.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.list_objects,
@@ -38,7 +43,11 @@ def register_objects_tools(provider: LocalProvider, descriptions: ToolDescriptio
         ] = "table",
         objects_service: ObjectsService = ObjectsServiceProvider,
     ) -> ToolResult:
-        """List objects in schema."""
+        """Список объектов в схеме.
+
+        Returns:
+            ToolResult со списком объектов или сообщением об ошибке.
+        """
         try:
             content = await objects_service.list_objects(schema_name=schema_name, object_type=object_type)
             return ToolResult(content=content)
@@ -78,7 +87,11 @@ def register_objects_tools(provider: LocalProvider, descriptions: ToolDescriptio
         ] = "table",
         objects_service: ObjectsService = ObjectsServiceProvider,
     ) -> ToolResult:
-        """Get detailed information about object."""
+        """Получить детальную информацию об объекте.
+
+        Returns:
+            ToolResult с деталями объекта или сообщением об ошибке.
+        """
         try:
             content = await objects_service.get_object_details(
                 schema_name=schema_name,

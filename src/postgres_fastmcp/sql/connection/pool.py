@@ -1,4 +1,4 @@
-"""Database connection pool (lifecycle only)."""
+"""Пул подключений к базе данных (только жизненный цикл)."""
 
 import logging
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class DbConnPool:
-    """Database connection manager using psycopg's connection pool."""
+    """Менеджер подключений к базе данных с использованием пула подключений psycopg."""
 
     def __init__(
         self,
@@ -20,12 +20,12 @@ class DbConnPool:
         min_size: int = 1,
         max_size: int = 5,
     ) -> None:
-        """Initialize database connection pool.
+        """Инициализация пула подключений к базе данных.
 
         Args:
-            connection_url: Database connection URL.
-            min_size: Minimum number of connections in the pool.
-            max_size: Maximum number of connections in the pool.
+            connection_url: URL подключения к базе данных.
+            min_size: Минимальное количество подключений в пуле.
+            max_size: Максимальное количество подключений в пуле.
         """
         self.connection_url = connection_url
         self.min_size = min_size
@@ -35,7 +35,7 @@ class DbConnPool:
         self._last_error: str | None = None
 
     async def pool_connect(self, connection_url: str | None = None) -> AsyncConnectionPool:
-        """Initialize connection pool; returns existing pool if already valid."""
+        """Инициализация пула подключений; возвращает существующий пул, если он уже действителен."""
         if self.pool and self._is_valid:
             return self.pool
 
@@ -70,7 +70,7 @@ class DbConnPool:
             return self.pool
 
     async def close(self) -> None:
-        """Close the connection pool."""
+        """Закрытие пула подключений."""
         if self.pool:
             try:
                 await self.pool.close()
@@ -82,19 +82,19 @@ class DbConnPool:
 
     @property
     def is_valid(self) -> bool:
-        """Whether the connection pool is valid."""
+        """Действителен ли пул подключений."""
         return self._is_valid
 
     @property
     def last_error(self) -> str | None:
-        """Last error message if any."""
+        """Последнее сообщение об ошибке, если была."""
         return self._last_error
 
     def mark_invalid(self, error: str | None = None) -> None:
-        """Mark pool as invalid (e.g. after connection failure).
+        """Пометить пул как недействительный (например, после сбоя подключения).
 
         Args:
-            error: Optional error message.
+            error: Необязательное сообщение об ошибке.
         """
         self._is_valid = False
         self._last_error = error

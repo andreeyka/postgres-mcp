@@ -1,17 +1,17 @@
-"""Database health analysis service (used only by health module)."""
+"""Сервис анализа состояния базы данных (используется только в модуле здоровья)."""
 
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.services.health.database_health import DatabaseHealthTool
 
 
 class HealthService:
-    """Service for analyzing database health."""
+    """Сервис для анализа состояния базы данных."""
 
     def __init__(self, db: DbAccessService) -> None:
-        """Initialize with database access service."""
+        """Инициализация с сервисом доступа к базе данных."""
         self.db = db
 
     async def analyze_db_health(self, health_type: str = "all") -> str:
-        """Run database health checks for the specified components."""
+        """Запуск проверок состояния базы данных для указанных компонентов."""
         health_tool = DatabaseHealthTool(self.db.sql_driver)
         return await health_tool.health(health_type=health_type)

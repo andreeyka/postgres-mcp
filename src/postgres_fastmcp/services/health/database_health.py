@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class HealthType(StrEnum):
-    """Enumeration of available database health check types."""
+    """Перечисление доступных типов проверок состояния базы данных."""
 
     INDEX = "index"
     CONNECTION = "connection"
@@ -33,25 +33,25 @@ class HealthType(StrEnum):
 
 
 class DatabaseHealthTool:
-    """Tool for analyzing database health metrics."""
+    """Инструмент для анализа метрик состояния базы данных."""
 
     def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
-        """Initialize the database health tool.
+        """Инициализация инструмента проверки состояния базы данных.
 
         Args:
-            sql_driver: SQL driver instance for database access.
+            sql_driver: Экземпляр SQL драйвера для доступа к базе данных.
         """
         self.sql_driver = sql_driver
 
     async def health(self, health_type: str) -> str:  # noqa: C901
-        """Run database health checks for the specified components.
+        """Запуск проверок состояния базы данных для указанных компонентов.
 
         Args:
-            health_type: Comma-separated list of health check types to perform.
-                Valid values: index, connection, vacuum, sequence, replication, buffer, constraint, all.
+            health_type: Список типов проверок состояния через запятую.
+                Допустимые значения: index, connection, vacuum, sequence, replication, buffer, constraint, all.
 
         Returns:
-            String with the health check results.
+            Строка с результатами проверок состояния.
         """
         try:
             result = ""

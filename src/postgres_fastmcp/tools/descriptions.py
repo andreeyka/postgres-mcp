@@ -1,5 +1,5 @@
 # ruff: noqa: E501, S608
-"""Descriptions for MCP tool handlers (used in tool registration)."""
+"""Описания обработчиков MCP-инструментов (используются при регистрации инструментов)."""
 
 from postgres_fastmcp.services.index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.tools.constants import PG_STAT_STATEMENTS

@@ -6,13 +6,13 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 @dataclass
 class TransactionIdMetrics:
-    """Metrics for transaction ID wraparound health check.
+    """Метрики для проверки переполнения идентификатора транзакции.
 
     Attributes:
-        schema: Schema name of the table.
-        table: Table name.
-        transactions_left: Number of transactions remaining before wraparound.
-        is_healthy: Whether the table has healthy transaction ID age.
+        schema: Имя схемы таблицы.
+        table: Имя таблицы.
+        transactions_left: Количество транзакций, оставшихся до переполнения.
+        is_healthy: Имеет ли таблица здоровый возраст идентификатора транзакции.
     """
 
     schema: str
@@ -22,7 +22,7 @@ class TransactionIdMetrics:
 
 
 class VacuumHealthCalc:
-    """Calculator for database vacuum and transaction ID health checks."""
+    """Калькулятор для проверок вакуума и состояния идентификатора транзакции."""
 
     def __init__(
         self,
@@ -35,10 +35,10 @@ class VacuumHealthCalc:
         self.max_value = max_value
 
     async def transaction_id_danger_check(self) -> str:
-        """Check if any tables are approaching transaction ID wraparound.
+        """Проверка таблиц, приближающихся к переполнению идентификатора транзакции.
 
         Returns:
-            String describing tables approaching transaction ID wraparound.
+            Строка с описанием таблиц приближающихся к переполнению идентификатора транзакции.
         """
         metrics = await self._get_transaction_id_metrics()
 
@@ -61,10 +61,10 @@ class VacuumHealthCalc:
         return "\n".join(result)
 
     async def _get_transaction_id_metrics(self) -> list[TransactionIdMetrics]:
-        """Get transaction ID metrics for all tables.
+        """Получение метрик идентификатора транзакции для всех таблиц.
 
         Returns:
-            List of TransactionIdMetrics for tables approaching wraparound.
+            Список TransactionIdMetrics для таблиц приближающихся к переполнению.
         """
         results = await self.sql_driver.execute(
             """
@@ -104,10 +104,10 @@ class VacuumHealthCalc:
         ]
 
     async def _get_vacuum_stats(self) -> dict[str, dict[str, str | None]]:
-        """Get vacuum statistics for the database.
+        """Получение статистики вакуума для базы данных.
 
         Returns:
-            Dictionary mapping table names to their vacuum statistics.
+            Словарь сопоставления имен таблиц с их статистикой вакуума.
         """
         result = await self.sql_driver.execute(
             """

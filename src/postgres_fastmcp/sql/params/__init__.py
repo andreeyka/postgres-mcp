@@ -1,1 +1,1 @@
-"""Parameter replacement for pg_stat_statements-style queries."""
+"""Замена параметров для запросов в стиле pg_stat_statements."""

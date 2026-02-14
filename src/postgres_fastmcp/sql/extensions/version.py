@@ -1,4 +1,4 @@
-"""PostgreSQL version detection and caching."""
+"""Определение и кэширование версии PostgreSQL."""
 
 import logging
 from typing import Any
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresVersionRegistry:
-    """Cache of PostgreSQL major version per connection id."""
+    """Кэш основной версии PostgreSQL по идентификатору подключения."""
 
     def __init__(self) -> None:
         self._cache: dict[str, int] = {}
@@ -30,12 +30,12 @@ _version_registry = PostgresVersionRegistry()
 
 
 def reset_postgres_version_cache(connection_id: str | None = None) -> None:
-    """Clear version cache (e.g. for tests)."""
+    """Очистка кэша версий (например, для тестов)."""
     _version_registry.clear(connection_id)
 
 
 async def get_postgres_version(executor: Any, connection_id: str) -> int:
-    """Return major PostgreSQL version (e.g. 16), using cache keyed by connection_id."""
+    """Возвращает основную версию PostgreSQL (например, 16), используя кэш по идентификатору подключения."""
     cached = _version_registry.get(connection_id)
     if cached is not None:
         return cached

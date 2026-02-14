@@ -8,18 +8,18 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 @dataclass
 class SequenceMetrics:
-    """Metrics for database sequence health check.
+    """Метрики для проверки состояния последовательностей базы данных.
 
     Attributes:
-        schema: Schema name of the sequence.
-        table: Table name using the sequence.
-        column: Column name using the sequence.
-        sequence: Sequence name.
-        column_type: Type of the column (integer or bigint).
-        last_value: Last value used by the sequence.
-        max_value: Maximum value for the sequence type.
-        is_healthy: Whether the sequence usage is within healthy limits.
-        readable: Whether the sequence is readable.
+        schema: Имя схемы последовательности.
+        table: Имя таблицы использующей последовательность.
+        column: Имя столбца использующего последовательность.
+        sequence: Имя последовательности.
+        column_type: Тип столбца (integer или bigint).
+        last_value: Последнее значение используемое последовательностью.
+        max_value: Максимальное значение для типа последовательности.
+        is_healthy: Допустим ли уровень использования последовательности.
+        readable: Доступна ли последовательность для чтения.
     """
 
     schema: str
@@ -34,40 +34,40 @@ class SequenceMetrics:
 
     @property
     def percent_used(self) -> float:
-        """Calculate what percentage of the sequence has been used.
+        """Вычислить какой процент от последовательности использован.
 
         Returns:
-            Percentage of sequence values used (0-100).
+            Процент использованных значений последовательности (0-100).
         """
         return (self.last_value / self.max_value) * 100 if self.max_value else 0
 
 
 class SequenceHealthCalc:
-    """Calculator for database sequence health checks."""
+    """Калькулятор для проверок состояния последовательностей базы данных."""
 
     def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor, threshold: float = 0.9) -> None:
-        """Initialize sequence health calculator.
+        """Инициализация калькулятора состояния последовательностей.
 
         Args:
-            sql_driver: SQL driver for database access
-            threshold: Percentage (as decimal) of sequence usage that triggers warning
+            sql_driver: SQL драйвер для доступа к базе данных
+            threshold: Процент (в виде десятичной дроби) использования последовательности,
+                который вызывает предупреждение
         """
         self.sql_driver = sql_driver
         self.threshold = threshold
 
     async def sequence_danger_check(self) -> str:
-        """Check if any sequences are approaching their maximum values.
+        """Проверка последовательностей, приближающихся к их максимальным значениям.
 
         Returns:
-            String describing sequences that are approaching their maximum values.
+            Строка с описанием последовательностей, приближающихся к максимальным значениям.
         """
         metrics = await self._get_sequence_metrics()
 
         if not metrics:
             return "No sequences found in the database."
 
-        # Sort by remaining values ascending to show most critical first
-        metrics.sort(key=lambda x: x.max_value - x.last_value)
+        # Сортировка по оставшимся значениям по возрастанию для показа наиболее критичных первыми
 
         unhealthy = [m for m in metrics if not m.is_healthy]
         if not unhealthy:
@@ -84,10 +84,10 @@ class SequenceHealthCalc:
         return "\n".join(result)
 
     async def _get_sequence_metrics(self) -> list[SequenceMetrics]:
-        """Get metrics for sequences in the database.
+        """Получение метрик для последовательностей в базе данных.
 
         Returns:
-            List of SequenceMetrics for all sequences in the database.
+            Список SequenceMetrics для всех последовательностей в базе данных.
         """
         # First get all sequences used as default values
         sequences = await self.sql_driver.execute(
@@ -167,13 +167,13 @@ class SequenceHealthCalc:
         return sequence_metrics
 
     def _parse_sequence_name(self, default_value: str) -> tuple[str, str]:
-        """Parse schema and sequence name from default value expression.
+        """Разбор имени схемы и последовательности из выражения значения по умолчанию.
 
         Args:
-            default_value: Default value expression containing nextval() call.
+            default_value: Выражение значения по умолчанию, содержащее вызов nextval().
 
         Returns:
-            Tuple of (schema, sequence_name).
+            Кортеж из (schema, sequence_name).
         """
         # Handle both formats:
         # nextval('id_seq'::regclass)

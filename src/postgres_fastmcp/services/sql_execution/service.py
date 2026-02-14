@@ -1,4 +1,4 @@
-"""SQL execution service (used only by sql_execution module)."""
+"""Сервис выполнения SQL (используется только модулем sql_execution)."""
 
 from typing import Any
 
@@ -8,17 +8,23 @@ from postgres_fastmcp.services.db_access_service import DbAccessService
 
 
 class SqlExecutionService:
-    """Service for executing SQL queries."""
+    """Сервис для выполнения SQL запросов."""
 
     def __init__(self, db: DbAccessService) -> None:
-        """Initialize with database access service."""
+        """Инициализация сервиса с подключением к базе данных."""
         self.db = db
 
     async def execute_sql(self, sql: str = "all") -> list[dict[str, Any]]:
-        """Execute a SQL query against the database.
+        """Выполнить SQL запрос к базе данных.
+
+        Args:
+            sql: SQL запрос для выполнения (по умолчанию "all").
+
+        Returns:
+            Список результатов запроса в виде списка словарей.
 
         Raises:
-            SqlExecutionError: No results or driver error.
+            SqlExecutionError: Если нет результатов или ошибка драйвера.
         """
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(sql, params=None, readonly=True)

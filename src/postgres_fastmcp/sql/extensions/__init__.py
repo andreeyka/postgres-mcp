@@ -1,1 +1,1 @@
-"""PostgreSQL version and extension inspection."""
+"""Проверка версии PostgreSQL и расширений."""

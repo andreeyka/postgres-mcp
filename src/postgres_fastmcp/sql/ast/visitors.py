@@ -1,4 +1,4 @@
-"""AST visitors for extracting tables, aliases, and columns from SQL."""
+"""Посетители AST для извлечения таблиц, алиасов и столбцов из SQL."""
 
 from typing import Any
 
@@ -11,7 +11,7 @@ QUALIFIED_COLUMN_FIELDS = 2
 
 
 class TableAliasVisitor(Visitor):  # type: ignore[misc]
-    """Extracts table names and aliases from the SQL AST."""
+    """Извлекает имена таблиц и алиасы из AST SQL."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,7 +38,7 @@ class TableAliasVisitor(Visitor):  # type: ignore[misc]
 
 
 class ColumnCollector(Visitor):  # type: ignore[misc]
-    """Collects columns from SELECT, WHERE, JOIN, ORDER BY, GROUP BY, HAVING."""
+    """Собирает столбцы из SELECT, WHERE, JOIN, ORDER BY, GROUP BY, HAVING."""
 
     def __init__(self, column_cache: dict[str, set[str]] | None = None) -> None:
         super().__init__()
@@ -55,6 +55,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
         return self.columns
 
     def _column_exists(self, table: str, column: str) -> bool:
+        """Проверка существования столбца в кэше."""
         if not self.column_cache:
             return True
         table_columns = self.column_cache.get(table.lower())

@@ -1,1 +1,1 @@
-"""Top queries from pg_stat_statements."""
+"""Топ запросов из pg_stat_statements."""

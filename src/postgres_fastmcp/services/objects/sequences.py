@@ -1,4 +1,4 @@
-"""Sequences — listing and details (used only by objects module)."""
+"""Последовательности: список и детали (используется только модулем objects)."""
 
 from typing import Any, cast
 
@@ -9,13 +9,25 @@ from postgres_fastmcp.sql.catalog.queries import QUERY_GET_SEQUENCE_DETAILS, QUE
 
 
 class SequencesService:
-    """Service for listing sequences and getting sequence details."""
+    """Сервис списка последовательностей и получения их деталей."""
 
     def __init__(self, db: DbAccessService) -> None:
+        """Инициализация с сервисом доступа к БД.
+
+        Args:
+            db: Сервис доступа к БД.
+        """
         self.db = db
 
     async def list_sequences(self, schema_name: str) -> list[dict[str, Any]]:
-        """List sequences in a schema."""
+        """Список последовательностей в схеме.
+
+        Args:
+            schema_name: Имя схемы.
+
+        Returns:
+            Список словарей с полями schema, name, data_type.
+        """
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(QUERY_LIST_SEQUENCES, params=[schema_name], readonly=True)
         objects = (
@@ -36,7 +48,15 @@ class SequencesService:
         return objects
 
     async def get_details(self, schema_name: str, object_name: str) -> dict[str, Any]:
-        """Get sequence details."""
+        """Получить детали последовательности.
+
+        Args:
+            schema_name: Имя схемы.
+            object_name: Имя последовательности.
+
+        Returns:
+            Словарь с полями schema, name, data_type, start_value, increment.
+        """
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(
             QUERY_GET_SEQUENCE_DETAILS,

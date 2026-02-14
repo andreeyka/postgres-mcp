@@ -1,11 +1,11 @@
-"""Port for replacing $1, $2, ... placeholders with concrete values."""
+"""Порт для замены параметров $1, $2, ... конкретными значениями."""
 
 from typing import Protocol
 
 
 class ParamReplacerPort(Protocol):
-    """Port for replacing pg_stat_statements-style parameters with values from stats."""
+    """Порт для замены параметров pg_stat_statements-style значениями из статистики."""
 
     async def replace_parameters(self, query: str) -> str:
-        """Replace $N placeholders in query with appropriate literal values."""
+        """Замена параметров $N в запросе соответствующими литеральными значениями."""
         ...

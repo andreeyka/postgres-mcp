@@ -1,4 +1,4 @@
-"""Types for MCP server configuration."""
+"""Типы для конфигурации сервера MCP."""
 
 from enum import StrEnum
 from typing import Literal
@@ -9,42 +9,42 @@ MountMode = Literal["tool", "endpoint"]
 
 
 class AccessMode(StrEnum):
-    """SQL access level for the server."""
+    """Уровень доступа SQL для сервера."""
 
-    RESTRICTED = "restricted"  # Read-only access (SELECT only)
-    UNRESTRICTED = "unrestricted"  # Read-write access (DML: INSERT/UPDATE/DELETE), or full access (DDL) for full role
+    RESTRICTED = "restricted"  # Только чтение (SELECT)
+    UNRESTRICTED = "unrestricted"  # Чтение-запись (DML: INSERT/UPDATE/DELETE) или полный доступ (DDL) для полной роли
 
 
 class UserRole(StrEnum):
-    """User role that determines schema access and available tools."""
+    """Роль пользователя, определяющая доступ к схемам и доступные инструменты."""
 
-    USER = "user"  # Basic role: only public schema, basic tools (4)
-    FULL = "full"  # Full role: all schemas, all tools (9), extended privileges
+    USER = "user"  # Базовая роль: только схема public, базовые инструменты (4)
+    FULL = "full"  # Полная роль: все схемы, все инструменты (9), расширенные привилегии
 
 
 class TransportConfig(StrEnum):
-    """Transport types for configuration."""
+    """Типы транспорта для конфигурации."""
 
     HTTP = "http"
     STDIO = "stdio"
 
 
 class TransportHttpApp(StrEnum):
-    """HTTP transport types for FastMCP http_app."""
+    """Типы HTTP транспорта для FastMCP http_app."""
 
     HTTP = "http"
     STREAMABLE_HTTP = "streamable-http"
 
 
 class ToolTag(StrEnum):
-    """Tags for tool filtering (basic vs full)."""
+    """Теги для фильтрации инструментов (базовые и полные)."""
 
     BASIC = "basic"
     FULL = "full"
 
 
 class ToolName(StrEnum):
-    """Available tool names."""
+    """Доступные имена инструментов."""
 
     LIST_SCHEMAS = "list_schemas"
     LIST_OBJECTS = "list_objects"
@@ -58,7 +58,7 @@ class ToolName(StrEnum):
 
     @classmethod
     def available_tools(cls) -> list["ToolName"]:
-        """Get list of all available tools that can be enabled/disabled."""
+        """Получить список всех доступных инструментов, которые можно включить/выключить."""
         return [
             cls.LIST_SCHEMAS,
             cls.LIST_OBJECTS,
@@ -73,7 +73,7 @@ class ToolName(StrEnum):
 
     @classmethod
     def basic_tools(cls) -> list["ToolName"]:
-        """Get list of basic tools (available for both USER and FULL roles)."""
+        """Получить список базовых инструментов (доступны для ролей USER и FULL)."""
         return [
             cls.LIST_OBJECTS,
             cls.GET_OBJECT_DETAILS,
@@ -83,7 +83,7 @@ class ToolName(StrEnum):
 
     @classmethod
     def admin_tools(cls) -> list["ToolName"]:
-        """Get list of admin tools that are only available for FULL role."""
+        """Получить список инструментов администратора, доступных только для FULL роли."""
         return [
             cls.LIST_SCHEMAS,
             cls.ANALYZE_WORKLOAD_INDEXES,

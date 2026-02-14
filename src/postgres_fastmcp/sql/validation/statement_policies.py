@@ -1,4 +1,4 @@
-"""Allowed statement and AST node types for SQL validation."""
+"""Допустимые типы операторов и узлов AST для валидации SQL."""
 
 from pglast.ast import (
     A_ArrayExpr,

@@ -1,4 +1,4 @@
-"""Index analysis MCP tools registration."""
+"""Регистрация MCP-инструментов анализа индексов."""
 
 from typing import Annotated, Literal
 
@@ -17,7 +17,12 @@ from postgres_fastmcp.tools.common import ToolDescriptions
 
 
 def register_index_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register index analysis tools."""
+    """Зарегистрировать инструменты анализа индексов.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.analyze_workload_indexes,
@@ -50,7 +55,11 @@ def register_index_tools(provider: LocalProvider, descriptions: ToolDescriptions
         dta_index_analysis_service: IndexAnalysisService = DtaIndexAnalysisServiceProvider,
         llm_index_analysis_service: IndexAnalysisService = LlmIndexAnalysisServiceProvider,
     ) -> ToolResult:
-        """Analyze workload and recommend indexes."""
+        """Проанализировать нагрузку и рекомендовать индексы.
+
+        Returns:
+            ToolResult с текстом рекомендаций или сообщением об ошибке.
+        """
         try:
             index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
             content = await index_analysis_service.analyze_workload_indexes(
@@ -102,7 +111,11 @@ def register_index_tools(provider: LocalProvider, descriptions: ToolDescriptions
         dta_index_analysis_service: IndexAnalysisService = DtaIndexAnalysisServiceProvider,
         llm_index_analysis_service: IndexAnalysisService = LlmIndexAnalysisServiceProvider,
     ) -> ToolResult:
-        """Analyze specific queries and recommend indexes."""
+        """Проанализировать указанные запросы и рекомендовать индексы.
+
+        Returns:
+            ToolResult с текстом рекомендаций или сообщением об ошибке.
+        """
         try:
             index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
             content = await index_analysis_service.analyze_query_indexes(

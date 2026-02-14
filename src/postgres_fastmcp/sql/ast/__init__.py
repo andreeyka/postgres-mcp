@@ -1,1 +1,1 @@
-"""AST visitors and extraction utilities."""
+"""Посетители AST и утилиты извлечения."""

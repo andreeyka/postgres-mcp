@@ -10,6 +10,9 @@ from postgres_fastmcp.services.schema.service import SchemaService
 def get_schema_service(db: DbAccessService = DbAccessServiceProvider) -> SchemaService:
     """Получить сервис для работы со схемами.
 
+    Args:
+        db: Сервис доступа к БД.
+
     Returns:
         Экземпляр SchemaService.
     """

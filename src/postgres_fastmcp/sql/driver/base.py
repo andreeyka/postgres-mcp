@@ -1,4 +1,4 @@
-"""SQL executor: run queries and manage transaction policy."""
+"""Выполнение SQL запросов и управление политикой транзакций."""
 
 import logging
 from typing import Any, LiteralString, NoReturn
@@ -15,18 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 class SqlExecutor:
-    """Executes SQL via a connection pool or direct connection. Manages transactions."""
+    """Выполнение SQL запросов через пул подключений или прямое подключение. Управление транзакциями."""
 
     def __init__(
         self,
         conn: DbConnPool | AsyncConnection | None = None,
         engine_url: str | None = None,
     ) -> None:
-        """Initialize with pool, connection, or URL.
+        """Инициализация с пулом подключений, подключением или URL.
 
         Args:
-            conn: Connection pool or single async connection.
-            engine_url: Connection URL; pool will be created on first use.
+            conn: Пул подключений или одиночное асинхронное подключение.
+            engine_url: URL подключения; пул будет создан при первом использовании.
         """
         self.conn: DbConnPool | AsyncConnection | None = None
         if conn is not None:
@@ -39,7 +39,7 @@ class SqlExecutor:
             raise ValueError("Either conn or engine_url must be provided")
 
     def _ensure_connected(self) -> None:
-        """Ensure conn is set; create pool from engine_url if needed."""
+        """Проверка установки подключения; создание пула из engine_url при необходимости."""
         if self.conn is not None:
             return
         if getattr(self, "engine_url", None):
@@ -49,7 +49,7 @@ class SqlExecutor:
         raise ValueError("Connection not established. Either conn or engine_url must be provided")
 
     def render(self, query: str, params: list[Any]) -> str:
-        """Render parameterized query ({} placeholders) to a single string."""
+        """Рендер параметризованного запроса (с {} плейсхолдерами) в одну строку."""
         composables = [p if isinstance(p, Composable) else Literal(p) for p in params]
         return SQL(query).format(*composables).as_string()
 
@@ -60,15 +60,15 @@ class SqlExecutor:
         *,
         readonly: bool = True,
     ) -> list[RowResult] | None:
-        """Execute query and return rows, or None for no-result statements.
+        """Выполнение запроса и возвращение строк, или None для операторов без результата.
 
         Args:
-            query: SQL to execute (use {} for placeholders if params given).
-            params: Optional parameters; if set, query is rendered then executed.
-            readonly: If True, use read-only transaction; else read-write.
+            query: SQL для выполнения (используйте {} для плейсхолдеров если заданы параметры).
+            params: Необязательные параметры; если заданы, запрос рендерится и then выполняется.
+            readonly: Если True, использовать транзакцию только для чтения; иначе чтение-запись.
 
         Returns:
-            List of RowResult or None for DDL/command-only.
+            Список RowResult или None для DDL/командных операторов.
         """
         if params:
             query = self.render(query, params)
@@ -106,7 +106,7 @@ class SqlExecutor:
         *,
         readonly: bool,
     ) -> list[RowResult] | None:
-        """Run query on the given connection with explicit transaction."""
+        """Выполнение запроса на данном подключении с явной транзакцией."""
         async with connection.cursor(row_factory=dict_row) as cursor:
             if readonly:
                 await cursor.execute("BEGIN TRANSACTION READ ONLY")

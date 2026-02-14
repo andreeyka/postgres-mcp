@@ -1,4 +1,4 @@
-"""Schema listing service (used only by schema module)."""
+"""Сервис списка схем (используется только модулем schema)."""
 
 from typing import Any
 
@@ -9,14 +9,22 @@ from postgres_fastmcp.sql.catalog.queries import QUERY_LIST_SCHEMAS
 
 
 class SchemaService:
-    """Service for listing database schemas."""
+    """Сервис для получения списка схем базы данных."""
 
     def __init__(self, db: DbAccessService) -> None:
-        """Initialize with database access service."""
+        """Инициализация с сервисом доступа к БД.
+
+        Args:
+            db: Сервис доступа к БД.
+        """
         self.db = db
 
     async def list_schemas(self) -> list[dict[str, Any]]:
-        """List all schemas in the database."""
+        """Список всех схем в базе данных.
+
+        Returns:
+            Список словарей с информацией о схемах (schema_name, schema_owner и т.д.).
+        """
         if self.db.role == UserRole.USER:
             return [
                 {

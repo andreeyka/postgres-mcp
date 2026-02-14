@@ -1,4 +1,4 @@
-"""Common utility functions."""
+"""Общие вспомогательные функции."""
 
 import logging
 import re
@@ -14,14 +14,14 @@ INFINITE_IMPROVEMENT_MULTIPLIER = 1000000.0
 
 
 def calculate_improvement_multiple(base_cost: float, rec_cost: float) -> float:
-    """Calculate the improvement multiple from this recommendation.
+    """Вычислить множитель улучшения от данной рекомендации.
 
     Args:
-        base_cost: Base execution cost.
-        rec_cost: Recommended execution cost.
+        base_cost: Базовая стоимость выполнения.
+        rec_cost: Рекомендованная стоимость выполнения.
 
     Returns:
-        Improvement multiple (base_cost / rec_cost).
+        Множитель улучшения (base_cost / rec_cost).
     """
     if base_cost <= 0.0:
         # base_cost or rec_cost might be zero, but as they are floats, the might be
@@ -35,13 +35,13 @@ def calculate_improvement_multiple(base_cost: float, rec_cost: float) -> float:
 
 
 def decode_bytes_to_utf8(obj: Any) -> Any:  # noqa: ANN401
-    """Recursively decode bytes to UTF-8 strings for JSON serialization.
+    """Рекурсивно декодировать байты в строки UTF-8 для сериализации JSON.
 
     Args:
-        obj: Object that may contain bytes (dict, list, bytes, str, etc.)
+        obj: Объект, который может содержать байты (dict, list, bytes, str и т.д.)
 
     Returns:
-        Object with decoded bytes as UTF-8 strings.
+        Объект с декодированными байтами в виде строк UTF-8.
     """
     if isinstance(obj, bytes):
         try:
@@ -58,15 +58,15 @@ def decode_bytes_to_utf8(obj: Any) -> Any:  # noqa: ANN401
 
 
 def obfuscate_password(text: str | None) -> str | None:
-    """Obfuscate password in any text containing connection information.
+    """Замаскировать пароль в любом тексте, содержащем информацию о подключении.
 
-    Works on connection URLs, error messages, and other strings.
+    Работает с URL подключений, сообщениями об ошибках и другими строками.
 
     Args:
-        text: The text containing connection information.
+        text: Текст, содержащий информацию о подключении.
 
     Returns:
-        The text with passwords obfuscated, or None if input was None.
+        Текст с замаскированными паролями или None, если вход был None.
     """
     if text is None:
         return None

@@ -1,4 +1,4 @@
-"""Top queries MCP tools registration."""
+"""Регистрация MCP-инструментов топ запросов."""
 
 from typing import Annotated
 
@@ -14,7 +14,12 @@ from postgres_fastmcp.tools.common import ToolDescriptions
 
 
 def register_top_queries_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register top queries tools."""
+    """Зарегистрировать инструменты топ запросов.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.get_top_queries,
@@ -46,7 +51,11 @@ def register_top_queries_tools(provider: LocalProvider, descriptions: ToolDescri
         ] = 10,
         top_queries_service: TopQueriesService = TopQueriesServiceProvider,
     ) -> ToolResult:
-        """Report slowest or most resource-intensive queries."""
+        """Отчёт по самым медленным или наиболее ресурсоёмким запросам.
+
+        Returns:
+            ToolResult с отчётом или сообщением об ошибке.
+        """
         try:
             return ToolResult(content=await top_queries_service.get_top_queries(sort_by=sort_by, limit=limit))
         except BaseApplicationError as exc:

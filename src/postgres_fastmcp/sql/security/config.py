@@ -1,18 +1,18 @@
-"""Configuration for safe SQL execution."""
+"""Конфигурация безопасного выполнения SQL."""
 
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
 class SafeSqlConfig:
-    """Configuration for SafeSqlExecutor.
+    """Конфигурация SafeSqlExecutor.
 
     Attributes:
-        query_tag: Tag added to queries for logging/monitoring.
-        timeout: Optional execution timeout in seconds.
-        allowed_schema: Allowed schema (e.g. 'public'); None means all.
-        read_only: If True, only read statements; if False, DML allowed.
-        table_prefix: If set with allowed_schema, only tables with this prefix.
+        query_tag: Тег добавляется к запросам для логирования/мониторинга.
+        timeout: Необязательный таймаут выполнения в секундах.
+        allowed_schema: Разрешенная схема (например, 'public'); None означает все.
+        read_only: Если True, только операторы чтения; если False, разрешен DML.
+        table_prefix: Если задан вместе с allowed_schema, только таблицы с этим префиксом.
     """
 
     query_tag: str = "postgres-fastmcp"

@@ -1,4 +1,4 @@
-"""Database Tuning Advisor (DTA) tool for Postgres MCP."""
+"""Инструмент Database Tuning Advisor (DTA) для Postgres MCP."""
 
 import logging
 import os
@@ -19,33 +19,33 @@ logger = logging.getLogger(__name__)
 
 
 class TextPresentation:
-    """Text-based presentation of index tuning recommendations."""
+    """Текстовое представление рекомендаций по настройке индексов."""
 
     def __init__(
         self,
         sql_driver: SqlExecutor | SafeSqlExecutor,
         index_tuning: IndexTuningBase,
     ) -> None:
-        """Initialize the presentation.
+        """Инициализация представления.
 
         Args:
-            sql_driver: The PostgreSQL SQL driver object.
-            index_tuning: The index tuning tool instance.
+            sql_driver: Объект SQL-драйвера PostgreSQL.
+            index_tuning: Экземпляр инструмента настройки индексов.
         """
         self.sql_driver = sql_driver
         self.index_tuning = index_tuning
 
     async def analyze_workload(self, max_index_size_mb: int = 10000) -> dict[str, Any]:
-        """Analyze SQL workload and recommend indexes.
+        """Проанализировать нагрузку SQL и рекомендовать индексы.
 
-        This method analyzes queries from database query history, examining
-        frequently executed and costly queries to recommend the most beneficial indexes.
+        Анализирует запросы из истории БД (часто выполняемые и затратные)
+        и рекомендует наиболее полезные индексы.
 
         Args:
-            max_index_size_mb: Maximum total size for recommended indexes in MB.
+            max_index_size_mb: Максимальный суммарный размер рекомендуемых индексов в МБ.
 
         Returns:
-            Dict with recommendations or error.
+            Словарь с рекомендациями или с ключом error.
         """
         return await self._execute_analysis(
             min_calls=50,
@@ -55,17 +55,16 @@ class TextPresentation:
         )
 
     async def analyze_queries(self, queries: list[str], max_index_size_mb: int = 10000) -> dict[str, Any]:
-        """Analyze a list of SQL queries and recommend indexes.
+        """Проанализировать список SQL-запросов и рекомендовать индексы.
 
-        This method examines the provided SQL queries and recommends
-        indexes that would improve their performance.
+        Анализирует переданные запросы и рекомендует индексы для улучшения их выполнения.
 
         Args:
-            queries: List of SQL queries to analyze.
-            max_index_size_mb: Maximum total size for recommended indexes in MB.
+            queries: Список SQL-запросов для анализа.
+            max_index_size_mb: Максимальный суммарный размер рекомендуемых индексов в МБ.
 
         Returns:
-            Dict with recommendations or error.
+            Словарь с рекомендациями или с ключом error.
         """
         if not queries:
             return {"error": "No queries provided for analysis"}
@@ -79,17 +78,16 @@ class TextPresentation:
         )
 
     async def analyze_single_query(self, query: str, max_index_size_mb: int = 10000) -> dict[str, Any]:
-        """Analyze a single SQL query and recommend indexes.
+        """Проанализировать один SQL-запрос и рекомендовать индексы.
 
-        This method examines the provided SQL query and recommends
-        indexes that would improve its performance.
+        Анализирует переданный запрос и рекомендует индексы для улучшения его выполнения.
 
         Args:
-            query: SQL query to analyze.
-            max_index_size_mb: Maximum total size for recommended indexes in MB.
+            query: SQL-запрос для анализа.
+            max_index_size_mb: Максимальный суммарный размер рекомендуемых индексов в МБ.
 
         Returns:
-            Dict with recommendations or error.
+            Словарь с рекомендациями или с ключом error.
         """
         return await self._execute_analysis(
             query_list=[query],
@@ -107,17 +105,17 @@ class TextPresentation:
         limit: int = 100,
         max_index_size_mb: int = 10000,
     ) -> dict[str, Any]:
-        """Execute indexing analysis.
+        """Выполнить анализ настройки индексов.
 
         Args:
-            query_list: Optional list of SQL queries to analyze.
-            min_calls: Minimum number of calls for a query to be considered.
-            min_avg_time_ms: Minimum average execution time in ms.
-            limit: Maximum number of queries to analyze.
-            max_index_size_mb: Maximum total size for recommended indexes in MB.
+            query_list: Необязательный список SQL-запросов для анализа.
+            min_calls: Минимальное число вызовов для учёта запроса.
+            min_avg_time_ms: Минимальное среднее время выполнения в мс.
+            limit: Максимальное число запросов для анализа.
+            max_index_size_mb: Максимальный суммарный размер рекомендуемых индексов в МБ.
 
         Returns:
-            Dict with recommendations or dict with error.
+            Словарь с рекомендациями или с ключом error.
         """
         try:
             # Run the index tuning analysis
@@ -177,13 +175,13 @@ class TextPresentation:
             return {"error": f"Error analyzing queries: {e}"}
 
     def _build_recommendations_list(self, session: IndexTuningResult) -> list[dict[str, Any]]:
-        """Build recommendations list from session.
+        """Собрать список рекомендаций из сессии.
 
         Args:
-            session: IndexTuningResult session.
+            session: Сессия IndexTuningResult.
 
         Returns:
-            List of recommendation dictionaries.
+            Список словарей с рекомендациями.
         """
         recommendations = []
         for index_apply_order, rec in enumerate(session.recommendations):
@@ -219,13 +217,13 @@ class TextPresentation:
         return recommendations
 
     async def _generate_query_impact(self, session: IndexTuningResult) -> list[dict[str, Any]]:
-        """Generate the query impact section showing before/after explain plans.
+        """Сформировать секцию влияния запросов (план до/после).
 
         Args:
-            session: IndexTuningResult containing recommendations.
+            session: IndexTuningResult с рекомендациями.
 
         Returns:
-            List of dictionaries with query and explain plans.
+            Список словарей с запросом и планами объяснения.
         """
         query_impact: list[dict[str, Any]] = []
 

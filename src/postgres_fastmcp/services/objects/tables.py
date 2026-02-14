@@ -1,4 +1,4 @@
-"""Tables and views — listing and details (used only by objects module)."""
+"""Таблицы и представления: список и детали (используется только модулем objects)."""
 
 from typing import Any
 
@@ -14,9 +14,14 @@ from postgres_fastmcp.sql.catalog.queries import (
 
 
 class TablesService:
-    """Service for listing tables/views and getting their details."""
+    """Сервис списка таблиц/представлений и получения их деталей."""
 
     def __init__(self, db: DbAccessService) -> None:
+        """Инициализация с сервисом доступа к БД.
+
+        Args:
+            db: Сервис доступа к БД.
+        """
         self.db = db
 
     async def list_tables_views(
@@ -24,7 +29,15 @@ class TablesService:
         schema_name: str,
         object_type: str = "table",
     ) -> list[dict[str, Any]]:
-        """List tables or views in a schema."""
+        """Список таблиц или представлений в схеме.
+
+        Args:
+            schema_name: Имя схемы.
+            object_type: Тип объекта — "table" или "view" (по умолчанию "table").
+
+        Returns:
+            Список словарей с полями schema, name, type.
+        """
         table_type = "BASE TABLE" if object_type == "table" else "VIEW"
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(
@@ -55,7 +68,16 @@ class TablesService:
         object_name: str,
         object_type: str = "table",
     ) -> dict[str, Any]:
-        """Get columns, constraints, indexes for a table or view."""
+        """Получить столбцы, ограничения и индексы таблицы или представления.
+
+        Args:
+            schema_name: Имя схемы объекта.
+            object_name: Имя таблицы или представления.
+            object_type: Тип объекта — "table" или "view" (по умолчанию "table").
+
+        Returns:
+            Словарь с ключами basic, columns, constraints, indexes.
+        """
         sql_driver = self.db.sql_driver
 
         col_rows = await sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True)

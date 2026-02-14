@@ -1,1 +1,1 @@
-"""Safe SQL execution wrapper and config."""
+"""Обертка безопасного выполнения SQL и конфигурация."""

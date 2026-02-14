@@ -12,6 +12,12 @@ def get_database_config(ctx: Context = CurrentContext()) -> DatabaseConfig:  # n
     """Получить текущую конфигурацию БД (права: role, access_mode) из lifespan context.
 
     Единая точка доступа к «текущим правам» для инструментов и сервисов.
+
+    Args:
+        ctx: Контекст MCP (lifespan context с ключом database_config).
+
+    Returns:
+        Экземпляр DatabaseConfig.
     """
     config = ctx.lifespan_context.get("database_config")
     if config is None:

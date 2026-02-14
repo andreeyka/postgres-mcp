@@ -1,1 +1,1 @@
-"""MCP tool registration package."""
+"""Пакет регистрации MCP-инструментов."""

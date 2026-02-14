@@ -1,4 +1,4 @@
-"""Aggregated validation policies: statement types, functions, extensions."""
+"""Сводные политики валидации: типы операторов, функции, расширения."""
 
 from postgres_fastmcp.sql.validation._allowed_functions import ALLOWED_FUNCTIONS
 from postgres_fastmcp.sql.validation.statement_policies import ALLOWED_NODE_TYPES

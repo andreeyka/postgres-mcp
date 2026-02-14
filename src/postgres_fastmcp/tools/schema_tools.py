@@ -1,4 +1,4 @@
-"""Schema MCP tools registration."""
+"""Регистрация MCP-инструментов работы со схемами."""
 
 from fastmcp.server.providers import LocalProvider
 from fastmcp.tools.tool import ToolResult
@@ -11,7 +11,12 @@ from postgres_fastmcp.tools.common import ToolDescriptions
 
 
 def register_schema_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register schema tools."""
+    """Зарегистрировать инструменты работы со схемами.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.list_schemas,
@@ -19,7 +24,11 @@ def register_schema_tools(provider: LocalProvider, descriptions: ToolDescription
         annotations={"readOnlyHint": True},
     )
     async def list_schemas(schema_service: SchemaService = SchemaServiceProvider) -> ToolResult:
-        """List all schemas in the database."""
+        """Список всех схем в базе данных.
+
+        Returns:
+            ToolResult со списком схем или сообщением об ошибке.
+        """
         try:
             return ToolResult(content=await schema_service.list_schemas())
         except BaseApplicationError as exc:

@@ -1,4 +1,4 @@
-"""SQL query constants for database catalog (information_schema, pg_extension)."""
+"""Константы SQL-запросов каталога БД (information_schema, pg_extension)."""
 
 QUERY_LIST_SCHEMAS = """
 SELECT

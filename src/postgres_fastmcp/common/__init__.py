@@ -1,1 +1,1 @@
-"""Common utilities and types."""
+"""Общие утилиты и типы."""

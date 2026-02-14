@@ -1,1 +1,1 @@
-"""Schema module: listing database schemas."""
+"""Модуль схем: список схем базы данных."""

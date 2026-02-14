@@ -17,25 +17,25 @@ logger = logging.getLogger(__name__)
 
 
 class ExplainPlanTool:
-    """Tool for generating and analyzing PostgreSQL explain plans."""
+    """Инструмент для генерации и анализа планов выполнения PostgreSQL."""
 
     def __init__(
         self,
         sql_driver: SqlExecutor | SafeSqlExecutor,
         connection_id: str = "",
     ) -> None:
-        """Initialize the explain plan tool.
+        """Инициализация инструмента объяснения планов.
 
         Args:
-            sql_driver: SQL executor for database access (and as template for param replacement).
-            connection_id: Stable connection id for version/extension cache.
+            sql_driver: SQL-исполнитель для доступа к БД (и как шаблон для подстановки параметров).
+            connection_id: Стабильный идентификатор соединения для кэша версии/расширений.
         """
         self.sql_driver = sql_driver
         self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
         self._param_replacer = SqlParamReplacer(sql_driver, sql_driver)
 
     async def replace_query_parameters_if_needed(self, sql_query: str) -> tuple[str, bool]:
-        """Replace bind variables with sample values in a query."""
+        """Подставить вместо плейсхолдеров ($1, $2, …) примерные значения в запросе."""
         use_generic_plan = False
         has_bind_variables = self._has_bind_variables(sql_query)
 
@@ -64,49 +64,49 @@ class ExplainPlanTool:
         return sql_query, use_generic_plan
 
     async def explain(self, sql_query: str, *, do_analyze: bool = False) -> ExplainPlanArtifact:
-        """Generate an EXPLAIN plan for a SQL query.
+        """Сформировать план EXPLAIN для SQL-запроса.
 
         Args:
-            sql_query: The SQL query to explain.
-            do_analyze: Whether to run ANALYZE (default: False).
+            sql_query: SQL-запрос для объяснения.
+            do_analyze: Выполнять ли ANALYZE (по умолчанию False).
 
         Returns:
             ExplainPlanArtifact.
 
         Raises:
-            ExplainPlanError: On plan generation or conversion failure.
+            ExplainPlanError: При ошибке генерации или преобразования плана.
         """
         modified_sql_query, use_generic_plan = await self.replace_query_parameters_if_needed(sql_query)
         return await self._run_explain_query(modified_sql_query, analyze=do_analyze, generic_plan=use_generic_plan)
 
     async def explain_analyze(self, sql_query: str) -> ExplainPlanArtifact:
-        """Generate an EXPLAIN ANALYZE plan for a SQL query.
+        """Сформировать план EXPLAIN ANALYZE для SQL-запроса.
 
         Args:
-            sql_query: The SQL query to explain and analyze.
+            sql_query: SQL-запрос для объяснения и анализа.
 
         Returns:
             ExplainPlanArtifact.
 
         Raises:
-            ExplainPlanError: On plan generation or conversion failure.
+            ExplainPlanError: При ошибке генерации или преобразования плана.
         """
         return await self.explain(sql_query, do_analyze=True)
 
     async def explain_with_hypothetical_indexes(
         self, sql_query: str, hypothetical_indexes: list[dict[str, Any]]
     ) -> ExplainPlanArtifact:
-        """Generate an explain plan for a query as if certain indexes existed.
+        """Сформировать план объяснения для запроса с учётом гипотетических индексов.
 
         Args:
-            sql_query: The SQL query to explain.
-            hypothetical_indexes: List of index definitions as dictionaries.
+            sql_query: SQL-запрос для объяснения.
+            hypothetical_indexes: Список определений индексов в виде словарей.
 
         Returns:
             ExplainPlanArtifact.
 
         Raises:
-            ExplainPlanError: On validation, plan generation, or conversion failure.
+            ExplainPlanError: При ошибке валидации, генерации или преобразования плана.
         """
         # Validate index definitions format
         if not isinstance(hypothetical_indexes, list):
@@ -148,20 +148,20 @@ class ExplainPlanTool:
             raise ExplainPlanError(f"Error converting explain plan: {e}") from e
 
     def _has_bind_variables(self, query: str) -> bool:
-        """Check if a query contains bind variables ($1, $2, etc)."""
+        """Проверить, есть ли в запросе плейсхолдеры ($1, $2, …)."""
         return bool(re.search(r"\$\d+", query))
 
     def _has_like_expressions(self, query: str) -> bool:
-        """Check if a query contains LIKE expressions, which don't work with GENERIC_PLAN."""
+        """Проверить, есть ли в запросе выражения LIKE (не совместимы с GENERIC_PLAN)."""
         return bool(re.search(r"\bLIKE\b", query, re.IGNORECASE))
 
     async def _run_explain_query(
         self, query: str, *, analyze: bool = False, generic_plan: bool = False
     ) -> ExplainPlanArtifact:
-        """Run EXPLAIN query and return artifact.
+        """Выполнить EXPLAIN и вернуть артефакт плана.
 
         Raises:
-            ExplainPlanError: On missing result, wrong type, conversion or execution failure.
+            ExplainPlanError: При отсутствии результата, неверном типе, ошибке преобразования или выполнения.
         """
         try:
             explain_options = ["FORMAT JSON"]
@@ -206,16 +206,16 @@ class ExplainPlanTool:
         use_generic_plan: bool = False,
         dta: DatabaseTuningAdvisor | None = None,
     ) -> dict[str, Any]:
-        """Generate an explain plan for a query with specified indexes.
+        """Сформировать план объяснения для запроса с указанным набором индексов.
 
         Args:
-            query_text: The SQL query to explain.
-            indexes: A frozenset of IndexDefinition objects representing the indexes to enable.
-            use_generic_plan: Whether to use GENERIC_PLAN option (default: False).
-            dta: Optional DatabaseTuningAdvisor instance for tracing (default: None).
+            query_text: SQL-запрос для объяснения.
+            indexes: Frozenset объектов IndexDefinition — индексы для включения.
+            use_generic_plan: Использовать опцию GENERIC_PLAN (по умолчанию False).
+            dta: Опциональный экземпляр DatabaseTuningAdvisor для трассировки (по умолчанию None).
 
         Returns:
-            The explain plan as a dictionary.
+            План объяснения в виде словаря.
         """
         try:
             # Create the indexes query

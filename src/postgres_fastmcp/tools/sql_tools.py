@@ -1,4 +1,4 @@
-"""SQL execution MCP tools registration."""
+"""Регистрация MCP-инструментов выполнения SQL."""
 
 from typing import Annotated
 
@@ -14,7 +14,12 @@ from postgres_fastmcp.tools.common import ToolDescriptions
 
 
 def register_sql_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register SQL execution tools."""
+    """Зарегистрировать инструменты выполнения SQL.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.execute_sql,
@@ -35,7 +40,11 @@ def register_sql_tools(provider: LocalProvider, descriptions: ToolDescriptions) 
         ] = "all",
         sql_execution_service: SqlExecutionService = SqlExecutionServiceProvider,
     ) -> ToolResult:
-        """Execute a SQL query against the database."""
+        """Выполнить SQL-запрос к базе данных.
+
+        Returns:
+            ToolResult с результатами запроса или сообщением об ошибке.
+        """
         try:
             return ToolResult(content=await sql_execution_service.execute_sql(sql))
         except BaseApplicationError as exc:

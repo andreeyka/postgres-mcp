@@ -1,4 +1,4 @@
-"""Artifacts for PostgreSQL explain plans."""
+"""Артефакты планов выполнения PostgreSQL EXPLAIN."""
 
 import difflib
 import json
@@ -42,13 +42,13 @@ class PlanNode:
 
     @classmethod
     def from_json_data(cls, json_node: dict[str, Any]) -> "PlanNode":
-        """Create plan node from JSON data.
+        """Создать узел плана из JSON-данных.
 
         Args:
-            json_node: Dictionary with plan node data from PostgreSQL EXPLAIN.
+            json_node: Словарь с данными узла плана из PostgreSQL EXPLAIN.
 
         Returns:
-            PlanNode instance with filled data.
+            Экземпляр PlanNode с заполненными данными.
         """
         # Extract basic fields
         node = cls(
@@ -87,9 +87,9 @@ class PlanNode:
 
 @define
 class ExplainPlanArtifact:
-    """PostgreSQL query execution plan artifact.
+    """Артефакт плана выполнения запроса PostgreSQL.
 
-    Contains execution plan tree, timing metrics, and text representation.
+    Содержит дерево плана, метрики времени и текстовое представление.
     """
 
     value: str
@@ -104,13 +104,13 @@ class ExplainPlanArtifact:
         planning_time: float | None = None,
         execution_time: float | None = None,
     ) -> None:
-        """Initialize execution plan artifact.
+        """Инициализация артефакта плана выполнения.
 
         Args:
-            value: JSON representation of the execution plan.
-            plan_tree: Execution plan node tree.
-            planning_time: Planning time in milliseconds.
-            execution_time: Execution time in milliseconds.
+            value: JSON-представление плана выполнения.
+            plan_tree: Дерево узлов плана выполнения.
+            planning_time: Время планирования в миллисекундах.
+            execution_time: Время выполнения в миллисекундах.
         """
         self.value = value
         self.plan_tree = plan_tree
@@ -118,10 +118,10 @@ class ExplainPlanArtifact:
         self.execution_time = execution_time
 
     def to_text(self) -> str:
-        """Convert the explain plan to a text representation.
+        """Преобразовать план объяснения в текстовое представление.
 
         Returns:
-            str: A string representation of the execution plan with timing information.
+            Строка с планом выполнения и информацией о времени.
         """
         result = []
 
@@ -138,14 +138,14 @@ class ExplainPlanArtifact:
 
     @staticmethod
     def _format_plan_node(node: PlanNode, level: int = 0) -> str:
-        """Recursively format a plan node and its children.
+        """Рекурсивно отформатировать узел плана и его потомков.
 
         Args:
-            node: The plan node to format
-            level: The current indentation level
+            node: Узел плана для форматирования.
+            level: Текущий уровень отступа.
 
         Returns:
-            str: A formatted string representation of the node and its children
+            Отформатированная строка представления узла и его потомков.
         """
         indent = "  " * level
         output = f"{indent}→ {node.node_type} (Cost: {node.startup_cost:.2f}..{node.total_cost:.2f})"
@@ -191,16 +191,16 @@ class ExplainPlanArtifact:
 
     @classmethod
     def from_json_data(cls, plan_data: dict[str, Any]) -> "ExplainPlanArtifact":
-        """Create execution plan artifact from JSON data.
+        """Создать артефакт плана выполнения из данных JSON.
 
         Args:
-            plan_data: Dictionary with execution plan data from PostgreSQL EXPLAIN.
+            plan_data: Словарь с данными плана выполнения из PostgreSQL EXPLAIN.
 
         Returns:
-            ExplainPlanArtifact instance with filled data.
+            Экземпляр ExplainPlanArtifact с заполненными данными.
 
         Raises:
-            ValueError: If required 'Plan' field is missing in the data.
+            ValueError: Если обязательное поле 'Plan' отсутствует в данных.
         """
         error_missing_plan = "Missing 'Plan' field in explain plan data"
         if "Plan" not in plan_data:
@@ -222,13 +222,13 @@ class ExplainPlanArtifact:
 
     @staticmethod
     def format_plan_summary(plan_data: dict[str, Any] | None) -> str:
-        """Extract and format key information from a raw plan data.
+        """Извлечь и отформатировать ключевую информацию из сырых данных плана.
 
         Args:
-            plan_data: Raw plan data dictionary or None.
+            plan_data: Словарь с сырыми данными плана или None.
 
         Returns:
-            Formatted plan summary string.
+            Отформатированная строка-сводка плана.
         """
         if not plan_data:
             return "No plan data available"
@@ -254,15 +254,15 @@ class ExplainPlanArtifact:
         after_plan: dict[str, Any],
         calculate_improvement_multiple: Any,  # noqa: ANN401
     ) -> str:
-        """Generate a textual diff between two explain plans.
+        """Сформировать текстовый diff между двумя планами объяснения.
 
         Args:
-            before_plan: The explain plan before changes
-            after_plan: The explain plan after changes
-            calculate_improvement_multiple: Function to calculate improvement multiple
+            before_plan: План объяснения до изменений.
+            after_plan: План объяснения после изменений.
+            calculate_improvement_multiple: Функция расчёта множителя улучшения.
 
         Returns:
-            A string containing a readable diff between the two plans
+            Строка с читаемым diff между двумя планами.
         """
         if not before_plan or not after_plan:
             return "Cannot generate diff: Missing plan data"

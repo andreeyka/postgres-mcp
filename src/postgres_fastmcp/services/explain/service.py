@@ -1,4 +1,4 @@
-"""Explain query execution plan service (facade for explain module)."""
+"""Сервис объяснения планов выполнения запросов (фасад модуля explain)."""
 
 from typing import Any, Literal
 
@@ -12,10 +12,10 @@ ExplainMode = Literal["plain", "analyze", "hypothetical"]
 
 
 class ExplainService:
-    """Service for explaining SQL query execution plans."""
+    """Сервис для объяснения планов выполнения SQL запросов."""
 
     def __init__(self, db: DbAccessService, mode: ExplainMode = "plain") -> None:
-        """Initialize with database access service and explain mode."""
+        """Инициализация сервиса с подключением к базе данных и режимом объяснения."""
         self.db = db
         self._mode = mode
 
@@ -25,15 +25,19 @@ class ExplainService:
         *,
         hypothetical_indexes: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Explain the execution plan for a SQL query.
+        """Объяснить план выполнения для SQL запроса.
 
-        Mode is fixed by provider (plain / analyze / hypothetical).
-        For hypothetical mode, pass hypothetical_indexes; otherwise ignored.
+        Args:
+            sql: SQL запрос для объяснения.
+            hypothetical_indexes: Список гипотетических индексов (только для режима hypothetical).
+
+        Returns:
+            Строка с объяснением плана выполнения.
 
         Raises:
-            ExplainAnalyzeWithHypotheticalError: analyze and hypothetical_indexes used together.
-            HypopgNotInstalledError: HypoPG not installed when hypothetical_indexes given.
-            ExplainPlanError: From ExplainPlanTool on plan generation failure.
+            ExplainAnalyzeWithHypotheticalError: Если analyze и hypothetical_indexes использованы вместе.
+            HypopgNotInstalledError: Если HypoPG не установлен при использовании hypothetical_indexes.
+            ExplainPlanError: При ошибке генерации плана от ExplainPlanTool.
         """
         sql_driver = self.db.sql_driver
         connection_id = self.db.connection_id

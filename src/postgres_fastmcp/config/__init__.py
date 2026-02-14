@@ -1,4 +1,4 @@
-"""Application configuration and settings (one MCP server = one database)."""
+"""Конфигурация приложения и настройки (один MCP-сервер = одна база данных)."""
 
 import json
 from pathlib import Path
@@ -17,12 +17,12 @@ __all__ = ["Settings", "build_settings_from_cli", "get_settings", "settings"]
 
 
 class Settings(BaseSettings):
-    """Application settings (single database per server).
+    """Настройки приложения (одна база данных на сервер).
 
-    Loaded from: environment variables, .env, config.json, defaults.
-    Consumers use nested config via DI or direct access: settings.server, settings.fastmcp, settings.database.
+    Загружаются из: переменных окружения, .env, config.json, значений по умолчанию.
+    Потребители используют вложенную конфигурацию через DI или прямой доступ: settings.server, settings.fastmcp, settings.database.
 
-    Example env: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE__DATABASE_URI=postgresql://...
+    Примеры переменных окружения: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE__DATABASE_URI=postgresql://...
     """
 
     model_config = SettingsConfigDict(
@@ -39,13 +39,13 @@ class Settings(BaseSettings):
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:
-    """Load configuration from JSON file.
+    """Загрузка конфигурации из JSON-файла.
 
     Args:
-        json_path: Path to JSON file.
+        json_path: Путь к JSON-файлу.
 
     Returns:
-        Configuration dictionary or None if file not found.
+        Словарь конфигурации или None если файл не найден.
     """
     if not json_path.exists():
         return None
@@ -59,20 +59,20 @@ def load_json_config(json_path: Path) -> dict[str, Any] | None:
 
 
 def get_settings(**overrides: Any) -> Settings:
-    """Factory function to create settings instance.
+    """Функция-фабрика для создания экземпляра настроек.
 
-    Loads configuration in the following priority order:
-    1. **overrides parameters (highest priority)
-    2. config.json file (if exists)
-    3. Environment variables
-    4. .env file (if exists)
-    5. Default values from class
+    Загружает конфигурацию в следующем порядке приоритета:
+    1. Параметры overrides (наивысший приоритет)
+    2. Файл config.json (если существует)
+    3. Переменные окружения
+    4. Файл .env (если существует)
+    5. Значения по умолчанию из класса
 
     Args:
-        **overrides: Parameters to override default values.
+        **overrides: Параметры для переопределения значений по умолчанию.
 
     Returns:
-        Settings instance with loaded configuration.
+        Экземпляр Settings с загруженной конфигурацией.
 
     Examples:
         >>> settings = get_settings()
@@ -104,10 +104,10 @@ def build_settings_from_cli(  # noqa: PLR0913
     access_mode: str | None = None,
     role: str | None = None,
 ) -> Settings:
-    """Build Settings from CLI arguments (single source for current rights/config).
+    """Формирование Settings из аргументов CLI (единый источник текущих прав/конфигурации).
 
-    Encapsulates branching: CLI database_uri vs config file, transport overrides.
-    Use the returned settings.database as the single "current permissions" for the app.
+    Инкапсулирует ветвление: database_uri из CLI или из конфиг-файла, переопределение transport.
+    Используйте returned settings.database как единственный "текущий набор прав" для приложения.
     """
     if database_uri:
         database_config = DatabaseConfig(

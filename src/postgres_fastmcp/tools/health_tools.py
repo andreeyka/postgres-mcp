@@ -1,4 +1,4 @@
-"""Database health MCP tools registration."""
+"""Регистрация MCP-инструментов проверки состояния БД."""
 
 from typing import Annotated
 
@@ -15,7 +15,12 @@ from postgres_fastmcp.tools.constants import HEALTH_TYPE_VALUES
 
 
 def register_health_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register database health tools."""
+    """Зарегистрировать инструменты проверки состояния БД.
+
+    Args:
+        provider: Провайдер для регистрации инструментов.
+        descriptions: Описания инструментов.
+    """
 
     @provider.tool(
         description=descriptions.analyze_db_health,
@@ -36,7 +41,11 @@ def register_health_tools(provider: LocalProvider, descriptions: ToolDescription
         ] = "all",
         health_service: HealthService = HealthServiceProvider,
     ) -> ToolResult:
-        """Analyze database health across available dimensions."""
+        """Проверить состояние БД по доступным измерениям.
+
+        Returns:
+            ToolResult с отчётом о состоянии или сообщением об ошибке.
+        """
         try:
             return ToolResult(content=await health_service.analyze_db_health(health_type=health_type))
         except BaseApplicationError as exc:

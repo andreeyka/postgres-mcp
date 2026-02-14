@@ -12,6 +12,9 @@ def get_sql_execution_service(
 ) -> SqlExecutionService:
     """Получить сервис для выполнения SQL.
 
+    Args:
+        db: Сервис доступа к БД.
+
     Returns:
         Экземпляр SqlExecutionService.
     """

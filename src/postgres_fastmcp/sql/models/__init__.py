@@ -1,1 +1,1 @@
-"""SQL-related data models."""
+"""Модели данных для SQL."""

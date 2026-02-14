@@ -1,1 +1,1 @@
-"""Query execution and driver errors."""
+"""Выполнение запросов и ошибки драйвера."""

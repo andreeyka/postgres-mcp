@@ -1,4 +1,4 @@
-"""Objects facade — routes list_objects and get_object_details to tables, sequences, extensions."""
+"""Objects facade — маршрутизирует вызовы list_objects и get_object_details в сервисы таблиц, последовательностей и расширений."""
 
 from typing import Any, cast
 
@@ -13,16 +13,27 @@ from .tables import TablesService
 
 
 class ObjectsService:
-    """Facade: routes list_objects and get_object_details to discrete services."""
+    """Фасад: маршрутизирует вызовы list_objects и get_object_details в отдельные сервисы."""
 
     def __init__(self, db: DbAccessService) -> None:
+        """Инициализация сервиса с подключением к базе данных."""
         self.db = db
         self._tables = TablesService(db)
         self._sequences = SequencesService(db)
         self._extensions = ExtensionsService(db)
 
     def _resolve_schema(self, schema_name: str) -> str:
-        """Resolve schema for user mode. Returns schema_name; raises if access denied."""
+        """Разрешить схему для режима пользователя. Возвращает schema_name; выбрасывает исключение при запрете доступа.
+
+        Args:
+            schema_name: Имя схемы для разрешения.
+
+        Returns:
+            Имя схемы, если доступ разрешен.
+
+        Raises:
+            SchemaAccessError: Если доступ к запрошенной схеме запрещен.
+        """
         if self.db.role == UserRole.USER:
             if schema_name and schema_name.lower() != "public":
                 raise SchemaAccessError(schema_name)
@@ -34,11 +45,18 @@ class ObjectsService:
         schema_name: str,
         object_type: str = "table",
     ) -> list[dict[str, Any]]:
-        """List objects — delegates to TablesService, SequencesService, or ExtensionsService.
+        """Получить список объектов — делегирует вызовы TablesService, SequencesService или ExtensionsService.
+
+        Args:
+            schema_name: Имя схемы для получения объектов.
+            object_type: Тип объектов ("table", "view", "sequence", "extension") (по умолчанию "table").
+
+        Returns:
+            Список объектов в виде списка словарей.
 
         Raises:
-            SchemaAccessError: Access to the requested schema is not allowed.
-            UnsupportedObjectTypeError: Object type is not supported.
+            SchemaAccessError: Если доступ к запрошенной схеме запрещен.
+            UnsupportedObjectTypeError: Если тип объекта не поддерживается.
         """
         schema_name = self._resolve_schema(schema_name)
 
@@ -56,11 +74,19 @@ class ObjectsService:
         object_name: str,
         object_type: str = "table",
     ) -> dict[str, Any]:
-        """Get object details — delegates to TablesService, SequencesService, or ExtensionsService.
+        """Получить детальную информацию об объекте — делегирует вызовы TablesService, SequencesService или ExtensionsService.
+
+        Args:
+            schema_name: Имя схемы объекта.
+            object_name: Имя объекта.
+            object_type: Тип объекта ("table", "view", "sequence", "extension") (по умолчанию "table").
+
+        Returns:
+            Словарь с детальной информацией об объекте.
 
         Raises:
-            SchemaAccessError: Access to the requested schema is not allowed.
-            UnsupportedObjectTypeError: Object type is not supported.
+            SchemaAccessError: Если доступ к запрошенной схеме запрещен.
+            UnsupportedObjectTypeError: Если тип объекта не поддерживается.
         """
         schema_name = self._resolve_schema(schema_name)
 
