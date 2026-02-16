@@ -87,7 +87,7 @@ def main(  # noqa: PLR0913
                 transport="http",
                 host=settings.server.host,
                 port=settings.server.port,
-                uvicorn_config={"ws": "websockets-sansio", "logger_config": None},
+                uvicorn_config={"ws": "websockets-sansio", "log_config": None},
             )
         else:
             mcp.run(transport="stdio")
