@@ -3,10 +3,8 @@
 from typing import Annotated
 
 from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import BaseApplicationError
 from postgres_fastmcp.di.top_queries_provider import TopQueriesServiceProvider
 from postgres_fastmcp.enums import ToolTag
 from postgres_fastmcp.services.top_queries.service import TopQueriesService
@@ -50,15 +48,10 @@ def register_top_queries_tools(provider: LocalProvider, descriptions: ToolDescri
             ),
         ] = 10,
         top_queries_service: TopQueriesService = TopQueriesServiceProvider,
-    ) -> ToolResult:
+    ) -> str:
         """Отчёт по самым медленным или наиболее ресурсоёмким запросам.
 
         Returns:
-            ToolResult с отчётом или сообщением об ошибке.
+            Строка с отчётом. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            return ToolResult(content=await top_queries_service.get_top_queries(sort_by=sort_by, limit=limit))
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await top_queries_service.get_top_queries(sort_by=sort_by, limit=limit)

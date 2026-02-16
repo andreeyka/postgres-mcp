@@ -481,6 +481,8 @@ echo 'long_code_here' > temp.py && uv run python temp.py && rm temp.py
 - ❌ Leave temp files in the project
 - ❌ Use generic names like `test.py` that might conflict
 
+**Unit test conventions** (behavior over implementation, assert on outcome and contract, one mock at boundary): see [tests/README.md](tests/README.md#testing-conventions).
+
 ### Common Usage
 
 ```bash

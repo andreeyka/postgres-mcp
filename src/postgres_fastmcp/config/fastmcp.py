@@ -17,9 +17,6 @@ class FastMCPSettings(BaseSettings):
         ),
         description="Инструкции, описывающие назначение сервера для LLM-клиентов (MCP_INSTRUCTIONS)",
     )
-    mask_error_details: bool = Field(
-        default=True, description="Скрывает внутренние детали ошибок для безопасности (MCP_MASK_ERROR_DETAILS)"
-    )
     return_errors_as_strings: bool = Field(
         default=True,
         description="Возвращает ошибки как строки в ответах LLM вместо стандартных ошибок MCP",

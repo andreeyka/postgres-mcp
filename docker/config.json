@@ -1,7 +1,6 @@
 {
     "_comment": "WARNING: This is a TEST configuration file with test passwords. DO NOT use in production!",
     "name": "postgres-fastmcp",
-    "mask_error_details": true,
     "endpoint": "mcp",
     "transport": "http",
     "databases": {

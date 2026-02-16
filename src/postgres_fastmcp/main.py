@@ -40,9 +40,9 @@ logger = get_logger(__name__)
 )
 @click.option(
     "--role",
-    type=click.Choice(["user", "full"], case_sensitive=False),
+    type=click.Choice(["user", "admin"], case_sensitive=False),
     default=None,
-    help="User role: 'user' (basic role, only public schema, 4 tools) or 'full' (all schemas, 9 tools). "
+    help="User role: 'user' (basic role, only public schema, 4 tools) or 'admin' (all schemas, 9 tools). "
     "Used only with --database-uri. Default: 'user'.",
 )
 def main(  # noqa: PLR0913
@@ -87,7 +87,7 @@ def main(  # noqa: PLR0913
                 transport="http",
                 host=settings.server.host,
                 port=settings.server.port,
-                uvicorn_config={"ws": "websockets-sansio"},
+                uvicorn_config={"ws": "websockets-sansio", "logger_config": None},
             )
         else:
             mcp.run(transport="stdio")

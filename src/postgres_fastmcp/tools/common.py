@@ -48,7 +48,7 @@ class ToolDescriptions:
     @property
     def execute_sql(self) -> str:
         """Описание инструмента execute_sql (зависит от role и access_mode)."""
-        if self._role == UserRole.FULL and self._access_mode == AccessMode.UNRESTRICTED:
+        if self._role == UserRole.ADMIN and self._access_mode == AccessMode.UNRESTRICTED:
             return DESC_EXECUTE_SQL_UNRESTRICTED
         return DESC_EXECUTE_SQL_RESTRICTED
 

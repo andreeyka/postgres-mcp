@@ -13,6 +13,7 @@ dependencies = [
     "fastmcp>=3.0.0rc1",
     "pydantic-settings>=2.11.0",
     "pydantic>=2.12.4",
+    "psycopg>=3.3.2",
 ]
 
 
@@ -41,6 +42,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "docker>=7.0.0",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.mypy]
@@ -48,11 +50,6 @@ plugins = "pydantic.mypy"
 python_version = "3.12"
 strict = true
 exclude = [".venv", "tests"]
-
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -100,6 +97,7 @@ ignore = [
     "PLR0914",
     "PLR0915",
     "TRY400",
+    "B008"
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -114,6 +112,7 @@ ignore = [
     "ANN204",  # Missing return type annotation for magic method
     # Missing docstrings - not critical for tests
     "D100",  # Missing docstring in public module
+    "D102",  # Missing docstring in public method
     "D103",  # Missing docstring in public function
     "D104",  # Missing docstring in public package
     "D105",  # Missing docstring in magic method
@@ -174,6 +173,11 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2

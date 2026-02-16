@@ -1,14 +1,12 @@
 """Регистрация MCP-инструментов анализа индексов."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import BaseApplicationError
 from postgres_fastmcp.di.index_analysis_provider import DtaIndexAnalysisServiceProvider, LlmIndexAnalysisServiceProvider
 from postgres_fastmcp.enums import ToolTag
 from postgres_fastmcp.services.index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
@@ -51,26 +49,20 @@ def register_index_tools(provider: LocalProvider, descriptions: ToolDescriptions
                 ),
             ),
         ] = "dta",
-        ctx: Context = CurrentContext(),  # noqa: B008
+        ctx: Context = CurrentContext(),
         dta_index_analysis_service: IndexAnalysisService = DtaIndexAnalysisServiceProvider,
         llm_index_analysis_service: IndexAnalysisService = LlmIndexAnalysisServiceProvider,
-    ) -> ToolResult:
+    ) -> dict[str, Any]:
         """Проанализировать нагрузку и рекомендовать индексы.
 
         Returns:
-            ToolResult с текстом рекомендаций или сообщением об ошибке.
+            Рекомендации. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
-            content = await index_analysis_service.analyze_workload_indexes(
-                max_index_size_mb=max_index_size_mb,
-                ctx=ctx,
-            )
-            return ToolResult(content=content)
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
+        return await index_analysis_service.analyze_workload_indexes(
+            max_index_size_mb=max_index_size_mb,
+            ctx=ctx,
+        )
 
     @provider.tool(
         description=descriptions.analyze_query_indexes,
@@ -107,24 +99,18 @@ def register_index_tools(provider: LocalProvider, descriptions: ToolDescriptions
                 ),
             ),
         ] = "dta",
-        ctx: Context = CurrentContext(),  # noqa: B008
+        ctx: Context = CurrentContext(),
         dta_index_analysis_service: IndexAnalysisService = DtaIndexAnalysisServiceProvider,
         llm_index_analysis_service: IndexAnalysisService = LlmIndexAnalysisServiceProvider,
-    ) -> ToolResult:
+    ) -> dict[str, Any]:
         """Проанализировать указанные запросы и рекомендовать индексы.
 
         Returns:
-            ToolResult с текстом рекомендаций или сообщением об ошибке.
+            Рекомендации. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
-            content = await index_analysis_service.analyze_query_indexes(
-                queries=queries,
-                max_index_size_mb=max_index_size_mb,
-                ctx=ctx,
-            )
-            return ToolResult(content=content)
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
+        return await index_analysis_service.analyze_query_indexes(
+            queries=queries,
+            max_index_size_mb=max_index_size_mb,
+            ctx=ctx,
+        )

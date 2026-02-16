@@ -8,7 +8,7 @@ from fastmcp.server.context import Context
 from postgres_fastmcp.services.db_access_service import DbAccessService
 
 
-def get_db_access(ctx: Context = CurrentContext()) -> DbAccessService:  # noqa: B008
+def get_db_access(ctx: Context = CurrentContext()) -> DbAccessService:
     """Получить DbAccessService из lifespan context.
 
     Args:

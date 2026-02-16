@@ -51,12 +51,9 @@ class SafeSqlExecutor:
         Returns:
             Строки или None для операторов без результата.
         """
-        self._validator.validate(query)
         readonly_effective = self._config.read_only
-        if params:
-            query = self.render(query, params)
-        else:
-            query = f"/* {self._config.query_tag} */ {query}"
+        query = self.render(query, params) if params else f"/* {self._config.query_tag} */ {query}"
+        self._validator.validate(query)
         if self._config.allowed_schema:
             query = f"SET LOCAL search_path = {self._config.allowed_schema}; {query}"
         if self._config.timeout is not None:

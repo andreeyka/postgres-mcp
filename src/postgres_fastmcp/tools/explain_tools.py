@@ -3,10 +3,9 @@
 from typing import Annotated, Any
 
 from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import BaseApplicationError, ExplainAnalyzeWithHypotheticalError
+from postgres_fastmcp.common.errors import ExplainAnalyzeWithHypotheticalError
 from postgres_fastmcp.di.explain_provider import (
     ExplainAnalyzeServiceProvider,
     ExplainHypotheticalServiceProvider,
@@ -55,29 +54,23 @@ def register_explain_tools(provider: LocalProvider, descriptions: ToolDescriptio
         explain_plain_service: ExplainService = ExplainPlainServiceProvider,
         explain_analyze_service: ExplainService = ExplainAnalyzeServiceProvider,
         explain_hypothetical_service: ExplainService = ExplainHypotheticalServiceProvider,
-    ) -> ToolResult:
+    ) -> str:
         """Объяснить план выполнения SQL-запроса.
 
         Returns:
-            ToolResult с текстом плана выполнения или сообщением об ошибке.
+            Строка с планом выполнения. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            if analyze and hypothetical_indexes:
-                raise ExplainAnalyzeWithHypotheticalError  # noqa: TRY301
+        if analyze and hypothetical_indexes:
+            raise ExplainAnalyzeWithHypotheticalError
 
-            if hypothetical_indexes:
-                service = explain_hypothetical_service
-            elif analyze:
-                service = explain_analyze_service
-            else:
-                service = explain_plain_service
+        if hypothetical_indexes:
+            service = explain_hypothetical_service
+        elif analyze:
+            service = explain_analyze_service
+        else:
+            service = explain_plain_service
 
-            content = await service.explain_query(
-                sql,
-                hypothetical_indexes=hypothetical_indexes or [],
-            )
-            return ToolResult(content=content)
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await service.explain_query(
+            sql,
+            hypothetical_indexes=hypothetical_indexes or [],
+        )

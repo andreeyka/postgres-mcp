@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.config.fastmcp import FastMCPSettings
@@ -20,22 +20,15 @@ class Settings(BaseSettings):
     """Настройки приложения (одна база данных на сервер).
 
     Загружаются из: переменных окружения, .env, config.json, значений по умолчанию.
-    Потребители используют вложенную конфигурацию через DI или прямой доступ: settings.server, settings.fastmcp, settings.database.
+    Потребители используют вложенную конфигурацию через DI или прямой доступ:
+    settings.server, settings.fastmcp, settings.database.
 
-    Примеры переменных окружения: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE__DATABASE_URI=postgresql://...
+    Примеры переменных окружения: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_DATABASE_PORT=5432, ...
     """
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        env_prefix="MCP_",
-        env_nested_delimiter="__",
-    )
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
-    database: DatabaseConfig = Field(..., description="Single database configuration")
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:
@@ -106,15 +99,18 @@ def build_settings_from_cli(  # noqa: PLR0913
 ) -> Settings:
     """Формирование Settings из аргументов CLI (единый источник текущих прав/конфигурации).
 
-    Инкапсулирует ветвление: database_uri из CLI или из конфиг-файла, переопределение transport.
-    Используйте returned settings.database как единственный "текущий набор прав" для приложения.
+    Инкапсулирует ветвление: database_uri из CLI разбирается в компоненты (host, port, user, password, name),
+    переопределение transport. Используйте returned settings.database как единственный "текущий набор прав".
     """
     if database_uri:
-        database_config = DatabaseConfig(
-            database_uri=SecretStr(database_uri),
-            access_mode=AccessMode(access_mode) if access_mode else AccessMode.RESTRICTED,
-            role=UserRole(role) if role else UserRole.USER,
-        )
+        database_config = DatabaseConfig.from_uri(database_uri)
+        overrides_db: dict[str, Any] = {}
+        if access_mode is not None:
+            overrides_db["access_mode"] = AccessMode(access_mode)
+        if role is not None:
+            overrides_db["role"] = UserRole(role)
+        if overrides_db:
+            database_config = database_config.model_copy(update=overrides_db)
         server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
         if transport is not None:
             server_overrides["transport"] = transport

@@ -1,12 +1,10 @@
 """Регистрация MCP-инструментов метаданных объектов БД."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import BaseApplicationError
 from postgres_fastmcp.di.objects_provider import ObjectsServiceProvider
 from postgres_fastmcp.enums import ToolTag
 from postgres_fastmcp.services.objects.service import ObjectsService
@@ -42,19 +40,13 @@ def register_objects_tools(provider: LocalProvider, descriptions: ToolDescriptio
             ),
         ] = "table",
         objects_service: ObjectsService = ObjectsServiceProvider,
-    ) -> ToolResult:
+    ) -> list[dict[str, Any]]:
         """Список объектов в схеме.
 
         Returns:
-            ToolResult со списком объектов или сообщением об ошибке.
+            Список объектов. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            content = await objects_service.list_objects(schema_name=schema_name, object_type=object_type)
-            return ToolResult(content=content)
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await objects_service.list_objects(schema_name=schema_name, object_type=object_type)
 
     @provider.tool(
         description=descriptions.get_object_details,
@@ -86,20 +78,14 @@ def register_objects_tools(provider: LocalProvider, descriptions: ToolDescriptio
             ),
         ] = "table",
         objects_service: ObjectsService = ObjectsServiceProvider,
-    ) -> ToolResult:
+    ) -> dict[str, Any]:
         """Получить детальную информацию об объекте.
 
         Returns:
-            ToolResult с деталями объекта или сообщением об ошибке.
+            Детали объекта. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            content = await objects_service.get_object_details(
-                schema_name=schema_name,
-                object_name=object_name,
-                object_type=object_type,
-            )
-            return ToolResult(content=content)
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await objects_service.get_object_details(
+            schema_name=schema_name,
+            object_name=object_name,
+            object_type=object_type,
+        )

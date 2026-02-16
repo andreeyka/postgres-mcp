@@ -77,9 +77,10 @@ def get_replacement_value(stats: dict[str, Any], context: str) -> str:
     data_type = (stats.get("data_type") or "").lower()
     common_vals = stats.get("common_vals")
     histogram_bounds = stats.get("histogram_bounds")
+    ctx_lower = context.lower()
     is_equality = "=" in context and "!=" not in context and "<>" not in context
-    is_range = any(op in context for op in [">", "<", ">=", "<=", "between"])
-    is_like = "like" in context
+    is_range = any(op in context for op in [">", "<", ">=", "<="]) or "between" in ctx_lower
+    is_like = "like" in ctx_lower
 
     if "char" in data_type or data_type == "text":
         if is_like:

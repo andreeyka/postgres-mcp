@@ -33,7 +33,7 @@ class DbAccessService:
         self.access_mode = config.access_mode
         self.role = config.role
         self.db_connection = DbConnPool(
-            connection_url=config.database_uri.get_secret_value(),
+            connection_url=config.database_uri,
             min_size=config.pool_min_size,
             max_size=config.pool_max_size,
         )
@@ -70,7 +70,7 @@ class DbAccessService:
 
         base = SqlExecutor(conn=self.db_connection)
 
-        if self.role == UserRole.FULL and self.access_mode == AccessMode.UNRESTRICTED:
+        if self.role == UserRole.ADMIN and self.access_mode == AccessMode.UNRESTRICTED:
             logger.debug(LOG_UNRESTRICTED)
             self._executor = base
         else:

@@ -3,10 +3,8 @@
 from typing import Annotated
 
 from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import BaseApplicationError
 from postgres_fastmcp.di.health_provider import HealthServiceProvider
 from postgres_fastmcp.enums import ToolTag
 from postgres_fastmcp.services.health.service import HealthService
@@ -40,15 +38,10 @@ def register_health_tools(provider: LocalProvider, descriptions: ToolDescription
             ),
         ] = "all",
         health_service: HealthService = HealthServiceProvider,
-    ) -> ToolResult:
+    ) -> str:
         """Проверить состояние БД по доступным измерениям.
 
         Returns:
-            ToolResult с отчётом о состоянии или сообщением об ошибке.
+            Строка с отчётом о состоянии. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            return ToolResult(content=await health_service.analyze_db_health(health_type=health_type))
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await health_service.analyze_db_health(health_type=health_type)

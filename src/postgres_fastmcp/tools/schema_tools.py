@@ -1,9 +1,9 @@
 """Регистрация MCP-инструментов работы со схемами."""
 
-from fastmcp.server.providers import LocalProvider
-from fastmcp.tools.tool import ToolResult
+from typing import Any
 
-from postgres_fastmcp.common.errors import BaseApplicationError
+from fastmcp.server.providers import LocalProvider
+
 from postgres_fastmcp.di.schema_provider import SchemaServiceProvider
 from postgres_fastmcp.enums import ToolTag
 from postgres_fastmcp.services.schema.service import SchemaService
@@ -23,15 +23,10 @@ def register_schema_tools(provider: LocalProvider, descriptions: ToolDescription
         tags={ToolTag.FULL},
         annotations={"readOnlyHint": True},
     )
-    async def list_schemas(schema_service: SchemaService = SchemaServiceProvider) -> ToolResult:
+    async def list_schemas(schema_service: SchemaService = SchemaServiceProvider) -> list[dict[str, Any]]:
         """Список всех схем в базе данных.
 
         Returns:
-            ToolResult со списком схем или сообщением об ошибке.
+            Список схем. FastMCP преобразует в ответ. При ошибке — исключение наружу.
         """
-        try:
-            return ToolResult(content=await schema_service.list_schemas())
-        except BaseApplicationError as exc:
-            return ToolResult(content=f"Error: {exc}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return ToolResult(content=f"Error: {exc}")
+        return await schema_service.list_schemas()
