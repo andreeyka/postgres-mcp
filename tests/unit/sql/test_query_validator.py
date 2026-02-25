@@ -96,14 +96,19 @@ class TestQueryValidatorFunctions:
 
 
 class TestQueryValidatorExplainAnalyze:
-    """EXPLAIN ANALYZE is explicitly blocked."""
+    """EXPLAIN ANALYZE is blocked by default, allowed when allow_explain_analyze=True."""
 
-    def test_explain_analyze_raises(self) -> None:
-        """EXPLAIN (ANALYZE) raises ExplainAnalyzeNotSupportedError."""
+    def test_explain_analyze_raises_when_not_allowed(self) -> None:
+        """EXPLAIN (ANALYZE) raises ExplainAnalyzeNotSupportedError when allow_explain_analyze=False."""
         v = QueryValidator(read_only=True)
         with pytest.raises(BaseApplicationError) as exc_info:
             v.validate("EXPLAIN (ANALYZE) SELECT 1")
         assert "ANALYZE" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
+
+    def test_explain_analyze_allowed_when_flag_true(self) -> None:
+        """EXPLAIN (ANALYZE) passes validation when allow_explain_analyze=True."""
+        v = QueryValidator(read_only=True, allow_explain_analyze=True)
+        v.validate("EXPLAIN (ANALYZE) SELECT 1")
 
 
 class TestQueryValidatorCreateExtension:

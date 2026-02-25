@@ -3,6 +3,7 @@
 
 import pytest
 
+from postgres_fastmcp.common.errors import SchemaNotAllowedError, TablePrefixAccessError
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
@@ -99,10 +100,10 @@ async def test_table_prefix_blocks_non_prefixed_tables(
     sql_driver = db_service_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TablePrefixAccessError):
         await sql_driver.execute("SELECT * FROM other_users LIMIT 1", readonly=True)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TablePrefixAccessError):
         await sql_driver.execute("SELECT * FROM test_users LIMIT 1", readonly=True)
 
     result = await sql_driver.execute("SELECT * FROM app_users LIMIT 1", readonly=True)
@@ -132,7 +133,7 @@ async def test_table_prefix_blocks_system_schemas(db_service_user_prefix: DbAcce
     sql_driver = db_service_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(SchemaNotAllowedError):
         await sql_driver.execute("SELECT * FROM pg_catalog.pg_class LIMIT 1", readonly=True)
 
 
@@ -233,7 +234,7 @@ async def test_table_prefix_with_different_prefixes(
         result2 = await sql_driver.execute("SELECT * FROM user_settings LIMIT 1", readonly=True)
         assert result2 is not None
 
-        with pytest.raises(ValueError):
+        with pytest.raises(TablePrefixAccessError):
             await sql_driver.execute("SELECT * FROM admin_logs LIMIT 1", readonly=True)
     finally:
         await user_svc.close()

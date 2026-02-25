@@ -48,6 +48,7 @@ class QueryValidator:
         allowed_schema: str | None = None,
         table_prefix: str | None = None,
         read_only: bool = True,
+        allow_explain_analyze: bool = False,
     ) -> None:
         """Initialize validator with schema/prefix and read-only policy.
 
@@ -55,10 +56,12 @@ class QueryValidator:
             allowed_schema: If set, only this schema is allowed.
             table_prefix: If set with allowed_schema, table names must start with this.
             read_only: If True, only read statements allowed; if False, DML allowed too.
+            allow_explain_analyze: If True, EXPLAIN (ANALYZE) is allowed (e.g. when access_mode=full).
         """
         self.allowed_schema = allowed_schema
         self.table_prefix = table_prefix
         self.read_only = read_only
+        self.allow_explain_analyze = allow_explain_analyze
 
     def validate(self, query: str) -> None:
         """Валидация запроса; при небезопасном запросе вызывает исключение.
@@ -144,7 +147,7 @@ class QueryValidator:
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
 
-        if isinstance(node, ExplainStmt):
+        if isinstance(node, ExplainStmt) and not self.allow_explain_analyze:
             for option in node.options or []:
                 if isinstance(option, DefElem) and option.defname == "analyze":
                     raise ExplainAnalyzeNotSupportedError

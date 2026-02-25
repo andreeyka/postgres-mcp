@@ -2,7 +2,11 @@
 
 from typing import Any, Literal
 
-from postgres_fastmcp.common.errors import HypopgNotInstalledError
+from postgres_fastmcp.common.errors import (
+    ExplainAnalyzeNotSupportedError,
+    ExplainPlanExecutionError,
+    HypopgNotInstalledError,
+)
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
@@ -57,7 +61,17 @@ class ExplainService:
                     raise HypopgNotInstalledError(hypopg_message)
                 result = await explain_tool.explain_with_hypothetical_indexes(sql, hypothetical_indexes)
         elif self._mode == "analyze":
-            result = await explain_tool.explain_analyze(sql)
+            try:
+                result = await explain_tool.explain_analyze(sql)
+            except ExplainPlanExecutionError as e:
+                cause = getattr(e, "__cause__", None) or getattr(e, "inner", None)
+                if isinstance(cause, ExplainAnalyzeNotSupportedError):
+                    result = await explain_tool.explain(sql)
+                    return result.to_text() + (
+                        "\n\n(Note: EXPLAIN ANALYZE is not supported in this environment; "
+                        "plain EXPLAIN result is shown above.)"
+                    )
+                raise
         else:
             result = await explain_tool.explain(sql)
 

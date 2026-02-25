@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 EXT_INSTALLED_QUERY = "SELECT extversion FROM pg_extension WHERE extname = {}"
 EXT_AVAILABLE_QUERY = "SELECT default_version FROM pg_available_extensions WHERE name = {}"
 
+CATALOG_ERROR_MESSAGE = (
+    "Unable to determine extension status: the extension catalog reported an error. "
+    "This is often caused by another extension's control file (e.g. unrecognized parameter such as "
+    "'no_relocate' in a .control file). Fix or remove the problematic extension on the server, "
+    "or upgrade PostgreSQL to a version that supports the parameter."
+)
+
 
 class ExtensionInspectorAdapter:
     """Адаптер, реализующий ExtensionInspectorPort с использованием исполнителя и идентификатора подключения."""
@@ -49,7 +56,7 @@ class ExtensionInspectorAdapter:
         result = await self._executor.execute(rendered, params=None, readonly=True)
         return cast("list[Any] | None", result)
 
-    async def check_extension(
+    async def check_extension(  # noqa: C901
         self,
         extension_name: str,
         *,
@@ -73,7 +80,12 @@ class ExtensionInspectorAdapter:
             message="",
             default_version=None,
         )
-        installed = await self._run_param(EXT_INSTALLED_QUERY, [extension_name])
+        try:
+            installed = await self._run_param(EXT_INSTALLED_QUERY, [extension_name])
+        except Exception as e:
+            logger.warning("Extension catalog query failed (pg_extension): %s", e)
+            result.catalog_error = CATALOG_ERROR_MESSAGE
+            return result
         if installed and len(installed) > 0:
             version = installed[0].cells.get("extversion", "unknown")
             result.is_installed = True
@@ -85,7 +97,12 @@ class ExtensionInspectorAdapter:
                     result.message = f"The {extension_name} extension (version {version}) is already installed."
             return result
 
-        available = await self._run_param(EXT_AVAILABLE_QUERY, [extension_name])
+        try:
+            available = await self._run_param(EXT_AVAILABLE_QUERY, [extension_name])
+        except Exception as e:
+            logger.warning("Extension catalog query failed (pg_available_extensions): %s", e)
+            result.catalog_error = CATALOG_ERROR_MESSAGE
+            return result
         if available and len(available) > 0:
             result.is_available = True
             result.default_version = available[0].cells.get("default_version")
@@ -117,11 +134,13 @@ class ExtensionInspectorAdapter:
                 )
         return result
 
-    async def check_hypopg_installation_status(
+    async def check_hypopg_installation_status(  # noqa: PLR0911
         self, message_type: Literal["plain", "markdown"] = "markdown"
     ) -> tuple[bool, str]:
         """Проверка установки расширения hypopg."""
         status = await self.check_extension("hypopg", include_messages=False)
+        if status.catalog_error:
+            return False, status.catalog_error
         if status.is_installed:
             if message_type == "markdown":
                 return True, "The **hypopg** extension is already installed."

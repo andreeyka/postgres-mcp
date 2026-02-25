@@ -13,6 +13,7 @@ class ExtensionStatus:
     name: str
     message: str
     default_version: str | None
+    catalog_error: str | None = None
 
 
 class ExtensionInspectorPort(Protocol):

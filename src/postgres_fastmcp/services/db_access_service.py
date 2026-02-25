@@ -75,14 +75,16 @@ class DbAccessService:
                 allowed_schema=safe_config.allowed_schema,
                 table_prefix=safe_config.table_prefix,
                 read_only=safe_config.read_only,
+                allow_explain_analyze=(self.access_mode == AccessMode.FULL),
             )
             logger.debug(
                 "Using SafeSqlExecutor (access_mode=%s, write_mode=%s, allowed_schema=%s, "
-                "read_only=%s, timeout=%ss, table_prefix=%s)",
+                "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s)",
                 self.access_mode,
                 self.write_mode,
                 safe_config.allowed_schema,
                 safe_config.read_only,
+                self.access_mode == AccessMode.FULL,
                 safe_config.timeout,
                 safe_config.table_prefix,
             )

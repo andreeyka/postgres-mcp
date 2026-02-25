@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from postgres_fastmcp.common.errors import HypopgNotInstalledError
+from postgres_fastmcp.common.errors import (
+    ExplainAnalyzeNotSupportedError,
+    ExplainPlanExecutionError,
+    HypopgNotInstalledError,
+)
 from postgres_fastmcp.services.explain.artifacts import ExplainPlanArtifact, PlanNode
 from postgres_fastmcp.services.explain.service import ExplainService
 
@@ -60,6 +64,27 @@ class TestExplainServiceAnalyzeMode:
         service = ExplainService(db=mock_db_access, mode="analyze")
         result = await service.explain_query("SELECT 1")
         assert "Analyze plan" in result or "Result" in result
+
+    @patch("postgres_fastmcp.services.explain.service.ExplainPlanTool")
+    async def test_analyze_mode_falls_back_to_plain_when_analyze_not_supported(
+        self,
+        mock_tool_cls: MagicMock,
+        mock_db_access: MagicMock,
+    ) -> None:
+        """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note."""
+        mock_tool = MagicMock()
+        mock_tool.explain_analyze = AsyncMock(
+            side_effect=ExplainPlanExecutionError(ExplainAnalyzeNotSupportedError())
+        )
+        plain_artifact = _make_artifact("Plain fallback")
+        mock_tool.explain = AsyncMock(return_value=plain_artifact)
+        mock_tool_cls.return_value = mock_tool
+
+        service = ExplainService(db=mock_db_access, mode="analyze")
+        result = await service.explain_query("SELECT 1")
+        assert "Plain fallback" in result or "Result" in result
+        assert "EXPLAIN ANALYZE is not supported" in result
+        assert "plain EXPLAIN result" in result
 
 
 class TestExplainServiceHypotheticalMode:
