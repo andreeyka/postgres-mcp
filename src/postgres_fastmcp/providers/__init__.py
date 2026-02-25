@@ -1,1 +1,1 @@
-"""DI layer: провайдеры для FastMCP Depends."""
+"""Провайдеры сервисов для FastMCP Depends (dependency injection)."""

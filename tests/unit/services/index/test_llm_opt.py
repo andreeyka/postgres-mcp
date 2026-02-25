@@ -117,8 +117,7 @@ class TestLLMOptimizerToolParseIndexAlternatives:
     def test_alternatives_with_multiple_indexes_in_set(self, tool: LLMOptimizerTool) -> None:
         """Multiple indexes in one alternative form a single set."""
         json_text = (
-            '{"alternatives": [[{"table_name": "t1", "columns": ["a"]}, '
-            '{"table_name": "t2", "columns": ["b", "c"]}]]}'
+            '{"alternatives": [[{"table_name": "t1", "columns": ["a"]}, {"table_name": "t2", "columns": ["b", "c"]}]]}'
         )
         result = tool._parse_index_alternatives_from_json(json_text)
         assert len(result) == 1
@@ -302,9 +301,7 @@ class TestLLMOptimizerToolGenerateRecommendations:
             patch(
                 "postgres_fastmcp.services.explain.explain_plan.ExplainPlanTool",
                 return_value=MagicMock(
-                    explain=AsyncMock(
-                        return_value=MagicMock(value='{"Plan": {"Node Type": "Seq Scan", "Plans": []}}')
-                    )
+                    explain=AsyncMock(return_value=MagicMock(value='{"Plan": {"Node Type": "Seq Scan", "Plans": []}}'))
                 ),
             ),
             patch.object(

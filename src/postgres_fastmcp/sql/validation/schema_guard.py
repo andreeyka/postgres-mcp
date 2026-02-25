@@ -2,6 +2,8 @@
 
 from pglast.ast import RangeVar
 
+from postgres_fastmcp.common.errors import SchemaNotAllowedError, SchemataTableAccessError, TablePrefixAccessError
+
 
 def validate_schema_access(
     range_var: RangeVar,
@@ -17,7 +19,9 @@ def validate_schema_access(
         table_prefix: Если задан вместе с allowed_schema, имена таблиц должны начинаться с этого.
 
     Raises:
-        ValueError: Если схема или таблица не разрешена.
+        TablePrefixAccessError: Если имя таблицы не соответствует префиксу.
+        SchemaNotAllowedError: Если схема не разрешена.
+        SchemataTableAccessError: Если в пользовательском режиме запрошен доступ к information_schema.schemata.
     """
     if not allowed_schema:
         return
@@ -26,34 +30,21 @@ def validate_schema_access(
 
     if schemaname is None:
         if table_prefix and range_var.relname and not range_var.relname.lower().startswith(table_prefix.lower()):
-            raise ValueError(
-                f"Access to table '{range_var.relname}' is not allowed. "
-                f"Only tables with names starting with '{table_prefix}' are permitted."
-            )
+            raise TablePrefixAccessError(range_var.relname, table_prefix)
         return
 
     schemaname_lower = schemaname.lower()
 
     if schemaname_lower == "pg_catalog":
-        raise ValueError(
-            f"Access to schema '{schemaname}' is not allowed. Only '{allowed_schema}' schema is permitted."
-        )
+        raise SchemaNotAllowedError(schemaname, allowed_schema)
 
     if schemaname_lower == "information_schema":
         if range_var.relname and range_var.relname.lower() == "schemata":
-            raise ValueError(
-                f"Access to '{schemaname}.{range_var.relname}' is not allowed in user mode. "
-                "Use the list_schemas tool instead (available in admin mode)."
-            )
+            raise SchemataTableAccessError(schemaname, range_var.relname)
         return
 
     if schemaname_lower != allowed_schema.lower():
-        raise ValueError(
-            f"Access to schema '{schemaname}' is not allowed. Only '{allowed_schema}' schema is permitted."
-        )
+        raise SchemaNotAllowedError(schemaname, allowed_schema)
 
     if table_prefix and range_var.relname and not range_var.relname.lower().startswith(table_prefix.lower()):
-        raise ValueError(
-            f"Access to table '{range_var.relname}' is not allowed. "
-            f"Only tables with names starting with '{table_prefix}' are permitted."
-        )
+        raise TablePrefixAccessError(range_var.relname, table_prefix)

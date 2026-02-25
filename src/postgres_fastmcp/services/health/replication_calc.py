@@ -127,22 +127,32 @@ class ReplicationCalc:
         if not self._feature_supported("replication_lag"):
             return None
 
-        # Use appropriate functions based on PostgreSQL version
-        if await self._get_server_version() >= self.MIN_VERSION_WAL_FUNCTIONS:
-            lag_condition = "pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()"
-        else:
-            lag_condition = "pg_last_xlog_receive_location() = pg_last_xlog_replay_location()"
-
-        try:
-            result = await self.sql_driver.execute(
-                f"""
+        # Use appropriate query based on PostgreSQL version (no string interpolation)
+        version = await self._get_server_version()
+        if version >= self.MIN_VERSION_WAL_FUNCTIONS:
+            query = """
                 SELECT
                     CASE
-                        WHEN NOT pg_is_in_recovery() OR {lag_condition} THEN 0
+                        WHEN NOT pg_is_in_recovery() OR pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
                         ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
                     END
                 AS replication_lag
-            """,
+            """
+        else:
+            query = """
+                SELECT
+                    CASE
+                        WHEN NOT pg_is_in_recovery()
+                            OR pg_last_xlog_receive_location() = pg_last_xlog_replay_location()
+                        THEN 0
+                        ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
+                    END
+                AS replication_lag
+            """
+
+        try:
+            result = await self.sql_driver.execute(
+                query,
                 params=None,
                 readonly=True,
             )

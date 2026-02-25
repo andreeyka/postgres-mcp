@@ -21,7 +21,7 @@ from postgres_fastmcp.sql.params.strategies import (
 
 
 if TYPE_CHECKING:
-    from postgres_fastmcp.services.ports.executor import QueryExecutorPort, QueryTemplatePort
+    from postgres_fastmcp.services.protocols.executor import QueryExecutorPort, QueryTemplatePort
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from postgres_fastmcp.enums import AccessMode, UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 
 
@@ -24,8 +24,8 @@ def mock_db_access(mock_executor: AsyncMock) -> MagicMock:
     db = MagicMock(spec=DbAccessService)
     db.sql_driver = mock_executor
     db.connection_id = "test://localhost:5432/testdb"
-    db.role = UserRole.ADMIN
-    db.access_mode = AccessMode.RESTRICTED
+    db.access_mode = AccessMode.FULL
+    db.write_mode = False
     db.config = MagicMock()
     db.config.table_prefix = None
     return db

@@ -1,95 +1,95 @@
 # mypy: ignore-errors
-"""Fixtures for tool layer tests: ToolDescriptions and tool registration.
+"""Fixtures for tool layer tests: basic and full (both FileSystemProvider).
 
-Tool invocation via Client(mcp).call_tool (see https://gofastmcp.com/patterns/testing)
-would require lifespan context to be available in request context; with in-memory
-transport that does not hold, so we test only registration and ToolDescriptions.
-Tool behavior (invocation results, role/prefix rules) is covered by integration
-tests and by service-layer unit tests.
+Tool invocation via Client(mcp).call_tool would require lifespan context; we test
+only registration and tool set. Tool behavior is covered by integration and service tests.
 """
 
 import pytest
-from fastmcp.server.providers import LocalProvider
+from fastmcp.server.providers import FileSystemProvider
 
+from postgres_fastmcp.config import app_config
 from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode, UserRole
-from postgres_fastmcp.tools.common import ToolDescriptions
-from postgres_fastmcp.tools.explain_tools import register_explain_tools
-from postgres_fastmcp.tools.health_tools import register_health_tools
-from postgres_fastmcp.tools.index_tools import register_index_tools
-from postgres_fastmcp.tools.objects_tools import register_objects_tools
-from postgres_fastmcp.tools.schema_tools import register_schema_tools
-from postgres_fastmcp.tools.sql_tools import register_sql_tools
-from postgres_fastmcp.tools.top_queries_tools import register_top_queries_tools
+from postgres_fastmcp.enums import AccessMode
+from postgres_fastmcp.server import _tools_root
 
-
-def _register_all_tools(provider: LocalProvider, descriptions: ToolDescriptions) -> None:
-    """Register all tools on the provider (same order as server.py)."""
-    register_explain_tools(provider, descriptions)
-    register_schema_tools(provider, descriptions)
-    register_objects_tools(provider, descriptions)
-    register_sql_tools(provider, descriptions)
-    register_index_tools(provider, descriptions)
-    register_health_tools(provider, descriptions)
-    register_top_queries_tools(provider, descriptions)
+# Initialize config before tool modules are imported (they access AppConfig.current at module level).
+_init_db = DatabaseConfig.from_uri(
+    "postgres://testuser:testpass@localhost:5432/test",
+    access_mode=AccessMode.BASIC,
+    write_mode=False,
+)
+app_config.initialize(database=_init_db)
 
 
 @pytest.fixture
 def database_config_full_restricted() -> DatabaseConfig:
-    """DatabaseConfig for full role and restricted access."""
+    """DatabaseConfig for access_mode=full and write_mode=False."""
     return DatabaseConfig.from_uri(
-        "postgres://localhost/test",
-        role=UserRole.ADMIN,
-        access_mode=AccessMode.RESTRICTED,
+        "postgres://testuser:testpass@localhost:5432/test",
+        access_mode=AccessMode.FULL,
+        write_mode=False,
     )
 
 
 @pytest.fixture
 def database_config_user() -> DatabaseConfig:
-    """DatabaseConfig for user role."""
+    """DatabaseConfig for access_mode=basic."""
     return DatabaseConfig.from_uri(
-        "postgres://localhost/test",
-        role=UserRole.USER,
-        access_mode=AccessMode.RESTRICTED,
+        "postgres://testuser:testpass@localhost:5432/test",
+        access_mode=AccessMode.BASIC,
+        write_mode=False,
     )
 
 
 @pytest.fixture
 def database_config_full_unrestricted() -> DatabaseConfig:
-    """DatabaseConfig for full role and unrestricted access."""
+    """DatabaseConfig for access_mode=full and write_mode=True."""
     return DatabaseConfig.from_uri(
-        "postgres://localhost/test",
-        role=UserRole.ADMIN,
-        access_mode=AccessMode.UNRESTRICTED,
+        "postgres://testuser:testpass@localhost:5432/test",
+        access_mode=AccessMode.FULL,
+        write_mode=True,
     )
 
 
 @pytest.fixture
-def tool_descriptions_full(database_config_full_restricted: DatabaseConfig) -> ToolDescriptions:
-    """ToolDescriptions for full/restricted."""
-    return ToolDescriptions(database_config_full_restricted)
+def basic_tools_provider(database_config_user: DatabaseConfig) -> FileSystemProvider:
+    """FileSystemProvider с 4 базовыми инструментами (access_mode=basic)."""
+    app_config.initialize(database=database_config_user)
+    return FileSystemProvider(_tools_root() / "basic")
 
 
 @pytest.fixture
-def tool_descriptions_user(database_config_user: DatabaseConfig) -> ToolDescriptions:
-    """ToolDescriptions for user role."""
-    return ToolDescriptions(database_config_user)
+def full_tools_provider() -> FileSystemProvider:
+    """FileSystemProvider для full: 5 инструментов."""
+    return FileSystemProvider(_tools_root() / "full")
+
+
+class _CombinedToolsProvider:
+    """Провайдер-обёртка: list_tools и get_tool от basic + full."""
+
+    def __init__(self, basic: FileSystemProvider, full: FileSystemProvider) -> None:
+        self._basic = basic
+        self._full = full
+
+    async def list_tools(self) -> list:
+        basic_tools = await self._basic.list_tools()
+        full_tools = await self._full.list_tools()
+        return list(basic_tools) + list(full_tools)
+
+    async def get_tool(self, name: str):
+        tool = await self._basic.get_tool(name)
+        if tool is not None:
+            return tool
+        return await self._full.get_tool(name)
 
 
 @pytest.fixture
-def tool_descriptions_unrestricted(
-    database_config_full_unrestricted: DatabaseConfig,
-) -> ToolDescriptions:
-    """ToolDescriptions for full/unrestricted."""
-    return ToolDescriptions(database_config_full_unrestricted)
-
-
-@pytest.fixture
-async def registered_tools_provider(
+def registered_tools_provider(
     database_config_full_restricted: DatabaseConfig,
-) -> LocalProvider:
-    """Provider with all tools registered (for testing tool list and names)."""
-    provider = LocalProvider()
-    descriptions = ToolDescriptions(database_config_full_restricted)
-    _register_all_tools(provider, descriptions)
-    return provider
+    full_tools_provider: FileSystemProvider,
+) -> _CombinedToolsProvider:
+    """Провайдер со всеми 9 инструментами (4 basic + 5 full) для тестов списка и имён."""
+    app_config.initialize(database=database_config_full_restricted)
+    basic = FileSystemProvider(_tools_root() / "basic")
+    return _CombinedToolsProvider(basic, full_tools_provider)

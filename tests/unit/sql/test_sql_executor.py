@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from postgres_fastmcp.common.errors import ConnectionNotEstablishedError
 from postgres_fastmcp.sql.connection.pool import DbConnPool
 from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.models.row_result import RowResult
@@ -23,7 +24,7 @@ class TestSqlExecutorRender:
 
     def test_init_requires_conn_or_engine_url(self) -> None:
         """Constructor raises if neither conn nor engine_url provided."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ConnectionNotEstablishedError) as exc_info:
             SqlExecutor(conn=None, engine_url=None)
         assert "conn or engine_url" in str(exc_info.value)
 

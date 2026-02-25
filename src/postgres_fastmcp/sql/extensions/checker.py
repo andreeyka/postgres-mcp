@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Literal, cast
 
-from postgres_fastmcp.services.ports.extensions import ExtensionStatus
+from postgres_fastmcp.services.protocols.extensions import ExtensionStatus
 from postgres_fastmcp.sql.extensions.version import get_postgres_version
 
 
@@ -18,19 +18,24 @@ class ExtensionInspectorAdapter:
 
     def __init__(
         self,
-        executor: Any,
-        template: Any,
+        executor: Any,  # noqa: ANN401
+        template: Any,  # noqa: ANN401
         connection_id: str,
     ) -> None:
-        """Инициализация с исполнителем, шаблоном (для параметризованных запросов) и идентификатором подключения для кэша."""
+        """Инициализация с исполнителем, шаблоном (для параметризованных запросов).
+
+        Идентификатор подключения используется для кэша.
+        """
         self._executor = executor
         self._template = template
         self._connection_id = connection_id
 
     async def get_postgres_version(self) -> int:
+        """Получение версии PostgreSQL."""
         return await get_postgres_version(self._executor, self._connection_id)
 
     async def check_postgres_version_requirement(self, min_version: int, feature_name: str) -> tuple[bool, str]:
+        """Проверка требований к версии PostgreSQL."""
         version = await self.get_postgres_version()
         if version >= min_version:
             return True, f"Версия PostgreSQL {version} соответствует требованию для {feature_name}"
@@ -51,6 +56,16 @@ class ExtensionInspectorAdapter:
         include_messages: bool = True,
         message_type: Literal["plain", "markdown"] = "plain",
     ) -> ExtensionStatus:
+        """Проверка установки расширения.
+
+        Args:
+            extension_name: Имя расширения.
+            include_messages: Включить сообщения.
+            message_type: Тип сообщения.
+
+        Returns:
+            ExtensionStatus.
+        """
         result = ExtensionStatus(
             is_installed=False,
             is_available=False,
@@ -105,6 +120,7 @@ class ExtensionInspectorAdapter:
     async def check_hypopg_installation_status(
         self, message_type: Literal["plain", "markdown"] = "markdown"
     ) -> tuple[bool, str]:
+        """Проверка установки расширения hypopg."""
         status = await self.check_extension("hypopg", include_messages=False)
         if status.is_installed:
             if message_type == "markdown":
@@ -113,7 +129,8 @@ class ExtensionInspectorAdapter:
         if status.is_available:
             if message_type == "markdown":
                 return False, (
-                    "The **hypopg** extension is required to test hypothetical indexes, but it is not currently installed."
+                    "The **hypopg** extension is required to test hypothetical indexes, "
+                    "but it is not currently installed."
                     "\n\nYou can ask me to install 'hypopg' using the 'execute_query' tool.\n\n"
                     "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. "
                     "It adds a virtual layer that simulates indexes without actually creating them in the database. "

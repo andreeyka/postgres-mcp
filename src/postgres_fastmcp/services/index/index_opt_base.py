@@ -398,7 +398,9 @@ class IndexTuningBase(ABC):
         return session
 
     async def _run_prechecks(self, session: IndexTuningResult) -> IndexTuningResult | None:
-        """Выполнить предварительные проверки перед анализом и вернуть сессию с ошибкой если какая-либо проверка не пройдена.
+        """Выполнить предварительные проверки перед анализом.
+
+        Вернуть сессию с ошибкой, если какая-либо проверка не пройдена.
 
         Args:
             session: Текущий объект DTASession

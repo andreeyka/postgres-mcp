@@ -3,7 +3,7 @@
 from typing import Any
 
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
-from postgres_fastmcp.enums import UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.sql.catalog.queries import QUERY_LIST_SCHEMAS
 
@@ -25,7 +25,7 @@ class SchemaService:
         Returns:
             Список словарей с информацией о схемах (schema_name, schema_owner и т.д.).
         """
-        if self.db.role == UserRole.USER:
+        if self.db.access_mode == AccessMode.BASIC:
             return [
                 {
                     "schema_name": "public",

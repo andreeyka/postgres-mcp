@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from psycopg.sql import SQL, Composable, Literal
 
+from postgres_fastmcp.common.errors import QueryTimeoutError
 from postgres_fastmcp.sql.models.row_result import RowResult
 from postgres_fastmcp.sql.security.config import SafeSqlConfig
 from postgres_fastmcp.sql.validation.query_validator import QueryValidator
@@ -19,7 +20,7 @@ class SafeSqlExecutor:
 
     def __init__(
         self,
-        delegate: Any,  # QueryExecutorPort-compatible: execute(query, params?, readonly) -> list[RowResult]|None
+        delegate: Any,  # noqa: ANN401
         validator: QueryValidator,
         config: SafeSqlConfig,
     ) -> None:
@@ -39,7 +40,7 @@ class SafeSqlExecutor:
         query: str,
         params: list[Any] | None = None,
         *,
-        readonly: bool = True,
+        readonly: bool = True,  # noqa: ARG002 — part of QueryExecutorPort; effective value from config
     ) -> list[RowResult] | None:
         """Валидация запроса, затем выполнение через делегата (с search_path и необязательным таймаутом).
 
@@ -69,10 +70,7 @@ class SafeSqlExecutor:
                     self._config.timeout,
                     query[:100],
                 )
-                raise ValueError(
-                    f"Выполнение запроса превысило таймаут {self._config.timeout} секунд в режиме ограничения. "
-                    "Рассмотрите возможность упрощения запроса или увеличения таймаута."
-                ) from e
+                raise QueryTimeoutError(self._config.timeout) from e
         return cast(
             "list[RowResult] | None",
             await self._delegate.execute(query, params=None, readonly=readonly_effective),

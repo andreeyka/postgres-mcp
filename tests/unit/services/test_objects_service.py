@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from postgres_fastmcp.common.errors import SchemaAccessError, UnsupportedObjectTypeError
-from postgres_fastmcp.enums import UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.objects.service import ObjectsService
 from postgres_fastmcp.sql.models.row_result import RowResult
 
@@ -83,24 +83,24 @@ class TestObjectsServiceListObjects:
             await service.list_objects(schema_name="public", object_type="trigger")
         assert exc_info.value.object_type == "trigger"
 
-    async def test_list_objects_user_role_non_public_schema_raises(
+    async def test_list_objects_basic_access_mode_non_public_schema_raises(
         self,
         mock_db_access: MagicMock,
     ) -> None:
-        """USER role requesting non-public schema raises SchemaAccessError."""
-        mock_db_access.role = UserRole.USER
+        """access_mode=basic requesting non-public schema raises SchemaAccessError."""
+        mock_db_access.access_mode = AccessMode.BASIC
         service = ObjectsService(db=mock_db_access)
         with pytest.raises(SchemaAccessError) as exc_info:
             await service.list_objects(schema_name="other", object_type="table")
         assert exc_info.value.schema_name == "other"
 
-    async def test_list_objects_user_role_public_schema_returns_catalog_result(
+    async def test_list_objects_basic_access_mode_public_schema_returns_catalog_result(
         self,
         mock_db_access: MagicMock,
         mock_executor: MagicMock,
     ) -> None:
-        """USER role with schema_name public returns catalog result (e.g. empty list when no tables)."""
-        mock_db_access.role = UserRole.USER
+        """access_mode=basic with schema_name public returns catalog result (e.g. empty list when no tables)."""
+        mock_db_access.access_mode = AccessMode.BASIC
         mock_executor.execute.return_value = []
         service = ObjectsService(db=mock_db_access)
         result = await service.list_objects(schema_name="public", object_type="table")
@@ -143,12 +143,12 @@ class TestObjectsServiceGetObjectDetails:
             await service.get_object_details("public", "x", "trigger")
         assert exc_info.value.object_type == "trigger"
 
-    async def test_get_object_details_user_role_non_public_schema_raises(
+    async def test_get_object_details_basic_access_mode_non_public_schema_raises(
         self,
         mock_db_access: MagicMock,
     ) -> None:
-        """USER role requesting non-public schema raises SchemaAccessError."""
-        mock_db_access.role = UserRole.USER
+        """access_mode=basic requesting non-public schema raises SchemaAccessError."""
+        mock_db_access.access_mode = AccessMode.BASIC
         service = ObjectsService(db=mock_db_access)
         with pytest.raises(SchemaAccessError):
             await service.get_object_details("other", "t", "table")

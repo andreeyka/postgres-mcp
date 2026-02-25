@@ -1,4 +1,4 @@
-"""Порт и DTO для проверки расширений PostgreSQL."""
+"""Протокол и DTO для проверки расширений PostgreSQL."""
 
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -16,7 +16,7 @@ class ExtensionStatus:
 
 
 class ExtensionInspectorPort(Protocol):
-    """Порт для проверки версии PostgreSQL и расширений."""
+    """Протокол для проверки версии PostgreSQL и расширений."""
 
     async def get_postgres_version(self) -> int:
         """Возвращает основную версию PostgreSQL (например, 16)."""

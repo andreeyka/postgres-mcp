@@ -29,10 +29,11 @@ def extract_tables_from_query(query: str) -> set[str]:
             return set()
         visitor = TableAliasVisitor()
         visitor(stmt)
-        return visitor.tables
     except Exception:
         logger.debug("Error extracting tables from query: %s", query[:50])
         return set()
+    else:
+        return visitor.tables
 
 
 def extract_columns(
@@ -77,10 +78,11 @@ def extract_stmt_columns(
     try:
         collector = ColumnCollector(column_cache=column_cache)
         collector(stmt)
-        return collector.columns
     except Exception:
         logger.warning("Error extracting columns from stmt: %s", stmt)
         return {}
+    else:
+        return collector.columns
 
 
 def get_table_aliases(query: str, table_name: str) -> list[str]:
@@ -106,7 +108,8 @@ def get_table_aliases(query: str, table_name: str) -> list[str]:
         for alias, tbl in visitor.aliases.items():
             if tbl.lower() == table_name.lower():
                 aliases.append(alias)
-        return aliases
     except Exception:
         logger.exception("Error extracting table aliases")
         return [table_name]
+    else:
+        return aliases

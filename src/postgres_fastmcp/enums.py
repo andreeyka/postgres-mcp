@@ -9,17 +9,10 @@ MountMode = Literal["tool", "endpoint"]
 
 
 class AccessMode(StrEnum):
-    """Уровень доступа SQL для сервера."""
+    """Уровень доступа: область схем и набор инструментов."""
 
-    RESTRICTED = "restricted"  # Только чтение (SELECT)
-    UNRESTRICTED = "unrestricted"  # Чтение-запись (DML: INSERT/UPDATE/DELETE) или полный доступ (DDL) для полной роли
-
-
-class UserRole(StrEnum):
-    """Роль пользователя, определяющая доступ к схемам и доступные инструменты."""
-
-    USER = "user"  # Базовая роль: только схема public, базовые инструменты (4)
-    ADMIN = "admin"  # Роль администратора: все схемы, все инструменты (9), расширенные привилегии
+    BASIC = "basic"  # Только схема public, базовые инструменты (4)
+    FULL = "full"  # Все схемы, все инструменты (9), расширенные привилегии
 
 
 class SslMode(StrEnum):
@@ -38,13 +31,6 @@ class TransportConfig(StrEnum):
 
     HTTP = "http"
     STDIO = "stdio"
-
-
-class TransportHttpApp(StrEnum):
-    """Типы HTTP транспорта для FastMCP http_app."""
-
-    HTTP = "http"
-    STREAMABLE_HTTP = "streamable-http"
 
 
 class ToolTag(StrEnum):

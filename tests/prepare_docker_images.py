@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-# mypy: ignore-errors
 """Script to prepare Docker images for testing before running tests.
 
 This script builds the required Docker images so that tests can run faster.
 """
-
-from __future__ import annotations
 
 import logging
 import sys

@@ -98,7 +98,7 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
 @pytest.mark.asyncio
 async def test_extension_not_available(db_service_full: DbAccessService) -> None:
     """When pg_stat_statements is not installed, result contains installation instructions."""
-    from postgres_fastmcp.services.ports.extensions import ExtensionStatus
+    from postgres_fastmcp.services.protocols.extensions import ExtensionStatus
 
     calc = TopQueriesCalc(
         sql_driver=db_service_full.sql_driver,

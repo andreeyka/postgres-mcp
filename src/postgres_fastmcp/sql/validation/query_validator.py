@@ -18,6 +18,17 @@ from pglast.ast import (
 )
 from pglast.enums import A_Expr_Kind
 
+from postgres_fastmcp.common.errors import (
+    CreateExtensionNotSupportedError,
+    DdlNotAllowedError,
+    DisallowedNodeTypeError,
+    ExplainAnalyzeNotSupportedError,
+    FunctionNotAllowedError,
+    LikePatternNotConstantError,
+    LockingClauseProhibitedError,
+    SqlParseError,
+    StatementTypeNotAllowedError,
+)
 from postgres_fastmcp.sql.validation.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
 from postgres_fastmcp.sql.validation.schema_guard import validate_schema_access
 from postgres_fastmcp.sql.validation.statement_policies import ALLOWED_STMT_TYPES, DML_STMT_TYPES
@@ -50,19 +61,29 @@ class QueryValidator:
         self.read_only = read_only
 
     def validate(self, query: str) -> None:
-        """Валидация запроса; вызывает ValueError или TypeError если не безопасно.
+        """Валидация запроса; при небезопасном запросе вызывает исключение.
 
         Args:
             query: Строка SQL запроса.
 
         Raises:
-            ValueError: Запрос не безопасен (например, DDL, запрещенная функция).
-            TypeError: Тип оператора не разрешен.
+            SqlParseError: Не удалось разобрать SQL.
+            StatementTypeNotAllowedError: Тип оператора не разрешён.
+            DdlNotAllowedError: DDL-операция не разрешена.
+            DisallowedNodeTypeError: Тип узла AST не разрешён.
+            TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
+            SchemaNotAllowedError: Доступ к схеме не разрешён.
+            SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
+            LikePatternNotConstantError: LIKE-паттерн не константа.
+            FunctionNotAllowedError: Функция не разрешена.
+            LockingClauseProhibitedError: Блокирующее предложение в SELECT.
+            ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
+            CreateExtensionNotSupportedError: Расширение не разрешено.
         """
         try:
             parsed = pglast.parse_sql(query)
         except pglast.parser.ParseError as e:
-            raise ValueError("Failed to parse SQL statement") from e
+            raise SqlParseError from e
 
         allowed_stmt_types = set(ALLOWED_STMT_TYPES)
         if not self.read_only:
@@ -71,26 +92,13 @@ class QueryValidator:
         for stmt in parsed:
             stmt_node = stmt.stmt if isinstance(stmt, RawStmt) else stmt
             if not isinstance(stmt_node, tuple(allowed_stmt_types)):
-                if self.read_only:
-                    msg = (
-                        "Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other "
-                        "read-only statements are allowed. "
-                        f"Received: {type(stmt_node).__name__}"
-                    )
-                else:
-                    msg = (
-                        "Only SELECT, INSERT, UPDATE, DELETE, ANALYZE, VACUUM, EXPLAIN, "
-                        "SHOW and other allowed statements are permitted. "
-                        "DDL operations (CREATE, DROP, ALTER) are not allowed. "
-                        f"Received: {type(stmt_node).__name__}"
-                    )
-                raise TypeError(msg)
+                raise StatementTypeNotAllowedError(read_only=self.read_only, stmt_type_name=type(stmt_node).__name__)
 
             stmt_type_name = type(stmt_node).__name__
             if ("Create" in stmt_type_name or "Drop" in stmt_type_name or "Alter" in stmt_type_name) and not isinstance(
                 stmt_node, CreateExtensionStmt
             ):
-                raise ValueError(f"DDL operations are not allowed. Received: {stmt_type_name}")
+                raise DdlNotAllowedError(stmt_type_name)
 
             self._validate_node(stmt)
 
@@ -101,7 +109,7 @@ class QueryValidator:
             allowed |= DML_STMT_TYPES
 
         if not isinstance(node, tuple(allowed)):
-            raise TypeError(f"Node type {type(node)} is not allowed")
+            raise DisallowedNodeTypeError(type(node))
 
         if isinstance(node, RangeVar):
             validate_schema_access(
@@ -110,35 +118,39 @@ class QueryValidator:
                 table_prefix=self.table_prefix,
             )
 
-        if isinstance(node, A_Expr) and node.kind in (
-            A_Expr_Kind.AEXPR_LIKE,
-            A_Expr_Kind.AEXPR_ILIKE,
-        ):
-            if not (
+        if (
+            isinstance(node, A_Expr)
+            and node.kind
+            in (
+                A_Expr_Kind.AEXPR_LIKE,
+                A_Expr_Kind.AEXPR_ILIKE,
+            )
+            and not (
                 isinstance(node.rexpr, A_Const)
                 and node.rexpr.val is not None
                 and hasattr(node.rexpr.val, "sval")
                 and node.rexpr.val.sval is not None
-            ):
-                raise ValueError("LIKE pattern must be a constant string")
+            )
+        ):
+            raise LikePatternNotConstantError
 
         if isinstance(node, FuncCall):
             func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
             match = PG_CATALOG_PATTERN.match(func_name)
             unqualified = match.group(1) if match else func_name
             if unqualified not in ALLOWED_FUNCTIONS:
-                raise ValueError(f"Function {func_name} is not allowed")
+                raise FunctionNotAllowedError(func_name)
 
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
-            raise ValueError("Locking clause on select is prohibited")
+            raise LockingClauseProhibitedError
 
         if isinstance(node, ExplainStmt):
             for option in node.options or []:
                 if isinstance(option, DefElem) and option.defname == "analyze":
-                    raise ValueError("EXPLAIN ANALYZE is not supported")
+                    raise ExplainAnalyzeNotSupportedError
 
         if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
-            raise ValueError(f"CREATE EXTENSION {node.extname} is not supported")
+            raise CreateExtensionNotSupportedError(node.extname)
 
         for attr_name in node.__slots__:
             if attr_name.startswith("_"):

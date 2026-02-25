@@ -1,4 +1,4 @@
-"""Порты для выполнения SQL запросов и шаблонизации запросов."""
+"""Протоколы для выполнения SQL запросов и шаблонизации запросов."""
 
 from typing import Any, Protocol
 
@@ -6,7 +6,7 @@ from postgres_fastmcp.sql.models.row_result import RowResult
 
 
 class QueryExecutorPort(Protocol):
-    """Порт для выполнения SQL запросов (только чтение или чтение-запись)."""
+    """Протокол для выполнения SQL запросов (только чтение или чтение-запись)."""
 
     async def execute(
         self,
@@ -20,7 +20,7 @@ class QueryExecutorPort(Protocol):
 
 
 class QueryTemplatePort(Protocol):
-    """Порт для рендеринга параметризованного запроса в одну строку."""
+    """Протокол для рендеринга параметризованного запроса в одну строку."""
 
     def render(self, query: str, params: list[Any]) -> str:
         """Рендер запроса с встроенными параметрами (например, psycopg {} плейсхолдеры)."""

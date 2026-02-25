@@ -5,28 +5,28 @@ description = "PostgreSQL Tuning and Analysis Tool"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "click>=8.1.0",
+    "cyclopts>=3.0.0",
     "humanize>=4.8.0",
-    "pglast==7.2.0",
+    "pglast>=7.11.0",
     "attrs>=25.3.0",
     "psycopg-pool>=3.2.6",
-    "fastmcp>=3.0.0rc1",
+    "fastmcp>=3.0.0rc2",
     "pydantic-settings>=2.11.0",
     "pydantic>=2.12.4",
-    "psycopg>=3.3.2",
+    "psycopg[binary]>=3.3.2",
 ]
 
 
 [[project.authors]]
 name = "Andrey Shlyapin"
-email = "andrey@skzd.ru"
+email = "avshlyapin@cloud.ru"
 
 [build-system]
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
 [project.scripts]
-postgres-fastmcp = "postgres_fastmcp.main:main"
+postgres-mcp = "postgres_fastmcp.main:app"
 
 [[tool.uv.index]]
 url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
@@ -43,10 +43,13 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "docker>=7.0.0",
     "pytest-cov>=7.0.0",
+    "typing_extensions>=4.14.0",
 ]
 
 [tool.mypy]
-plugins = "pydantic.mypy"
+# pydantic.mypy disabled: ms-python.mypy-type-checker uses bundled typing_extensions
+# without Sentinel (needs 4.14+). Uncomment for full pydantic checks via `uv run mypy`.
+# plugins = "pydantic.mypy"
 python_version = "3.12"
 strict = true
 exclude = [".venv", "tests"]
@@ -170,14 +173,10 @@ ignore = [
 "src/postgres_fastmcp/services/objects/*.py" = ["SLF001"]
 "src/postgres_fastmcp/services/index/service.py" = ["RSE102"]
 "src/postgres_fastmcp/services/top_queries/service.py" = ["RSE102"]
+"src/postgres_fastmcp/sql/validation/*.py" = ["C901"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
@@ -187,6 +186,11 @@ split-on-trailing-comma = false
 
 [tool.ruff.lint.flake8-annotations]
 allow-star-arg-any = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
 
 [tool.ruff.lint.flake8-bandit]
 check-typed-exception = true

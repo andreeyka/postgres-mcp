@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from postgres_fastmcp.enums import AccessMode, SslMode, UserRole
+from postgres_fastmcp.enums import AccessMode, SslMode
 
 
 ERROR_DATABASE_URI_NOT_SET = (
@@ -69,37 +69,32 @@ class DatabaseConfig(BaseSettings):
         default_factory=dict,
         description="Дополнительные именованные аргументы",
     )
-    access_mode: AccessMode = Field(
-        default=AccessMode.RESTRICTED,
+    write_mode: bool = Field(
+        default=False,
         description=(
-            "Уровень доступа к SQL. "
-            "Доступные режимы: 'restricted' (только чтение, SELECT), "
-            "'unrestricted' (чтение-запись, DML: INSERT/UPDATE/DELETE или полный доступ с DDL для полной роли)."
+            "Если True — разрешены DML/DDL (INSERT, UPDATE, DELETE, CREATE и т.д.) при access_mode=full. "
+            "Если False — только чтение (SELECT). По умолчанию False."
         ),
     )
-    role: UserRole = Field(
-        default=UserRole.USER,
+    access_mode: AccessMode = Field(
+        default=AccessMode.BASIC,
         description=(
-            "Роль пользователя, определяющая доступ к схемам и доступные инструменты. "
-            "Доступные роли: 'user' (только схема public, базовые инструменты - 4 инструмента), "
-            "'admin' (все схемы, все инструменты - 9 инструментов, расширенные привилегии)."
+            "Уровень доступа: 'basic' (только схема public, 4 инструмента), 'full' (все схемы, 9 инструментов)."
         ),
     )
     safe_sql_timeout: int = Field(
         default=30,
         description=(
             "Таймаут в секундах для SafeSqlDriver. "
-            "Используется для всех режимов кроме роли 'admin' с 'unrestricted' access_mode."
+            "Используется для всех режимов кроме access_mode=full с write_mode=True."
         ),
     )
     table_prefix: str | None = Field(
         default=None,
         description=(
-            "Необязательный префикс имен таблиц для роли 'user'. "
-            "Если задан, доступны только "
-            "таблицы/представления/последовательности с именами, "
-            "начинающимися с этого префикса. "
-            "Работает только для роли 'user'. Игнорируется для роли 'admin'."
+            "Необязательный префикс имён таблиц для access_mode=basic. "
+            "Если задан, доступны только таблицы/представления/последовательности с именами, "
+            "начинающимися с этого префикса. Игнорируется для access_mode=full."
         ),
     )
     query_tag: str | None = Field(
@@ -116,7 +111,7 @@ class DatabaseConfig(BaseSettings):
 
         Args:
             uri: Строка подключения.
-            **overrides: Переопределения полей (access_mode, role и т.д.); проверяются Pydantic при создании.
+            **overrides: Переопределения полей (write_mode, access_mode и т.д.); проверяются Pydantic при создании.
 
         Returns:
             Экземпляр DatabaseConfig с заполненными host, port, user, password, name.

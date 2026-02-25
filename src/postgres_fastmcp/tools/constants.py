@@ -24,8 +24,8 @@ ERROR_PROCESSING_EXPLAIN_PLAN = "Error processing explain plan"
 
 # Log messages
 LOG_ATTEMPTING_CONNECTION = "Attempting to establish database connection"
-LOG_SAFE_SQL_DRIVER = "Using SafeSqlDriver with restrictions (RESTRICTED mode, timeout={0}s)"
-LOG_UNRESTRICTED_SQL_DRIVER = "Using unrestricted SqlDriver (UNRESTRICTED mode)"
+LOG_SAFE_SQL_DRIVER = "Using SafeSqlDriver with restrictions (write_mode=False, timeout={0}s)"
+LOG_UNRESTRICTED_SQL_DRIVER = "Using unrestricted SqlDriver (write_mode=True)"
 LOG_ERROR_LISTING_SCHEMAS = "Error listing schemas: {0}"
 LOG_ERROR_LISTING_OBJECTS = "Error listing objects: {0}"
 LOG_ERROR_GETTING_OBJECT_DETAILS = "Error getting object details: {0}"

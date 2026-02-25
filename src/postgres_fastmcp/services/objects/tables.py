@@ -3,7 +3,7 @@
 from typing import Any
 
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
-from postgres_fastmcp.enums import UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.sql.catalog.queries import (
     QUERY_GET_COLUMNS,
@@ -57,7 +57,7 @@ class TablesService:
             if rows
             else []
         )
-        if self.db.role == UserRole.USER and self.db.config.table_prefix:
+        if self.db.access_mode == AccessMode.BASIC and self.db.config.table_prefix:
             prefix = self.db.config.table_prefix.lower()
             objects = [o for o in objects if o["name"].lower().startswith(prefix)]
         return objects

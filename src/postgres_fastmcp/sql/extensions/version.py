@@ -14,12 +14,15 @@ class PostgresVersionRegistry:
         self._cache: dict[str, int] = {}
 
     def get(self, connection_id: str) -> int | None:
+        """Получение версии PostgreSQL из кэша по идентификатору подключения."""
         return self._cache.get(connection_id)
 
     def set(self, connection_id: str, version: int) -> None:
+        """Установка версии PostgreSQL в кэш по идентификатору подключения."""
         self._cache[connection_id] = version
 
     def clear(self, connection_id: str | None = None) -> None:
+        """Очистка кэша версий (например, для тестов)."""
         if connection_id is not None:
             self._cache.pop(connection_id, None)
         else:
@@ -34,7 +37,7 @@ def reset_postgres_version_cache(connection_id: str | None = None) -> None:
     _version_registry.clear(connection_id)
 
 
-async def get_postgres_version(executor: Any, connection_id: str) -> int:
+async def get_postgres_version(executor: Any, connection_id: str) -> int:  # noqa: ANN401
     """Возвращает основную версию PostgreSQL (например, 16), используя кэш по идентификатору подключения."""
     cached = _version_registry.get(connection_id)
     if cached is not None:
@@ -54,7 +57,8 @@ async def get_postgres_version(executor: Any, connection_id: str) -> int:
         major = version_string.split(".")[0]
         version = int(major)
         _version_registry.set(connection_id, version)
-        return version
     except Exception as e:
         logger.warning("Error determining PostgreSQL version: %s", e)
         return 0
+    else:
+        return version

@@ -7,6 +7,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Composable, Literal
 
+from postgres_fastmcp.common.errors import ConnectionNotEstablishedError
 from postgres_fastmcp.sql.connection.pool import DbConnPool
 from postgres_fastmcp.sql.models.row_result import RowResult
 
@@ -36,7 +37,7 @@ class SqlExecutor:
             self.engine_url = engine_url
             self._is_pool = False
         else:
-            raise ValueError("Either conn or engine_url must be provided")
+            raise ConnectionNotEstablishedError
 
     def _ensure_connected(self) -> None:
         """Проверка установки подключения; создание пула из engine_url при необходимости."""
@@ -46,7 +47,7 @@ class SqlExecutor:
             self.conn = DbConnPool(self.engine_url)
             self._is_pool = True
             return
-        raise ValueError("Connection not established. Either conn or engine_url must be provided")
+        raise ConnectionNotEstablishedError
 
     def render(self, query: str, params: list[Any]) -> str:
         """Рендер параметризованного запроса (с {} плейсхолдерами) в одну строку."""
@@ -75,7 +76,7 @@ class SqlExecutor:
             params = None
 
         def _fail() -> NoReturn:
-            raise ValueError("Connection not established")
+            raise ConnectionNotEstablishedError
 
         try:
             self._ensure_connected()

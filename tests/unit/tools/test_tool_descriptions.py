@@ -1,117 +1,151 @@
 # mypy: ignore-errors
-"""Unit tests for ToolDescriptions (tools/common.py)."""
+"""Unit tests for configure() + FileSystemProvider discovery (mode-aware descriptions)."""
 
-from postgres_fastmcp.tools.common import ToolDescriptions
-from postgres_fastmcp.tools.descriptions import (
-    DESC_ANALYZE_DB_HEALTH,
-    DESC_ANALYZE_QUERY_INDEXES,
-    DESC_ANALYZE_WORKLOAD_INDEXES,
-    DESC_EXECUTE_SQL_RESTRICTED,
-    DESC_EXECUTE_SQL_UNRESTRICTED,
-    DESC_EXPLAIN_QUERY,
-    DESC_GET_OBJECT_DETAILS_FULL,
-    DESC_GET_OBJECT_DETAILS_USER,
-    DESC_GET_TOP_QUERIES,
-    DESC_LIST_OBJECTS_FULL,
-    DESC_LIST_OBJECTS_USER,
-    DESC_LIST_SCHEMAS,
+import sys
+
+import pytest
+from fastmcp.server.providers import FileSystemProvider
+
+from postgres_fastmcp.config import app_config
+from postgres_fastmcp.server import _tools_root
+from postgres_fastmcp.tools.basic.execute_sql import _DESC_RESTRICTED, _DESC_UNRESTRICTED
+from postgres_fastmcp.tools.basic.explain_query import _DESC_EXPLAIN_QUERY
+from postgres_fastmcp.tools.basic.get_object_details import (
+    _DESC_FULL as _GET_OBJECT_DETAILS_FULL,
+    _DESC_USER as _GET_OBJECT_DETAILS_USER,
+)
+from postgres_fastmcp.tools.basic.list_objects import (
+    _DESC_FULL as _LIST_OBJECTS_FULL,
+    _DESC_USER as _LIST_OBJECTS_USER,
 )
 
 
-class TestToolDescriptions:
-    """Tests for ToolDescriptions role and access_mode branching."""
+def _clear_basic_tools_modules() -> None:
+    """Remove basic tool modules from sys.modules so next provider creation re-imports with new config."""
+    to_remove = [k for k in sys.modules if k.startswith("postgres_fastmcp.tools.basic.")]
+    for k in to_remove:
+        sys.modules.pop(k, None)
 
-    def test_list_schemas_same_for_all_roles(
-        self,
-        tool_descriptions_full: ToolDescriptions,
-        tool_descriptions_user: ToolDescriptions,
-    ) -> None:
-        """list_schemas description does not depend on role."""
-        assert tool_descriptions_full.list_schemas == DESC_LIST_SCHEMAS
-        assert tool_descriptions_user.list_schemas == DESC_LIST_SCHEMAS
 
-    def test_list_objects_user_returns_user_description(
-        self,
-        tool_descriptions_user: ToolDescriptions,
-    ) -> None:
-        """User role gets list_objects description for public schema only."""
-        assert tool_descriptions_user.list_objects == DESC_LIST_OBJECTS_USER
+def _get_tool_by_name(tools: list, name: str):
+    """Return tool with given name from list returned by list_tools()."""
+    for t in tools:
+        if getattr(t, "name", None) == name:
+            return t
+    return None
 
-    def test_list_objects_full_returns_full_description(
-        self,
-        tool_descriptions_full: ToolDescriptions,
-    ) -> None:
-        """Full role gets list_objects description for any schema."""
-        assert tool_descriptions_full.list_objects == DESC_LIST_OBJECTS_FULL
 
-    def test_get_object_details_user_returns_user_description(
-        self,
-        tool_descriptions_user: ToolDescriptions,
-    ) -> None:
-        """User role gets get_object_details description for public schema only."""
-        assert tool_descriptions_user.get_object_details == DESC_GET_OBJECT_DETAILS_USER
+class TestConfigureAndDiscovery:
+    """Tests for configure() + FileSystemProvider yielding correct descriptions."""
 
-    def test_get_object_details_full_returns_full_description(
+    @pytest.mark.asyncio
+    async def test_list_objects_basic_returns_user_description(
         self,
-        tool_descriptions_full: ToolDescriptions,
+        database_config_user,
     ) -> None:
-        """Full role gets get_object_details description for any schema."""
-        assert tool_descriptions_full.get_object_details == DESC_GET_OBJECT_DETAILS_FULL
+        """access_mode=basic: list_objects has USER description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_user)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "list_objects")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _LIST_OBJECTS_USER
 
-    def test_explain_query_same_for_all(
+    @pytest.mark.asyncio
+    async def test_list_objects_full_returns_full_description(
         self,
-        tool_descriptions_full: ToolDescriptions,
-        tool_descriptions_user: ToolDescriptions,
+        database_config_full_restricted,
     ) -> None:
-        """explain_query description does not depend on role."""
-        assert tool_descriptions_full.explain_query == DESC_EXPLAIN_QUERY
-        assert tool_descriptions_user.explain_query == DESC_EXPLAIN_QUERY
+        """access_mode=full: list_objects has FULL description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_full_restricted)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "list_objects")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _LIST_OBJECTS_FULL
 
-    def test_execute_sql_restricted_for_user(
+    @pytest.mark.asyncio
+    async def test_get_object_details_basic_returns_user_description(
         self,
-        tool_descriptions_user: ToolDescriptions,
+        database_config_user,
     ) -> None:
-        """User role gets restricted execute_sql description."""
-        assert tool_descriptions_user.execute_sql == DESC_EXECUTE_SQL_RESTRICTED
+        """access_mode=basic: get_object_details has USER description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_user)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "get_object_details")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _GET_OBJECT_DETAILS_USER
 
-    def test_execute_sql_restricted_for_full_restricted(
+    @pytest.mark.asyncio
+    async def test_get_object_details_full_returns_full_description(
         self,
-        tool_descriptions_full: ToolDescriptions,
+        database_config_full_restricted,
     ) -> None:
-        """Full role with restricted access_mode gets restricted execute_sql description."""
-        assert tool_descriptions_full.execute_sql == DESC_EXECUTE_SQL_RESTRICTED
+        """access_mode=full: get_object_details has FULL description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_full_restricted)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "get_object_details")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _GET_OBJECT_DETAILS_FULL
 
-    def test_execute_sql_unrestricted_for_full_unrestricted(
+    @pytest.mark.asyncio
+    async def test_explain_query_same_for_all(
         self,
-        tool_descriptions_unrestricted: ToolDescriptions,
+        database_config_user,
     ) -> None:
-        """Full role with unrestricted access_mode gets unrestricted execute_sql description."""
-        assert tool_descriptions_unrestricted.execute_sql == DESC_EXECUTE_SQL_UNRESTRICTED
+        """explain_query description does not depend on access_mode."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_user)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "explain_query")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _DESC_EXPLAIN_QUERY
 
-    def test_analyze_workload_indexes_same_for_all(
+    @pytest.mark.asyncio
+    async def test_execute_sql_restricted_for_basic(
         self,
-        tool_descriptions_full: ToolDescriptions,
+        database_config_user,
     ) -> None:
-        """analyze_workload_indexes description does not depend on role."""
-        assert tool_descriptions_full.analyze_workload_indexes == DESC_ANALYZE_WORKLOAD_INDEXES
+        """access_mode=basic: execute_sql has RESTRICTED description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_user)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "execute_sql")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _DESC_RESTRICTED
 
-    def test_analyze_query_indexes_same_for_all(
+    @pytest.mark.asyncio
+    async def test_execute_sql_restricted_for_full_restricted(
         self,
-        tool_descriptions_full: ToolDescriptions,
+        database_config_full_restricted,
     ) -> None:
-        """analyze_query_indexes description does not depend on role."""
-        assert tool_descriptions_full.analyze_query_indexes == DESC_ANALYZE_QUERY_INDEXES
+        """access_mode=full, write_mode=False: execute_sql has RESTRICTED description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_full_restricted)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "execute_sql")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _DESC_RESTRICTED
 
-    def test_analyze_db_health_same_for_all(
+    @pytest.mark.asyncio
+    async def test_execute_sql_unrestricted_for_full_unrestricted(
         self,
-        tool_descriptions_full: ToolDescriptions,
+        database_config_full_unrestricted,
     ) -> None:
-        """analyze_db_health description does not depend on role."""
-        assert tool_descriptions_full.analyze_db_health == DESC_ANALYZE_DB_HEALTH
-
-    def test_get_top_queries_same_for_all(
-        self,
-        tool_descriptions_full: ToolDescriptions,
-    ) -> None:
-        """get_top_queries description does not depend on role."""
-        assert tool_descriptions_full.get_top_queries == DESC_GET_TOP_QUERIES
+        """access_mode=full, write_mode=True: execute_sql has UNRESTRICTED description."""
+        _clear_basic_tools_modules()
+        app_config.initialize(database=database_config_full_unrestricted)
+        provider = FileSystemProvider(_tools_root() / "basic")
+        tools = await provider.list_tools()
+        tool = _get_tool_by_name(tools, "execute_sql")
+        assert tool is not None
+        assert getattr(tool, "description", None) == _DESC_UNRESTRICTED

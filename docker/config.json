@@ -1,36 +1,22 @@
 {
-    "_comment": "WARNING: This is a TEST configuration file with test passwords. DO NOT use in production!",
-    "name": "postgres-fastmcp",
-    "endpoint": "mcp",
-    "transport": "http",
-    "databases": {
-        "user_ro_db": {
-            "database_uri": "postgresql://user_ro:password@postgres:5432/user_ro_db",
-            "transport": "http",
-            "role": "user",
-            "access_mode": "restricted",
-            "table_prefix": "app_"
-        },
-        "user_rw_db": {
-            "database_uri": "postgresql://user_rw:password@postgres:5432/user_rw_db",
-            "transport": "http",
-            "role": "user",
-            "access_mode": "unrestricted"
-        },
-        "admin_ro_db": {
-            "database_uri": "postgresql://admin_ro:password@postgres:5432/admin_ro_db",
-            "transport": "http",
-            "role": "full",
-            "access_mode": "restricted"
-        },
-        "admin_rw_db": {
-            "database_uri": "postgresql://postgres:postgres@postgres:5432/admin_rw_db",
-            "transport": "http",
-            "role": "full",
-            "access_mode": "unrestricted"
-        }
-    },
+  "_comment": "WARNING: TEST config with test passwords. DO NOT use in production. One server = one database.",
+  "server": {
     "host": "0.0.0.0",
     "port": 8000,
-    "workers": 1
+    "transport": "http",
+    "endpoint": "mcp",
+    "workers": 1,
+    "health_endpoint_enabled": true
+  },
+  "fastmcp": {},
+  "database": {
+    "host": "postgres",
+    "port": 5432,
+    "user": "user_ro",
+    "password": "password",
+    "name": "user_ro_db",
+    "write_mode": false,
+    "access_mode": "basic",
+    "table_prefix": "app_"
+  }
 }

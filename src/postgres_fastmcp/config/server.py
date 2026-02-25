@@ -9,7 +9,7 @@ from postgres_fastmcp.enums import TransportConfig
 class ServerSettings(BaseSettings):
     """Настройки сервера."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_SERVER_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore")
 
     host: str = Field(default="127.0.0.1", description="Хост для привязки сервера")
     port: int = Field(default=8000, description="Порт для привязки сервера")

@@ -1,9 +1,6 @@
 # mypy: ignore-errors
 """Unit tests for schema tools registration."""
 
-from fastmcp.server.providers import LocalProvider
-
-
 EXPECTED_TOOL_NAMES = frozenset(
     {
         "list_schemas",
@@ -24,7 +21,7 @@ class TestSchemaTools:
 
     async def test_list_schemas_tool_registered(
         self,
-        registered_tools_provider: LocalProvider,
+        registered_tools_provider,
     ) -> None:
         """list_schemas tool is present in the provider."""
         tools = await registered_tools_provider.list_tools()
@@ -33,7 +30,7 @@ class TestSchemaTools:
 
     async def test_list_schemas_tool_can_be_retrieved(
         self,
-        registered_tools_provider: LocalProvider,
+        registered_tools_provider,
     ) -> None:
         """list_schemas tool can be retrieved by name."""
         tool = await registered_tools_provider.get_tool("list_schemas")
@@ -42,7 +39,7 @@ class TestSchemaTools:
 
     async def test_all_expected_tools_registered(
         self,
-        registered_tools_provider: LocalProvider,
+        registered_tools_provider,
     ) -> None:
         """All 9 tools are registered on the provider."""
         tools = await registered_tools_provider.list_tools()

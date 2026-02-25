@@ -5,9 +5,9 @@ from typing import Generator
 
 import pytest
 
-from postgres_fastmcp.config import Settings, get_settings
+from postgres_fastmcp.config import Settings, app_config
 from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode, UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 
 
@@ -15,38 +15,42 @@ from postgres_fastmcp.services.db_access_service import DbAccessService
 def integration_settings(
     test_postgres_connection_string: tuple[str, str],
 ) -> Settings:
-    """Settings with database pointing to the test PostgreSQL (full role, unrestricted)."""
+    """Settings with database pointing to the test PostgreSQL (access_mode=full, write_mode=True)."""
     connection_string, _ = test_postgres_connection_string
     database = DatabaseConfig.from_uri(
         connection_string,
-        role=UserRole.ADMIN,
-        access_mode=AccessMode.UNRESTRICTED,
+        access_mode=AccessMode.FULL,
+        write_mode=True,
     )
-    return get_settings(database=database)
+    return app_config.initialize(database=database)
 
 
 @pytest.fixture
 async def db_service_full(
     integration_settings: Settings,
 ) -> Generator[DbAccessService, None, None]:
-    """DbAccessService with full/unrestricted access for DDL and setup."""
+    """DbAccessService with access_mode=full and write_mode=True for DDL and setup."""
     service = DbAccessService(integration_settings.database)
-    async with service:
+    try:
         yield service
+    finally:
+        await service.close()
 
 
 @pytest.fixture
 async def db_service_user_prefix(
     test_postgres_connection_string: tuple[str, str],
 ) -> Generator[DbAccessService, None, None]:
-    """DbAccessService with user role and table_prefix=app_ for table_prefix tests."""
+    """DbAccessService with access_mode=basic and table_prefix=app_ for table_prefix tests."""
     connection_string, _ = test_postgres_connection_string
     config = DatabaseConfig.from_uri(
         connection_string,
-        role=UserRole.USER,
-        access_mode=AccessMode.RESTRICTED,
+        access_mode=AccessMode.BASIC,
+        write_mode=False,
         table_prefix="app_",
     )
     service = DbAccessService(config)
-    async with service:
+    try:
         yield service
+    finally:
+        await service.close()

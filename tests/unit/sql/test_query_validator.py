@@ -3,6 +3,14 @@
 
 import pytest
 
+from postgres_fastmcp.common.errors import (
+    BaseApplicationError,
+    DdlNotAllowedError,
+    SchemaNotAllowedError,
+    SqlParseError,
+    StatementTypeNotAllowedError,
+    TablePrefixAccessError,
+)
 from postgres_fastmcp.sql.validation.query_validator import QueryValidator
 
 
@@ -17,28 +25,28 @@ class TestQueryValidatorReadOnly:
         v.validate("SELECT a, b FROM public.t WHERE x = 1")
 
     def test_blocks_drop_table(self) -> None:
-        """DROP TABLE raises TypeError (statement type not allowed)."""
+        """DROP TABLE raises StatementTypeNotAllowedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(StatementTypeNotAllowedError) as exc_info:
             v.validate("DROP TABLE users")
         assert "read-only" in str(exc_info.value).lower() or "DROP" in str(exc_info.value)
 
     def test_blocks_insert(self) -> None:
-        """INSERT raises TypeError in read_only mode."""
+        """INSERT raises StatementTypeNotAllowedError in read_only mode."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(TypeError):
+        with pytest.raises(StatementTypeNotAllowedError):
             v.validate("INSERT INTO t (a) VALUES (1)")
 
     def test_blocks_create_table(self) -> None:
-        """CREATE TABLE raises ValueError (DDL not allowed)."""
+        """CREATE TABLE raises StatementTypeNotAllowedError or DdlNotAllowedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises((TypeError, ValueError)):
+        with pytest.raises((StatementTypeNotAllowedError, DdlNotAllowedError)):
             v.validate("CREATE TABLE t (id int)")
 
-    def test_parse_error_raises_value_error(self) -> None:
-        """Invalid SQL raises ValueError with parse message."""
+    def test_parse_error_raises_sql_parse_error(self) -> None:
+        """Invalid SQL raises SqlParseError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(SqlParseError) as exc_info:
             v.validate("SELEC 1")
         assert "parse" in str(exc_info.value).lower() or "Failed" in str(exc_info.value)
 
@@ -49,7 +57,7 @@ class TestQueryValidatorSchemaGuard:
     def test_allowed_schema_public_rejects_other_schema(self) -> None:
         """allowed_schema=public rejects query referencing other schema."""
         v = QueryValidator(read_only=True, allowed_schema="public")
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(SchemaNotAllowedError) as exc_info:
             v.validate("SELECT * FROM other_schema.t")
         assert "other_schema" in str(exc_info.value) or "not allowed" in str(exc_info.value)
 
@@ -61,7 +69,7 @@ class TestQueryValidatorSchemaGuard:
     def test_table_prefix_rejects_non_matching_table(self) -> None:
         """table_prefix filters table names."""
         v = QueryValidator(read_only=True, allowed_schema="public", table_prefix="app_")
-        with pytest.raises(ValueError):
+        with pytest.raises(TablePrefixAccessError):
             v.validate("SELECT * FROM public.other_table")
 
     def test_table_prefix_accepts_matching_table(self) -> None:
@@ -80,9 +88,9 @@ class TestQueryValidatorFunctions:
         v.validate("SELECT sum(x) FROM t")
 
     def test_blocks_disallowed_function(self) -> None:
-        """Disallowed function raises ValueError."""
+        """Disallowed function raises FunctionNotAllowedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BaseApplicationError) as exc_info:
             v.validate("SELECT pg_sleep(1)")
         assert "not allowed" in str(exc_info.value).lower() or "pg_sleep" in str(exc_info.value)
 
@@ -91,9 +99,9 @@ class TestQueryValidatorExplainAnalyze:
     """EXPLAIN ANALYZE is explicitly blocked."""
 
     def test_explain_analyze_raises(self) -> None:
-        """EXPLAIN (ANALYZE) raises ValueError."""
+        """EXPLAIN (ANALYZE) raises ExplainAnalyzeNotSupportedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BaseApplicationError) as exc_info:
             v.validate("EXPLAIN (ANALYZE) SELECT 1")
         assert "ANALYZE" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
 
@@ -102,9 +110,9 @@ class TestQueryValidatorCreateExtension:
     """CREATE EXTENSION whitelist."""
 
     def test_create_extension_disallowed_raises(self) -> None:
-        """CREATE EXTENSION with non-whitelisted name raises."""
+        """CREATE EXTENSION with non-whitelisted name raises CreateExtensionNotSupportedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BaseApplicationError) as exc_info:
             v.validate("CREATE EXTENSION unknown_ext")
         assert "unknown_ext" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
 

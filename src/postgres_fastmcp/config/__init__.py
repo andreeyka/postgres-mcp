@@ -1,4 +1,40 @@
-"""Конфигурация приложения и настройки (один MCP-сервер = одна база данных)."""
+"""Конфигурация приложения и настройки (один MCP-сервер = одна база данных).
+
+Формат config.json (в текущей директории):
+
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "transport": "http",
+    "endpoint": "mcp",
+    "workers": 1,
+    "health_endpoint_enabled": true
+  },
+  "fastmcp": {
+    "server_name": "PostgreSQL MCP",
+    "instructions": "...",
+    "return_errors_as_strings": true,
+    "error_traceback_in_strings": false
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "user",
+    "password": "secret",
+    "name": "mydb",
+    "write_mode": false,
+    "access_mode": "basic",
+    "sslmode": "prefer",
+    "table_prefix": null,
+    "query_tag": null
+  }
+}
+
+transport: "http" | "stdio". access_mode: "basic" | "full".
+sslmode: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full".
+Все поля опциональны; недостающие берутся из env/.env или значений по умолчанию.
+"""
 
 import json
 from pathlib import Path
@@ -7,13 +43,14 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+from postgres_fastmcp.common.errors import SettingsNotInitializedError
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.config.fastmcp import FastMCPSettings
 from postgres_fastmcp.config.server import ServerSettings
-from postgres_fastmcp.enums import AccessMode, UserRole
+from postgres_fastmcp.enums import AccessMode
 
 
-__all__ = ["Settings", "build_settings_from_cli", "get_settings", "settings"]
+__all__ = ["Settings", "app_config", "build_settings_from_cli"]
 
 
 class Settings(BaseSettings):
@@ -29,6 +66,46 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
+
+
+class AppConfig:
+    """Singleton конфигурации приложения. Единственный экземпляр Settings на процесс.
+
+    Инициализация один раз при старте через initialize(); доступ через current.
+    """
+
+    def __init__(self) -> None:
+        """Инициализация контейнера (без настроек — они загружаются через initialize)."""
+        self._settings: Settings | None = None
+
+    def initialize(self, **overrides: Any) -> Settings:
+        """Инициализировать и сохранить настройки. Вызывается один раз при старте.
+
+        Args:
+            **overrides: Параметры для переопределения (database, server, fastmcp и т.д.).
+
+        Returns:
+            Инициализированный экземпляр Settings (также доступен через current).
+        """
+        self._settings = _create_settings(**overrides)
+        return self._settings
+
+    @property
+    def current(self) -> Settings:
+        """Текущий экземпляр настроек.
+
+        Returns:
+            Текущий экземпляр Settings.
+
+        Raises:
+            SettingsNotInitializedError: Если initialize() ещё не вызывался.
+        """
+        if self._settings is None:
+            raise SettingsNotInitializedError
+        return self._settings
+
+
+app_config = AppConfig()
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:
@@ -51,8 +128,8 @@ def load_json_config(json_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def get_settings(**overrides: Any) -> Settings:
-    """Функция-фабрика для создания экземпляра настроек.
+def _create_settings(**overrides: Any) -> Settings:
+    """Создание экземпляра настроек без сохранения в singleton.
 
     Загружает конфигурацию в следующем порядке приоритета:
     1. Параметры overrides (наивысший приоритет)
@@ -66,12 +143,7 @@ def get_settings(**overrides: Any) -> Settings:
 
     Returns:
         Экземпляр Settings с загруженной конфигурацией.
-
-    Examples:
-        >>> settings = get_settings()
-        >>> test_settings = get_settings(server={"host": "127.0.0.1", "port": 9000})
     """
-    # Try to find config.json in current directory
     json_config = load_json_config(Path("config.json"))
 
     if overrides:
@@ -83,7 +155,6 @@ def get_settings(**overrides: Any) -> Settings:
     if json_config:
         return Settings(**json_config)
 
-    # Otherwise use standard BaseSettings loading (env, .env, defaults)
     return Settings()
 
 
@@ -94,8 +165,8 @@ def build_settings_from_cli(  # noqa: PLR0913
     host: str = "127.0.0.1",
     port: int = 8000,
     workers: int = 1,
-    access_mode: str | None = None,
-    role: str | None = None,
+    write_mode: bool = False,
+    access_mode: AccessMode = AccessMode.BASIC,
 ) -> Settings:
     """Формирование Settings из аргументов CLI (единый источник текущих прав/конфигурации).
 
@@ -104,20 +175,11 @@ def build_settings_from_cli(  # noqa: PLR0913
     """
     if database_uri:
         database_config = DatabaseConfig.from_uri(database_uri)
-        overrides_db: dict[str, Any] = {}
-        if access_mode is not None:
-            overrides_db["access_mode"] = AccessMode(access_mode)
-        if role is not None:
-            overrides_db["role"] = UserRole(role)
-        if overrides_db:
-            database_config = database_config.model_copy(update=overrides_db)
+        database_config = database_config.model_copy(update={"write_mode": write_mode, "access_mode": access_mode})
         server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
         if transport is not None:
             server_overrides["transport"] = transport
-        return get_settings(database=database_config, server=server_overrides)
+        return app_config.initialize(database=database_config, server=server_overrides)
     if transport is not None:
-        return get_settings(server={"transport": transport})
-    return get_settings()
-
-
-settings = get_settings()
+        return app_config.initialize(server={"transport": transport})
+    return app_config.initialize()

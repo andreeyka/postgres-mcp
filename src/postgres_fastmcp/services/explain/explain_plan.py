@@ -1,8 +1,22 @@
+# ruff: noqa: TRY301
 import logging
 import re
 from typing import Any
 
-from postgres_fastmcp.common.errors import ExplainPlanError
+from postgres_fastmcp.common.errors import (
+    ExplainPlanConversionError,
+    ExplainPlanError,
+    ExplainPlanExecutionError,
+    ExplainPlanInternalConversionError,
+    ExplainPlanNoResultsError,
+    ExplainPlanResultNotDictError,
+    ExplainPlanUnexpectedTypeError,
+    HypotheticalIndexesNotListError,
+    HypotheticalPlanGenerationError,
+    IndexColumnsTypeError,
+    IndexDefinitionNotDictError,
+    MissingKeyInIndexDefinitionError,
+)
 from postgres_fastmcp.services.index.dta_calc import DatabaseTuningAdvisor
 from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
@@ -14,6 +28,9 @@ from .artifacts import ExplainPlanArtifact
 
 
 logger = logging.getLogger(__name__)
+
+INDEX_KEY_TABLE = "table"
+INDEX_KEY_COLUMNS = "columns"
 
 
 class ExplainPlanTool:
@@ -94,13 +111,15 @@ class ExplainPlanTool:
         return await self.explain(sql_query, do_analyze=True)
 
     async def explain_with_hypothetical_indexes(
-        self, sql_query: str, hypothetical_indexes: list[dict[str, Any]]
+        self,
+        sql_query: str,
+        hypothetical_indexes: Any,  # noqa: ANN401
     ) -> ExplainPlanArtifact:
         """Сформировать план объяснения для запроса с учётом гипотетических индексов.
 
         Args:
             sql_query: SQL-запрос для объяснения.
-            hypothetical_indexes: Список определений индексов в виде словарей.
+            hypothetical_indexes: Список определений индексов в виде словарей (проверяется в runtime).
 
         Returns:
             ExplainPlanArtifact.
@@ -108,22 +127,21 @@ class ExplainPlanTool:
         Raises:
             ExplainPlanError: При ошибке валидации, генерации или преобразования плана.
         """
-        # Validate index definitions format
         if not isinstance(hypothetical_indexes, list):
-            raise ExplainPlanError(f"Expected list of index definitions, got {type(hypothetical_indexes)}")
+            raise HypotheticalIndexesNotListError(type(hypothetical_indexes))
 
         for idx in hypothetical_indexes:
             if not isinstance(idx, dict):
-                raise ExplainPlanError(f"Expected dictionary for index definition, got {type(idx)}")
-            if "table" not in idx:
-                raise ExplainPlanError("Missing 'table' in index definition")
-            if "columns" not in idx:
-                raise ExplainPlanError("Missing 'columns' in index definition")
+                raise IndexDefinitionNotDictError(type(idx))
+            if INDEX_KEY_TABLE not in idx:
+                raise MissingKeyInIndexDefinitionError(INDEX_KEY_TABLE)
+            if INDEX_KEY_COLUMNS not in idx:
+                raise MissingKeyInIndexDefinitionError(INDEX_KEY_COLUMNS)
             if not isinstance(idx["columns"], list):
                 try:
                     idx["columns"] = list(idx["columns"]) if hasattr(idx["columns"], "__iter__") else [idx["columns"]]
                 except Exception as e:
-                    raise ExplainPlanError(f"Expected list for 'columns', got {type(idx['columns'])}: {e}") from e
+                    raise IndexColumnsTypeError(type(idx["columns"]), str(e)) from e
 
         indexes = frozenset(
             IndexDefinition(
@@ -140,12 +158,12 @@ class ExplainPlanTool:
         )
 
         if not plan_data or not isinstance(plan_data, dict) or "Plan" not in plan_data:
-            raise ExplainPlanError("Failed to generate a valid explain plan with the hypothetical indexes")
+            raise HypotheticalPlanGenerationError
 
         try:
             return ExplainPlanArtifact.from_json_data(plan_data)
         except Exception as e:
-            raise ExplainPlanError(f"Error converting explain plan: {e}") from e
+            raise ExplainPlanConversionError(e) from e
 
     def _has_bind_variables(self, query: str) -> bool:
         """Проверить, есть ли в запросе плейсхолдеры ($1, $2, …)."""
@@ -174,29 +192,27 @@ class ExplainPlanTool:
             logger.debug("RUNNING EXPLAIN QUERY: %s", explain_q)
             rows = await self.sql_driver.execute(explain_q, params=None, readonly=True)
             if rows is None:
-                raise ExplainPlanError("No results returned from EXPLAIN")
+                raise ExplainPlanNoResultsError
 
             query_plan_data = rows[0].cells["QUERY PLAN"]
 
             if not isinstance(query_plan_data, list):
-                raise ExplainPlanError(f"Expected list from EXPLAIN, got {type(query_plan_data)}")
+                raise ExplainPlanUnexpectedTypeError(type(query_plan_data))
             if len(query_plan_data) == 0:
-                raise ExplainPlanError("No results returned from EXPLAIN")
+                raise ExplainPlanNoResultsError
 
             plan_dict = query_plan_data[0]
             if not isinstance(plan_dict, dict):
-                raise ExplainPlanError(
-                    f"Expected dict in EXPLAIN result list, got {type(plan_dict)} with value {plan_dict}"
-                )
+                raise ExplainPlanResultNotDictError(type(plan_dict), plan_dict)
 
             try:
                 return ExplainPlanArtifact.from_json_data(plan_dict)
             except Exception as e:
-                raise ExplainPlanError(f"Internal error converting explain plan - do not retry: {e}") from e
+                raise ExplainPlanInternalConversionError(e) from e
         except ExplainPlanError:
             raise
         except Exception as e:
-            raise ExplainPlanError(f"Error executing explain plan: {e}") from e
+            raise ExplainPlanExecutionError(e) from e
 
     async def generate_explain_plan_with_hypothetical_indexes(
         self,

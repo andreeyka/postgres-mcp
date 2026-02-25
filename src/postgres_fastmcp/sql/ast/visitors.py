@@ -19,10 +19,19 @@ class TableAliasVisitor(Visitor):  # type: ignore[misc]
         self.tables: set[str] = set()
 
     def __call__(self, node: Node) -> tuple[dict[str, str], set[str]]:
+        """Обход узла AST и возврат собранных алиасов и имён таблиц.
+
+        Args:
+            node: Корневой узел AST для обхода.
+
+        Returns:
+            Кортеж (алиасы: имя_алиаса -> имя_таблицы, множество имён таблиц).
+        """
         super().__call__(node)
         return self.aliases, self.tables
 
     def visit_RangeVar(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка узла RangeVar: сбор имени таблицы и алиаса."""
         if isinstance(node, RangeVar):
             if node.relname is not None:
                 self.tables.add(node.relname)
@@ -30,6 +39,7 @@ class TableAliasVisitor(Visitor):  # type: ignore[misc]
                 self.aliases[node.alias.aliasname] = str(node.relname)
 
     def visit_JoinExpr(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка узла JOIN: рекурсивный обход левой и правой части."""
         if isinstance(node, JoinExpr):
             if node.larg is not None:
                 self(node.larg)
@@ -51,6 +61,14 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
         self.column_cache: dict[str, set[str]] = column_cache or {}
 
     def __call__(self, node: Node) -> dict[str, set[str]]:
+        """Обход узла AST и возврат собранных столбцов по контексту.
+
+        Args:
+            node: Корневой узел AST для обхода.
+
+        Returns:
+            Словарь: ключ контекста -> множество имён столбцов.
+        """
         super().__call__(node)
         return self.columns
 
@@ -64,6 +82,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
         return column.lower() in {c.lower() for c in table_columns}
 
     def visit_SelectStmt(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка SELECT: контекст таблиц/алиасов, targetList, обход предложений запроса."""
         if not isinstance(node, SelectStmt):
             return
         self.inside_select = True
@@ -93,7 +112,8 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
         self.inside_select = False
         self.current_query_level -= 1
 
-    def _process_query_clauses(self, node: SelectStmt) -> None:
+    def _process_query_clauses(self, node: SelectStmt) -> None:  # noqa: C901
+        """Обработка предложений запроса: targetList, GROUP BY, WHERE, FROM, HAVING, ORDER BY."""
         if hasattr(node, "targetList") and node.targetList:
             self.target_list = node.targetList
             if self.target_list is None:
@@ -125,6 +145,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
                 self._process_sort_item(sort_item)
 
     def _process_sort_item(self, sort_item: SortBy) -> None:
+        """Обработка элемента ORDER BY: раскрытие алиаса или обход узла сортировки."""
         if not hasattr(sort_item, "node"):
             return
         if isinstance(sort_item.node, ColumnRef) and hasattr(sort_item.node, "fields") and sort_item.node.fields:
@@ -136,7 +157,8 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
                     return
         self(sort_item.node)
 
-    def visit_ColumnRef(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+    def visit_ColumnRef(self, _ancestors: list[Node], node: Node) -> None:  # noqa: C901, N802
+        """Обработка ссылки на столбец: учёт квалификации (таблица.столбец) и контекста."""
         if not isinstance(node, ColumnRef) or not self.inside_select:
             return
         if not hasattr(node, "fields") or not node.fields:
@@ -170,6 +192,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
                         break
 
     def visit_A_Expr(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка выражения (оператор/функция): обход lexpr/rexpr, в т.ч. подзапросов."""
         if isinstance(node, A_Expr) and self.inside_select:
             if hasattr(node, "lexpr") and node.lexpr:
                 self(node.lexpr)
@@ -202,6 +225,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
                 self.context_stack.pop()
 
     def visit_JoinExpr(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка JOIN: обход larg, rarg и условия quals для сбора столбцов."""
         if isinstance(node, JoinExpr) and self.inside_select:
             if hasattr(node, "larg") and node.larg:
                 self(node.larg)
@@ -211,5 +235,6 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
                 self(node.quals)
 
     def visit_SortBy(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
+        """Обработка элемента ORDER BY: обход узла выражения сортировки."""
         if isinstance(node, SortBy) and self.inside_select and hasattr(node, "node") and node.node:
             self(node.node)

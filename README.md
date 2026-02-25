@@ -10,7 +10,7 @@
 - **🚀 Высокая производительность** — FastMCP оптимизирован для быстрой работы
 - **🔧 Гибкая настройка** — `config.json`, переменные окружения (например `MCP_SERVER_*`, `MCP_DATABASE_*`) или CLI
 - **🌐 HTTP и STDIO** — запуск как HTTP-сервер или через stdio для настольных MCP-клиентов
-- **🔐 Детальный контроль доступа** — роль (`user` / `admin`) и режим доступа (`restricted` / `unrestricted`)
+- **🔐 Детальный контроль доступа** — access_mode (basic/full) и write_mode (true/false)
 - **📌 Одна БД на сервер** — один экземпляр MCP-сервера обслуживает одну базу PostgreSQL
 
 ### Основные возможности
@@ -44,8 +44,7 @@ uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
   --transport http \
   --port 8000 \
-  --role admin \
-  --access-mode restricted
+  --access-mode full
 ```
 
 **Режим STDIO (для MCP-клиентов вроде Claude Desktop):**
@@ -54,11 +53,10 @@ uv run postgres-fastmcp \
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
   --transport stdio \
-  --role user \
-  --access-mode restricted
+  --access-mode basic
 ```
 
-Опции CLI только при использовании `--database-uri`: `--access-mode`, `--role`. Опции сервера: `--host`, `--port`, `--workers`, `--transport`.
+Опции CLI только при использовании `--database-uri`: `--write-mode` (флаг), `--access-mode` (basic|full). Опции сервера: `--host`, `--port`, `--workers`, `--transport`.
 
 #### 2. Конфигурационный файл (`config.json`)
 
@@ -82,8 +80,8 @@ uv run postgres-fastmcp \
         "user": "user",
         "password": "password",
         "name": "dbname",
-        "role": "admin",
-        "access_mode": "restricted"
+        "access_mode": "full",
+        "write_mode": false
     }
 }
 ```
@@ -94,7 +92,7 @@ uv run postgres-fastmcp \
 uv run postgres-fastmcp
 ```
 
-Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `role`, `access_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
+Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
 
 #### 3. Переменные окружения
 
@@ -110,7 +108,7 @@ export MCP_DATABASE_USER=user
 export MCP_DATABASE_PASSWORD=password
 export MCP_DATABASE_NAME=dbname
 export MCP_DATABASE_ROLE=admin
-export MCP_DATABASE_ACCESS_MODE=restricted
+export MCP_DATABASE_WRITE_MODE=false
 
 uv run postgres-fastmcp
 ```
@@ -130,7 +128,7 @@ uv run postgres-fastmcp
 
 Безопасность задаётся двумя независимыми параметрами:
 
-#### Роль (`role`)
+#### Уровень доступа (`access_mode`)
 
 Определяет доступ к схемам и набор доступных инструментов:
 
@@ -139,27 +137,27 @@ uv run postgres-fastmcp
 | `user`  | Только `public` | Базовые (4) | Только схема public; опционально `table_prefix` — ограничение по префиксу имён таблиц |
 | `admin` | Все схемы      | Все (9)     | Все схемы и расширенные инструменты (схемы, здоровье, топ запросов, анализ индексов) |
 
-#### Режим доступа (`access_mode`)
+#### Режим записи (`write_mode`)
 
 Определяет уровень выполнения SQL:
 
-| Режим           | SQL-доступ                        | Описание |
-| --------------- | --------------------------------- | -------- |
-| `restricted`    | Только чтение (только SELECT)     | Разрешён только SELECT |
-| `unrestricted`  | Чтение-запись (DML) или полный (DDL для admin) | Разрешены INSERT/UPDATE/DELETE; DDL только для роли `admin` |
+| write_mode | SQL-доступ                        | Описание |
+| ---------- | --------------------------------- | -------- |
+| `false`    | Только чтение (только SELECT)     | Разрешён только SELECT |
+| `true`     | Чтение-запись (DML); DDL при access_mode=full | Разрешены INSERT/UPDATE/DELETE; DDL только при access_mode=full |
 
 #### Матрица комбинаций
 
-| Роль    | Режим доступа   | Инструменты | SQL-доступ        | Схемы |
-| ------- | --------------- | ----------- | ----------------- | ----- |
-| `user`  | `restricted`    | Базовые (4) | Только чтение     | `public` (опционально `table_prefix`) |
-| `user`  | `unrestricted`  | Базовые (4) | Чтение-запись    | `public` |
-| `admin` | `restricted`    | Все (9)     | Только чтение     | Все |
-| `admin` | `unrestricted`  | Все (9)     | Полный доступ (DDL) | Все |
+| access_mode | write_mode | Инструменты | SQL-доступ        | Схемы |
+| -------- | ---------- | ----------- | ----------------- | ----- |
+| `basic`  | `false`    | Базовые (4) | Только чтение     | `public` (опционально `table_prefix`) |
+| `basic`  | `true`     | Базовые (4) | Чтение-запись    | `public` |
+| `full`   | `false`    | Все (9)     | Только чтение     | Все |
+| `full`   | `true`     | Все (9)     | Полный доступ (DDL) | Все |
 
-**По умолчанию:** `role=user`, `access_mode=restricted` (максимально ограниченный режим).
+**По умолчанию:** `access_mode=basic`, `write_mode=false` (максимально ограниченный режим).
 
-**Для роли `user` опционально:** `table_prefix` ограничивает видимые таблицы/представления/последовательности по префиксу имени; для `admin` игнорируется.
+**Для access_mode=basic опционально:** `table_prefix` ограничивает видимые таблицы/представления/последовательности по префиксу имени; для full игнорируется.
 
 ### Транспорты
 
@@ -190,7 +188,7 @@ uv run postgres-fastmcp \
 
 ### Справочник конфигурации
 
-- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--workers`, `--access-mode`, `--role`. Вывод версии: `--version`. При указании `--database-uri` подключение к БД и роль/режим доступа берутся из CLI (и переопределяют config/env на этот запуск).
+- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--workers`, `--write-mode`, `--access-mode`. Вывод версии: `--version`. При указании `--database-uri` подключение к БД и access_mode/write_mode берутся из CLI (и переопределяют config/env на этот запуск).
 - **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
 - **Переменные окружения / .env:** Префиксы `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
 
@@ -241,7 +239,7 @@ uv run postgres-fastmcp \
                 "MCP_DATABASE_PASSWORD": "pass",
                 "MCP_DATABASE_NAME": "dbname",
                 "MCP_DATABASE_ROLE": "user",
-                "MCP_DATABASE_ACCESS_MODE": "restricted"
+                "MCP_DATABASE_WRITE_MODE": "false"
             }
         }
     }
@@ -286,7 +284,7 @@ uv run postgres-fastmcp \
 | `list_schemas`          | Список всех схем БД в экземпляре PostgreSQL |
 | `list_objects`          | Список объектов БД (таблицы, представления, последовательности, расширения) в указанной схеме |
 | `get_object_details`   | Информация об объекте БД: столбцы, ограничения, индексы таблицы и т.п. |
-| `execute_sql`           | Выполнение SQL с ограничениями только чтение в режиме restricted |
+| `execute_sql`           | Выполнение SQL с ограничениями только чтение при write_mode=false |
 | `explain_query`         | План выполнения запроса; поддерживаются гипотетические индексы для симуляции |
 | `get_top_queries`      | Самые медленные запросы по суммарному времени (данные `pg_stat_statements`) |
 | `analyze_workload_indexes` | Анализ нагрузки и рекомендации оптимальных индексов |
@@ -297,8 +295,8 @@ uv run postgres-fastmcp \
 
 - **Роль `user`**: только базовые инструменты (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`); опционально `table_prefix` для ограничения набора таблиц
 - **Роль `admin`**: все инструменты (базовые + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
-- **Режим `restricted`**: разрешён только SELECT
-- **Режим `unrestricted`**: разрешён DML; DDL только для роли `admin`
+- **write_mode=false**: разрешён только SELECT
+- **write_mode=true** (при access_mode=full): разрешён DML; DDL для access_mode=full
 
 ## Установка расширений PostgreSQL (опционально)
 
@@ -326,7 +324,7 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
 
 ## Примеры конфигурации
 
-### Пример 1: Production (только чтение, роль admin)
+### Пример 1: Production (только чтение, access_mode=full)
 
 `config.json` для одной production-БД с полным набором инструментов и SQL только на чтение:
 
@@ -340,8 +338,8 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
         "user": "user",
         "password": "password",
         "name": "production",
-        "role": "admin",
-        "access_mode": "restricted"
+        "access_mode": "full",
+        "write_mode": false
     }
 }
 ```
@@ -359,8 +357,8 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
         "user": "appuser",
         "password": "secret",
         "name": "mydb",
-        "role": "user",
-        "access_mode": "restricted",
+        "access_mode": "basic",
+        "write_mode": false,
         "table_prefix": "app_"
     }
 }
@@ -371,7 +369,7 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
 Запуск с одной БД через CLI:
 
 ```bash
-uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass@localhost:5432/dbname" --role user --access-mode restricted
+uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass@localhost:5432/dbname" --access-mode basic
 ```
 
 ### Пример 4: Разработка (чтение-запись, admin)
@@ -387,8 +385,8 @@ uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass
         "user": "dev",
         "password": "dev",
         "name": "development",
-        "role": "admin",
-        "access_mode": "unrestricted"
+        "access_mode": "full",
+        "write_mode": true
     }
 }
 ```
@@ -499,7 +497,7 @@ uv run mypy src/
 | Оригинальный проект     | Этот форк |
 | ----------------------- | --------- |
 | Стандартная реализация MCP | Фреймворк FastMCP |
-| Режимы: restricted/unrestricted | Роль (`user` / `admin`) + access_mode (`restricted` / `unrestricted`) |
+| Режимы                        | access_mode (`basic` / `full`) + write_mode (true/false)                      |
 | Только транспорт SSE   | HTTP и stdio |
 | Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*`) и CLI |
 | —                      | Опциональный `table_prefix` для роли `user`; endpoint здоровья `/health` |

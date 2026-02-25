@@ -9,7 +9,7 @@ class FastMCPSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore")
 
-    server_name: str = Field(default="postgres-fastmcp", description="Имя MCP-сервера (MCP_SERVER_NAME)")
+    server_name: str = Field(default="PostgreSQL MCP", description="Имя MCP-сервера (MCP_SERVER_NAME)")
     instructions: str = Field(
         default=(
             "MCP-сервер для PostgreSQL: обнаружение схемы, выполнение запросов, "

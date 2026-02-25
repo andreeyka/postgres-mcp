@@ -1,10 +1,8 @@
-"""Objects facade — маршрутизирует вызовы list_objects и get_object_details в сервисы таблиц, последовательностей и расширений."""
-
 from typing import Any, cast
 
 from postgres_fastmcp.common.errors import SchemaAccessError, UnsupportedObjectTypeError
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
-from postgres_fastmcp.enums import UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 
 from .extensions import ExtensionsService
@@ -34,7 +32,7 @@ class ObjectsService:
         Raises:
             SchemaAccessError: Если доступ к запрошенной схеме запрещен.
         """
-        if self.db.role == UserRole.USER:
+        if self.db.access_mode == AccessMode.BASIC:
             if schema_name and schema_name.lower() != "public":
                 raise SchemaAccessError(schema_name)
             return "public"
@@ -74,7 +72,9 @@ class ObjectsService:
         object_name: str,
         object_type: str = "table",
     ) -> dict[str, Any]:
-        """Получить детальную информацию об объекте — делегирует вызовы TablesService, SequencesService или ExtensionsService.
+        """Получить детальную информацию об объекте.
+
+         Делегирует вызовы TablesService, SequencesService или ExtensionsService.
 
         Args:
             schema_name: Имя схемы объекта.

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.di.database_config_provider import get_database_config
+from postgres_fastmcp.providers.database_config_provider import get_database_config
 
 
 class TestGetDatabaseConfig:

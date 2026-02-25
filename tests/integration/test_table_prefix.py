@@ -1,10 +1,10 @@
 # mypy: ignore-errors
-"""Integration tests for table_prefix (postgres_fastmcp: DbAccessService, UserRole, SafeSqlExecutor)."""
+"""Integration tests for table_prefix (postgres_fastmcp: DbAccessService, AccessMode, SafeSqlExecutor)."""
 
 import pytest
 
 from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode, UserRole
+from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.services.objects.service import ObjectsService
 from postgres_fastmcp.services.schema.service import SchemaService
@@ -158,10 +158,10 @@ async def test_list_objects_filters_by_prefix(
 
 
 @pytest.mark.asyncio
-async def test_table_prefix_ignored_in_full_role(
+async def test_table_prefix_ignored_in_full_access_mode(
     db_service_full: DbAccessService,
 ) -> None:
-    """table_prefix is ignored for ADMIN role (full executor, no prefix filter)."""
+    """table_prefix is ignored for access_mode=full (full executor, no prefix filter)."""
     await setup_test_tables(db_service_full)
 
     sql_driver = db_service_full.sql_driver
@@ -196,17 +196,18 @@ async def test_table_prefix_with_different_prefixes(
     connection_string, _ = test_postgres_connection_string
     full_config = DatabaseConfig.from_uri(
         connection_string,
-        role=UserRole.ADMIN,
-        access_mode=AccessMode.UNRESTRICTED,
+        access_mode=AccessMode.FULL,
+        write_mode=True,
     )
     user_config = DatabaseConfig.from_uri(
         connection_string,
-        role=UserRole.USER,
-        access_mode=AccessMode.RESTRICTED,
+        access_mode=AccessMode.BASIC,
+        write_mode=False,
         table_prefix="user_",
     )
 
-    async with DbAccessService(full_config) as full_svc:
+    full_svc = DbAccessService(full_config)
+    try:
         await full_svc.sql_driver.execute(
             "CREATE TABLE IF NOT EXISTS user_data (id INTEGER)",
             readonly=False,
@@ -219,8 +220,11 @@ async def test_table_prefix_with_different_prefixes(
             "CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER)",
             readonly=False,
         )
+    finally:
+        await full_svc.close()
 
-    async with DbAccessService(user_config) as user_svc:
+    user_svc = DbAccessService(user_config)
+    try:
         sql_driver = user_svc.sql_driver
 
         result1 = await sql_driver.execute("SELECT * FROM user_data LIMIT 1", readonly=True)
@@ -231,3 +235,5 @@ async def test_table_prefix_with_different_prefixes(
 
         with pytest.raises(ValueError):
             await sql_driver.execute("SELECT * FROM admin_logs LIMIT 1", readonly=True)
+    finally:
+        await user_svc.close()

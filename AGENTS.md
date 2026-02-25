@@ -991,7 +991,7 @@ else:
 - **Presentation** (`server/`): tool definitions, descriptions, constants
 - **Application** (`services/`): business logic and domain logic per feature (explain, index, health, top_queries, etc. live inside their service packages under `services/`)
 - **Infrastructure** (`sql/`): shared SQL driver, connection, validation, security
-- **DI** (`di/`): dependency injection providers
+- **Providers** (`providers/`): dependency injection providers
 
 No upward imports (e.g. `sql/` must not import from `services/`).
 

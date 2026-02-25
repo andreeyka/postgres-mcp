@@ -9,7 +9,7 @@ from postgres_fastmcp.config.database import DatabaseConfig
 
 
 def get_database_config(ctx: Context = CurrentContext()) -> DatabaseConfig:
-    """Получить текущую конфигурацию БД (права: role, access_mode) из lifespan context.
+    """Получить текущую конфигурацию БД (права: access_mode, write_mode) из lifespan context.
 
     Единая точка доступа к «текущим правам» для инструментов и сервисов.
 

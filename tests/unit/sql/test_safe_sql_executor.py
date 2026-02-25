@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from postgres_fastmcp.common.errors import QueryTimeoutError, SchemaNotAllowedError
 from postgres_fastmcp.sql.models.row_result import RowResult
 from postgres_fastmcp.sql.security.config import SafeSqlConfig
 from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
@@ -43,7 +44,7 @@ class TestSafeSqlExecutorValidation:
         mock_delegate = AsyncMock(return_value=[])
         validator = QueryValidator(read_only=True, allowed_schema="public")
         executor = _make_executor(mock_delegate, validator=validator)
-        with pytest.raises(ValueError):
+        with pytest.raises(SchemaNotAllowedError):
             await executor.execute("SELECT * FROM other_schema.t")
         mock_delegate.execute.assert_not_called()
 
@@ -84,7 +85,7 @@ class TestSafeSqlExecutorTimeout:
     """Timeout enforcement."""
 
     async def test_timeout_raises_when_delegate_slow(self) -> None:
-        """When delegate sleeps longer than timeout, ValueError is raised."""
+        """When delegate sleeps longer than timeout, QueryTimeoutError is raised."""
 
         async def slow_execute(*args: object, **kwargs: object) -> list[RowResult]:
             await asyncio.sleep(1.0)
@@ -94,9 +95,10 @@ class TestSafeSqlExecutorTimeout:
         mock_delegate.execute = AsyncMock(side_effect=slow_execute)
         config = SafeSqlConfig(query_tag="t", timeout=0.01)
         executor = _make_executor(mock_delegate, config=config)
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(QueryTimeoutError) as exc_info:
             await executor.execute("SELECT 1")
-        assert "таймаут" in str(exc_info.value) or "timeout" in str(exc_info.value).lower()
+        assert "timeout" in str(exc_info.value).lower()
+        assert exc_info.value.timeout_seconds == 0.01
 
     async def test_no_timeout_returns_delegate_result(self) -> None:
         """When timeout is None, delegate result is returned."""
