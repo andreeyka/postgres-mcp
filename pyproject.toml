@@ -5,31 +5,28 @@ description = "PostgreSQL Tuning and Analysis Tool"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "click>=8.1.0",
-    "psycopg[binary]>=3.2.6",
+    "cyclopts>=3.0.0",
     "humanize>=4.8.0",
-    "pglast==7.2.0",
+    "pglast>=7.11.0",
     "attrs>=25.3.0",
     "psycopg-pool>=3.2.6",
-    "instructor>=1.7.9",
-    "fastmcp>=2.13.0.2",
+    "fastmcp>=3.0.0rc2",
     "pydantic-settings>=2.11.0",
     "pydantic>=2.12.4",
-    "key-value",
-    "redis>=5.0.0",
+    "psycopg[binary]>=3.3.2",
 ]
 
 
 [[project.authors]]
 name = "Andrey Shlyapin"
-email = "andrey@skzd.ru"
+email = "avshlyapin@cloud.ru"
 
 [build-system]
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
 [project.scripts]
-postgres-fastmcp = "postgres_fastmcp.main:main"
+postgres-mcp = "postgres_fastmcp.main:app"
 
 [[tool.uv.index]]
 url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
@@ -45,18 +42,17 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "docker>=7.0.0",
+    "pytest-cov>=7.0.0",
+    "typing_extensions>=4.14.0",
 ]
 
 [tool.mypy]
-plugins = "pydantic.mypy"
+# pydantic.mypy disabled: ms-python.mypy-type-checker uses bundled typing_extensions
+# without Sentinel (needs 4.14+). Uncomment for full pydantic checks via `uv run mypy`.
+# plugins = "pydantic.mypy"
 python_version = "3.12"
 strict = true
 exclude = [".venv", "tests"]
-
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -65,7 +61,6 @@ module = [
     "psycopg",
     "psycopg_pool",
     "humanize",
-    "instructor",
     "mcp",
 ]
 ignore_missing_imports = true
@@ -105,6 +100,7 @@ ignore = [
     "PLR0914",
     "PLR0915",
     "TRY400",
+    "B008"
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -119,6 +115,7 @@ ignore = [
     "ANN204",  # Missing return type annotation for magic method
     # Missing docstrings - not critical for tests
     "D100",  # Missing docstring in public module
+    "D102",  # Missing docstring in public method
     "D103",  # Missing docstring in public function
     "D104",  # Missing docstring in public package
     "D105",  # Missing docstring in magic method
@@ -165,6 +162,18 @@ ignore = [
     "ARG005",  # Unused lambda argument - acceptable for test callbacks
     "ARG001",  # Unused function argument - acceptable for mocks and fixtures
 ]
+# Tool and explain layers: raise in place, messages in English (AGENTS.md)
+"src/postgres_fastmcp/explain/*.py" = ["TRY003", "EM101", "EM102", "TRY301", "RSE102"]
+"src/postgres_fastmcp/services/explain_service.py" = ["RSE102"]
+"src/postgres_fastmcp/services/index_analysis_service.py" = ["RSE102"]
+"src/postgres_fastmcp/services/top_queries_service.py" = ["RSE102"]
+"src/postgres_fastmcp/services/sql_execution_service.py" = ["TRY003", "EM101"]
+"src/postgres_fastmcp/services/objects_service.py" = ["SLF001"]
+"src/postgres_fastmcp/services/schema/service.py" = ["SLF001"]
+"src/postgres_fastmcp/services/objects/*.py" = ["SLF001"]
+"src/postgres_fastmcp/services/index/service.py" = ["RSE102"]
+"src/postgres_fastmcp/services/top_queries/service.py" = ["RSE102"]
+"src/postgres_fastmcp/sql/validation/*.py" = ["C901"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -177,6 +186,11 @@ split-on-trailing-comma = false
 
 [tool.ruff.lint.flake8-annotations]
 allow-star-arg-any = true
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
 
 [tool.ruff.lint.flake8-bandit]
 check-typed-exception = true

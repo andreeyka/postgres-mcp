@@ -1,227 +1,121 @@
-"""Application configuration and settings."""
+"""Конфигурация приложения и настройки (один MCP-сервер = одна база данных).
 
-from __future__ import annotations
+Формат config.json (в текущей директории):
 
-import contextlib
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "transport": "http",
+    "endpoint": "mcp",
+    "workers": 1,
+    "health_endpoint_enabled": true
+  },
+  "fastmcp": {
+    "server_name": "PostgreSQL MCP",
+    "instructions": "...",
+    "return_errors_as_strings": true,
+    "error_traceback_in_strings": false
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "user",
+    "password": "secret",
+    "name": "mydb",
+    "write_mode": false,
+    "access_mode": "basic",
+    "sslmode": "prefer",
+    "table_prefix": null,
+    "query_tag": null
+  }
+}
+
+transport: "http" | "stdio". access_mode: "basic" | "full".
+sslmode: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full".
+Все поля опциональны; недостающие берутся из env/.env или значений по умолчанию.
+"""
+
 import json
-import warnings
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
+from postgres_fastmcp.common.errors import SettingsNotInitializedError
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.config.fastmcp import FastMCPSettings
-from postgres_fastmcp.config.keycloak import KeycloakConfig
-from postgres_fastmcp.config.redis import RedisConfig
 from postgres_fastmcp.config.server import ServerSettings
-from postgres_fastmcp.enums import TransportConfig, TransportHttpApp
+from postgres_fastmcp.enums import AccessMode
 
 
-# Re-export for convenience
-__all__ = ["DatabaseConfig", "KeycloakConfig", "Settings", "get_settings", "settings"]
+__all__ = ["Settings", "app_config", "build_settings_from_cli"]
 
 
 class Settings(BaseSettings):
-    """Application settings.
+    """Настройки приложения (одна база данных на сервер).
 
-    Automatically loads configuration from:
-    - Environment variables
-    - .env file (if exists)
-    - config.json file (if exists)
-    - Default values
+    Загружаются из: переменных окружения, .env, config.json, значений по умолчанию.
+    Потребители используют вложенную конфигурацию через DI или прямой доступ:
+    settings.server, settings.fastmcp, settings.database.
 
-    Example environment variables:
-        MCP_SERVER_HOST=0.0.0.0
-        MCP_SERVER_PORT=8000
-        MCP_SERVER_TRANSPORT=http
-        MCP_FASTMCP_SERVER_NAME=postgres-fastmcp
-        MCP_DATABASES__POSTGRES__DATABASE_URI=postgresql://user:pass@localhost:5432/dbname
-        MCP_DATABASES__POSTGRES__ENDPOINT=true
+    Примеры переменных окружения: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_DATABASE_PORT=5432, ...
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        env_prefix="MCP_",
-        env_nested_delimiter="__",
-    )
-
-    # Server settings
     server: ServerSettings = Field(default_factory=ServerSettings)
-    # FastMCP settings
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
-    # Keycloak authentication
-    keycloak: KeycloakConfig | None = Field(
-        default=None,
-        description="Keycloak authentication configuration.",
-    )
-    # Redis configuration
-    redis: RedisConfig = Field(default_factory=RedisConfig)
-    # Databases configuration
-    databases: dict[str, DatabaseConfig] = Field(..., description="Databases configuration")
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
 
-    @model_validator(mode="after")
-    def validate_keycloak_config(self) -> Self:
-        """Create KeycloakConfig from environment variables if not already set.
 
-        Attempts to create KeycloakConfig from environment variables.
-        If environment variables are missing, leaves keycloak as None.
-        """
-        # Only create KeycloakConfig if not already set
-        if self.keycloak is None:
-            with contextlib.suppress(Exception):
-                self.keycloak = KeycloakConfig()
-        return self
+class AppConfig:
+    """Singleton конфигурации приложения. Единственный экземпляр Settings на процесс.
 
-    @model_validator(mode="after")
-    def validate_transport_and_streamable(self) -> Self:
-        """Validate transport compatibility for all servers.
+    Инициализация один раз при старте через initialize(); доступ через current.
+    """
 
-        Rules:
-        - If transport='stdio', server transport parameter is ignored
-        - If transport='http' and endpoint=True, server transport must be 'http', 'streamable-http', or None
-        - If endpoint=False, server transport is ignored
-        """
-        # Validate server transport values only for servers with endpoint=True
-        if self.server.transport == TransportConfig.HTTP and self.databases:
-            valid_transports = {TransportHttpApp.HTTP.value, TransportHttpApp.STREAMABLE_HTTP.value, None}
-            for server_name, server_config in self.databases.items():
-                # Only validate transport if endpoint=True
-                if server_config.endpoint and server_config.transport not in valid_transports:
-                    warnings.warn(
-                        f"Server '{server_name}' has invalid transport '{server_config.transport}'. "
-                        f"Must be 'http' or 'streamable-http'. Using global transport as default.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    server_config.transport = None
+    def __init__(self) -> None:
+        """Инициализация контейнера (без настроек — они загружаются через initialize)."""
+        self._settings: Settings | None = None
 
-        return self
+    def initialize(self, **overrides: Any) -> Settings:
+        """Инициализировать и сохранить настройки. Вызывается один раз при старте.
 
-    @property
-    def name(self) -> str:
-        """Get server name from fastmcp settings.
+        Args:
+            **overrides: Параметры для переопределения (database, server, fastmcp и т.д.).
 
         Returns:
-            Server name.
+            Инициализированный экземпляр Settings (также доступен через current).
         """
-        return self.fastmcp.server_name
+        self._settings = _create_settings(**overrides)
+        return self._settings
 
     @property
-    def endpoint(self) -> str:
-        """Get endpoint path from server settings.
+    def current(self) -> Settings:
+        """Текущий экземпляр настроек.
 
         Returns:
-            Endpoint path.
+            Текущий экземпляр Settings.
+
+        Raises:
+            SettingsNotInitializedError: Если initialize() ещё не вызывался.
         """
-        return self.server.endpoint
-
-    @property
-    def mask_error_details(self) -> bool:
-        """Get mask_error_details from fastmcp settings.
-
-        Returns:
-            Mask error details flag.
-        """
-        return self.fastmcp.mask_error_details
-
-    @property
-    def transport(self) -> TransportConfig:
-        """Get transport from server settings.
-
-        Returns:
-            Transport configuration.
-        """
-        return self.server.transport
-
-    @property
-    def host(self) -> str:
-        """Get host from server settings.
-
-        Returns:
-            Host address.
-        """
-        return self.server.host
-
-    @property
-    def port(self) -> int:
-        """Get port from server settings.
-
-        Returns:
-            Port number.
-        """
-        return self.server.port
-
-    @property
-    def workers(self) -> int:
-        """Get workers from server settings.
-
-        Returns:
-            Number of workers.
-        """
-        return self.server.workers
-
-    @property
-    def stdio(self) -> bool:
-        """Check if server should run in stdio mode.
-
-        Returns:
-            True if transport='stdio', False otherwise.
-        """
-        return self.server.transport == TransportConfig.STDIO
-
-    @property
-    def tool_mode_servers(self) -> dict[str, DatabaseConfig]:
-        """Get all servers (all servers are in tool mode now).
-
-        Returns:
-            Dictionary with all server configurations.
-            When transport='stdio', all servers are considered in tool mode.
-        """
-        return self.databases
-
-    @property
-    def tool_mode_streamable(self) -> bool:
-        """Get streamable value for main endpoint servers.
-
-        Returns:
-            True if main endpoint servers use streamable-http, False otherwise.
-            Returns False if there are no servers or if transport is stdio.
-        """
-        if not self.databases or self.server.transport == TransportConfig.STDIO:
-            return False
-        # Check servers with endpoint=False (mounted in main endpoint)
-        main_endpoint_servers = [s for s in self.databases.values() if not s.endpoint]
-        if not main_endpoint_servers:
-            return False
-        # Use first server's transport (all should be the same for main endpoint)
-        # If transport is None, default to non-streamable (http)
-        first_server_transport = main_endpoint_servers[0].transport
-        if first_server_transport is None:
-            return False
-        return first_server_transport == TransportHttpApp.STREAMABLE_HTTP.value
-
-    @property
-    def server_names(self) -> list[str]:
-        """Get list of all server names.
-
-        Returns:
-            List of all server names.
-        """
-        return list(self.databases.keys())
+        if self._settings is None:
+            raise SettingsNotInitializedError
+        return self._settings
 
 
-def _load_json_config(json_path: Path) -> dict[str, Any] | None:
-    """Load configuration from JSON file.
+app_config = AppConfig()
+
+
+def load_json_config(json_path: Path) -> dict[str, Any] | None:
+    """Загрузка конфигурации из JSON-файла.
 
     Args:
-        json_path: Path to JSON file.
+        json_path: Путь к JSON-файлу.
 
     Returns:
-        Configuration dictionary or None if file not found.
+        Словарь конфигурации или None если файл не найден.
     """
     if not json_path.exists():
         return None
@@ -234,43 +128,58 @@ def _load_json_config(json_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def get_settings(**overrides: Any) -> Settings:
-    """Factory function to create settings instance.
+def _create_settings(**overrides: Any) -> Settings:
+    """Создание экземпляра настроек без сохранения в singleton.
 
-    Loads configuration in the following priority order:
-    1. **overrides parameters (highest priority)
-    2. config.json file (if exists)
-    3. Environment variables
-    4. .env file (if exists)
-    5. Default values from class
+    Загружает конфигурацию в следующем порядке приоритета:
+    1. Параметры overrides (наивысший приоритет)
+    2. Файл config.json (если существует)
+    3. Переменные окружения
+    4. Файл .env (если существует)
+    5. Значения по умолчанию из класса
 
     Args:
-        **overrides: Parameters to override default values.
+        **overrides: Параметры для переопределения значений по умолчанию.
 
     Returns:
-        Settings instance with loaded configuration.
-
-    Examples:
-        >>> settings = get_settings()
-        >>> test_settings = get_settings(server={"host": "127.0.0.1", "port": 9000})
+        Экземпляр Settings с загруженной конфигурацией.
     """
-    # Try to find config.json in current directory
-    json_config = _load_json_config(Path("config.json"))
+    json_config = load_json_config(Path("config.json"))
 
-    # If overrides provided, use them (highest priority)
     if overrides:
         if json_config:
-            # Merge JSON config with overrides (overrides take priority)
-            merged_config = {**json_config, **overrides}
+            merged_config = {**json_config, **dict(overrides)}
             return Settings(**merged_config)
         return Settings(**overrides)
 
-    # If JSON config exists, use it
     if json_config:
         return Settings(**json_config)
 
-    # Otherwise use standard BaseSettings loading (env, .env, defaults)
     return Settings()
 
 
-settings = get_settings()
+def build_settings_from_cli(  # noqa: PLR0913
+    *,
+    database_uri: str | None = None,
+    transport: str | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    workers: int = 1,
+    write_mode: bool = False,
+    access_mode: AccessMode = AccessMode.BASIC,
+) -> Settings:
+    """Формирование Settings из аргументов CLI (единый источник текущих прав/конфигурации).
+
+    Инкапсулирует ветвление: database_uri из CLI разбирается в компоненты (host, port, user, password, name),
+    переопределение transport. Используйте returned settings.database как единственный "текущий набор прав".
+    """
+    if database_uri:
+        database_config = DatabaseConfig.from_uri(database_uri)
+        database_config = database_config.model_copy(update={"write_mode": write_mode, "access_mode": access_mode})
+        server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
+        if transport is not None:
+            server_overrides["transport"] = transport
+        return app_config.initialize(database=database_config, server=server_overrides)
+    if transport is not None:
+        return app_config.initialize(server={"transport": transport})
+    return app_config.initialize()

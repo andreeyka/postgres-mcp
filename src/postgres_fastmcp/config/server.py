@@ -1,6 +1,4 @@
-"""Server configuration."""
-
-from __future__ import annotations
+"""Конфигурация сервера."""
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,18 +7,17 @@ from postgres_fastmcp.enums import TransportConfig
 
 
 class ServerSettings(BaseSettings):
-    """Server settings."""
+    """Настройки сервера."""
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore")
 
-    host: str = Field(default="127.0.0.1", description="Host to bind the server to")
-    port: int = Field(default=8000, description="Port to bind the server to")
+    host: str = Field(default="127.0.0.1", description="Хост для привязки сервера")
+    port: int = Field(default=8000, description="Порт для привязки сервера")
     transport: TransportConfig = Field(
-        default=TransportConfig.HTTP, description="Global transport type: 'http' or 'stdio'"
+        default=TransportConfig.HTTP, description="Глобальный тип транспорта: 'http' или 'stdio'"
     )
-    endpoint: str = Field(default="mcp", description="Default endpoint path")
-    workers: int = Field(default=1, description="Number of workers to run")
-    deprecation_warnings: bool = Field(default=True, description="Suppress deprecation warnings")
+    endpoint: str = Field(default="mcp", description="Путь endpoint по умолчанию")
+    workers: int = Field(default=1, description="Количество запускаемых рабочих процессов")
     health_endpoint_enabled: bool = Field(
-        default=True, description="Enable health check endpoint at /health (no authorization required)"
+        default=True, description="Включает endpoint проверки состояния /health (авторизация не требуется)"
     )

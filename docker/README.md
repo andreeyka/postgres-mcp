@@ -3,7 +3,9 @@
 **⚠️ This docker-compose setup is for TESTING ONLY.**
 
 This directory contains configuration for running a test environment with MCP server and PostgreSQL.
-For production Docker usage, see the main `Dockerfile` and `docker-entrypoint.sh` in the project root.
+For production Docker usage, see the main `Dockerfile` and entrypoint in the project root.
+
+**One MCP server = one database.** The server always runs in single-DB mode.
 
 ## Structure
 
@@ -13,30 +15,22 @@ For production Docker usage, see the main `Dockerfile` and `docker-entrypoint.sh
 - `postgres/init-4-databases.sql` - Alternative initialization script (same as init-db.sql)
 - `postgres/init-4-test-databases.sql` - Creates 4 test databases (db1, db2, db3, db4) for `test_static_server.py`
 - `postgres/init-all-databases.sh` - Bash script to initialize all databases with test data
-- `config.json` - Test MCP server configuration with 4 databases
+- `config.json` - Test MCP server configuration for **one** database (see format in `src/postgres_fastmcp/config/__init__.py`)
 
-## Test Databases
+## Test Databases (choose one per server)
 
-The initialization scripts create test databases with different access modes:
+The initialization scripts create test databases. **Each MCP server instance connects to a single database.** Default `config.json` uses `user_ro_db`.
 
-1. **user_ro_db** - Read-only access, public schema only
-   - User: `user_ro` / Password: `password`
-   - Role: `user`, Access Mode: `restricted`
-   - Table prefix: `app_`
+| Database      | User      | Password | access_mode | write_mode | Notes           |
+|--------------|-----------|----------|-------------|------------|-----------------|
+| user_ro_db   | user_ro   | password | basic       | false      | table_prefix: app_ |
+| user_rw_db   | user_rw   | password | basic       | true       |                 |
+| admin_ro_db  | admin_ro  | password | full        | false      |                 |
+| admin_rw_db  | postgres  | postgres | full        | true       |                 |
 
-2. **user_rw_db** - Read-write access, public schema only
-   - User: `user_rw` / Password: `password`
-   - Role: `user`, Access Mode: `unrestricted`
+Additionally, `init-4-test-databases.sql` creates db1, db2, db3, db4 for integration tests.
 
-3. **admin_ro_db** - Read-only access, all schemas
-   - User: `admin_ro` / Password: `password`
-   - Role: `full`, Access Mode: `restricted`
-
-4. **admin_rw_db** - Full access, all schemas
-   - User: `postgres` / Password: `postgres`
-   - Role: `full`, Access Mode: `unrestricted`
-
-Additionally, `init-4-test-databases.sql` creates 4 databases (db1, db2, db3, db4) with test data for integration testing.
+To use another database, edit `docker/config.json` and set `database` to the desired host, port, user, password, name, access_mode, write_mode (and table_prefix for basic). Or run the server with `--database-uri postgresql://user:pass@postgres:5432/dbname` and no config file.
 
 ## Prerequisites
 
@@ -103,13 +97,12 @@ All services run in an isolated Docker network `mcp-network`.
 
 ## Configuration
 
-The MCP server uses `docker/config.json` which is mounted as `/app/config.json` in the container.
-This configuration includes all 4 test databases with their respective access modes.
+The MCP server uses `docker/config.json` mounted as `/app/config.json` in the container. The file must have `server`, `fastmcp`, and `database` sections (one database per server).
 
-To modify the configuration:
+To use a different test database:
 
-1. Edit `docker/config.json`
-2. Restart the MCP server: `docker-compose restart mcp-server`
+1. Edit `docker/config.json` and change the `database` section (host, port, user, password, name, access_mode, write_mode, table_prefix).
+2. Restart: `docker-compose restart mcp-server`
 
 ## Troubleshooting
 
@@ -151,7 +144,7 @@ docker-compose exec mcp-server cat /app/config.json | python -m json.tool
 This test environment differs from production in several ways:
 
 1. **PostgreSQL configuration**: Uses test credentials and exposes port 5432
-2. **MCP server**: Uses test configuration with multiple databases
+2. **MCP server**: Uses test config with one database (single-DB mode only)
 3. **Network**: Isolated test network, not production-ready
 4. **Data persistence**: Uses Docker volumes (can be removed with `docker-compose down -v`)
 

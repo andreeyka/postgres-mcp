@@ -13,7 +13,6 @@ from docker import errors as docker_errors
 
 logger = logging.getLogger(__name__)
 
-
 def create_postgres_container(version: str) -> Generator[tuple[str, str], None, None]:
     """Create a PostgreSQL container of specified version and return its connection string."""
     try:
@@ -28,7 +27,7 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
     # Define custom image name with HypoPG
     custom_image_name = f"postgres-hypopg:{pg_version}"
 
-    container_name = f"postgres-crystal-test-{version.replace(':', '_')}-{os.urandom(4).hex()}"
+    container_name = f"postgres-test-{version.replace(':', '_')}-{os.urandom(4).hex()}"
     current_dir = Path(__file__).parent.absolute()
 
     logger.info(f"Setting up PostgreSQL {pg_version} with HypoPG")
@@ -63,7 +62,7 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
     postgres_password = "test_password"
     postgres_db = "test_db"
 
-    # Create container with more verbose logging
+    # Create container — same as original fd5d0e9 (trust + no log_config)
     container = client.containers.run(
         custom_image_name,
         name=container_name,
@@ -89,25 +88,22 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
     logger.info(f"Container {container_name} started, waiting for PostgreSQL to be ready")
 
     try:
-        # Wait for container to start and get logs
-        time.sleep(2)  # Give container a moment to start
+        # Wait for container to start — original logic (single check after 2s)
+        time.sleep(2)
         container.reload()
 
-        # Check if container is running
         if container.status != "running":
-            try:
-                logs = container.logs().decode("utf-8")
-                logger.error(f"Container {container_name} failed to start. Logs:\n{logs}")
-                pytest.skip(f"PostgreSQL container failed to start: {logs[:500]}...")
-            except Exception as log_error:
-                logger.warning(f"Could not read container logs: {log_error}")
-                pytest.skip(f"PostgreSQL container failed to start (status: {container.status})")
+            exit_info = ""
+            if hasattr(container, "attrs") and container.attrs.get("State"):
+                exit_info = f" exit code {container.attrs['State'].get('ExitCode', '?')}"
+            logger.error("Container %s failed to start (logs not read: Docker log driver may not support reading)", container_name)
+            pytest.skip(f"PostgreSQL container failed to start{exit_info}. Set Docker default log driver to json-file to see logs (e.g. in Docker Desktop settings or daemon.json).")
 
         # Get assigned port
         port = container.ports["5432/tcp"][0]["HostPort"]
 
         # Wait for PostgreSQL to be ready
-        deadline = time.time() + 60  # Increased timeout to 60 seconds
+        deadline = time.time() + 60
         is_ready = False
         last_error = None
 
@@ -125,24 +121,11 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
                 last_error = str(e)
                 logger.warning(f"Error checking if PostgreSQL is ready: {e}")
 
-            # Get container logs for debugging
-            if time.time() - deadline + 60 > 50:  # Log when we're close to timeout
-                try:
-                    logs = container.logs().decode("utf-8")
-                    logger.warning(f"Still waiting for PostgreSQL. Container logs:\n{logs[-2000:]}")
-                except Exception:
-                    # Logging driver may not support reading
-                    pass
-
+            # Do not call container.logs() here — daemon may not support reading and prints error each time
             time.sleep(2)
 
         if not is_ready:
-            try:
-                logs = container.logs().decode("utf-8")
-                logger.error(f"Timeout waiting for PostgreSQL. Container logs:\n{logs[-2000:]}")
-            except Exception:
-                # Logging driver may not support reading
-                logger.error("Timeout waiting for PostgreSQL (could not read logs)")
+            logger.error("Timeout waiting for PostgreSQL in %s", container_name)
             pytest.skip(f"Timeout waiting for PostgreSQL to start: {last_error}")
 
         connection_string = f"postgresql://postgres:{postgres_password}@localhost:{port}/{postgres_db}"
@@ -151,14 +134,7 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
         yield connection_string, version
 
     except Exception as e:
-        logger.error(f"Error setting up PostgreSQL container: {e}")
-        # Get container logs for debugging
-        try:
-            logs = container.logs().decode("utf-8")
-            logger.error(f"Container logs:\n{logs}")
-        except Exception as log_error:
-            # Logging driver may not support reading
-            logger.warning(f"Could not read container logs: {log_error}")
+        logger.error("Error setting up PostgreSQL container: %s", e)
         raise
 
     finally:

@@ -1,219 +1,171 @@
 
-# Postgres MCP Pro (FastMCP Fork)
+# Postgres MCP Pro (форк FastMCP)
 
-## Overview
+## Обзор
 
-**Postgres MCP Pro** is an open-source MCP (Model Context Protocol) server built on top of [FastMCP](https://gofastmcp.com/) that supports you and your AI agents throughout the entire development process—from initial coding, through testing and deployment, to production tuning and maintenance.
+**Postgres MCP Pro** — MCP-сервер (Model Context Protocol) с открытым исходным кодом на базе [FastMCP](https://gofastmcp.com/), который помогает вам и ИИ-агентам на всех этапах: от написания кода до тестирования, развёртывания и эксплуатации в production.
 
-This fork of the original [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) project has been rewritten to use FastMCP, providing:
+Этот форк оригинального проекта [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) переписан на FastMCP и даёт:
 
-- **🚀 Enhanced Performance** — FastMCP is optimized for high performance
-- **🔧 Flexible Configuration** — support for multiple databases simultaneously via `config.json`
-- **🌐 Multiple Transports** — support for HTTP, stdio, and streamable-http
-- **🔐 Granular Access Control** — four access modes for different use cases
-- **📦 Server Composition** — ability to mount multiple servers with prefixes
+- **🚀 Высокая производительность** — FastMCP оптимизирован для быстрой работы
+- **🔧 Гибкая настройка** — `config.json`, переменные окружения (например `MCP_SERVER_*`, `MCP_DATABASE_*`) или CLI
+- **🌐 HTTP и STDIO** — запуск как HTTP-сервер или через stdio для настольных MCP-клиентов
+- **🔐 Детальный контроль доступа** — access_mode (basic/full) и write_mode (true/false)
+- **📌 Одна БД на сервер** — один экземпляр MCP-сервера обслуживает одну базу PostgreSQL
 
-### Key Features
+### Основные возможности
 
-- **🔍 Database Health** — analyze index health, connection utilization, buffer cache, vacuum health, sequence limits, replication lag, and more
-- **⚡ Index Tuning** — explore thousands of possible indexes to find the best solution for your workload, using industrial-strength algorithms
-- **📈 Query Plans** — validate and optimize performance by reviewing EXPLAIN plans and simulating the impact of hypothetical indexes
-- **🧠 Schema Intelligence** — context-aware SQL generation based on detailed understanding of the database schema
-- **🛡️ Safe SQL Execution** — configurable access control, including support for read-only mode and safe SQL parsing, making it usable for both development and production
+- **🔍 Здоровье БД** — анализ индексов, загрузки соединений, буферного кэша, vacuum, лимитов последовательностей, лага репликации и др.
+- **⚡ Подбор индексов** — перебор тысяч вариантов индексов для вашей нагрузки с использованием промышленных алгоритмов
+- **📈 Планы запросов** — проверка и оптимизация по планам EXPLAIN и симуляция гипотетических индексов
+- **🧠 Понимание схемы** — контекстная генерация SQL на основе детального знания схемы БД
+- **🛡️ Безопасное выполнение SQL** — настраиваемый контроль доступа, режим только чтение и разбор SQL, пригодно для разработки и production
 
-## Quick Start
+## Быстрый старт
 
-### Prerequisites
+### Требования
 
-Before getting started, ensure you have:
+Перед началом нужны:
 
-1. Access credentials for your database
-2. Python 3.12 or higher
-3. `uv` for dependency management (recommended)
+1. Учётные данные для подключения к PostgreSQL
+2. Python 3.12 или выше
+3. Менеджер зависимостей `uv` (рекомендуется)
 
-### Running the Server
+### Запуск сервера
 
-The server can be run in several modes depending on your needs:
+Один экземпляр MCP-сервера обслуживает **одну базу данных**. Запуск возможен через CLI, конфигурационный файл или переменные окружения.
 
-#### 1. Single Database Mode (CLI)
+#### 1. CLI (одна база)
 
-For quick start with a single database, use CLI parameters:
-
-**HTTP mode:**
+**Режим HTTP:**
 
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
   --transport http \
   --port 8000 \
-  --role full \
-  --access-mode restricted
+  --access-mode full
 ```
 
-**STDIO mode (for MCP clients like Claude Desktop):**
+**Режим STDIO (для MCP-клиентов вроде Claude Desktop):**
 
 ```bash
 uv run postgres-fastmcp \
   --database-uri "postgresql://user:password@localhost:5432/dbname" \
   --transport stdio \
-  --role user \
-  --access-mode restricted
+  --access-mode basic
 ```
 
-**With custom tool prefix:**
+Опции CLI только при использовании `--database-uri`: `--write-mode` (флаг), `--access-mode` (basic|full). Опции сервера: `--host`, `--port`, `--workers`, `--transport`.
 
-```bash
-uv run postgres-fastmcp \
-  --database-uri "postgresql://user:password@localhost:5432/dbname" \
-  --transport http \
-  --name "mydb" \
-  --role full \
-  --access-mode unrestricted
-```
+#### 2. Конфигурационный файл (`config.json`)
 
-#### 2. Configuration File Mode
-
-Create a `config.json` file in the current directory:
-
-**Basic multi-database configuration:**
+Создайте `config.json` в текущей директории с секциями `server`, `fastmcp` и `database` (одна база на сервер):
 
 ```json
 {
-    "name": "postgres-fastmcp",
-    "transport": "http",
-    "host": "0.0.0.0",
-    "port": 8000,
-    "endpoint": "mcp",
-    "databases": {
-        "production": {
-            "database_uri": "postgresql://user:password@localhost:5432/production",
-            "role": "full",
-            "access_mode": "restricted",
-            "transport": "http"
-        },
-        "development": {
-            "database_uri": "postgresql://user:password@localhost:5432/development",
-            "role": "full",
-            "access_mode": "unrestricted",
-            "transport": "http"
-        }
+    "server": {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "transport": "http",
+        "endpoint": "mcp",
+        "workers": 1
+    },
+    "fastmcp": {
+        "server_name": "postgres-fastmcp"
+    },
+    "database": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "user",
+        "password": "password",
+        "name": "dbname",
+        "access_mode": "full",
+        "write_mode": false
     }
 }
 ```
 
-**With separate endpoints:**
-
-```json
-{
-    "name": "postgres-fastmcp",
-    "transport": "http",
-    "host": "0.0.0.0",
-    "port": 8000,
-    "endpoint": "mcp",
-    "databases": {
-        "app1": {
-            "database_uri": "postgresql://user:password@localhost:5432/app1",
-            "role": "user",
-            "access_mode": "restricted",
-            "endpoint": true,
-            "transport": "http"
-        },
-        "app2": {
-            "database_uri": "postgresql://user:password@localhost:5432/app2",
-            "role": "full",
-            "access_mode": "unrestricted",
-            "endpoint": true,
-            "transport": "streamable-http"
-        }
-    }
-}
-```
-
-Then run:
+Затем выполните:
 
 ```bash
 uv run postgres-fastmcp
 ```
 
-#### 3. Environment Variables Mode
+Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
 
-You can also configure the server using environment variables:
+#### 3. Переменные окружения
+
+Используйте префиксы `MCP_SERVER_*`, `MCP_DATABASE_*` и `MCP_FASTMCP_*` (см. [env.example](env.example)):
 
 ```bash
-export TRANSPORT=http
-export HOST=0.0.0.0
-export PORT=8000
-export DATABASES__PRODUCTION__DATABASE_URI=postgresql://user:pass@localhost:5432/prod
-export DATABASES__PRODUCTION__ROLE=full
-export DATABASES__PRODUCTION__ACCESS_MODE=restricted
-export DATABASES__DEVELOPMENT__DATABASE_URI=postgresql://user:pass@localhost:5432/dev
-export DATABASES__DEVELOPMENT__ROLE=full
-export DATABASES__DEVELOPMENT__ACCESS_MODE=unrestricted
+export MCP_SERVER_HOST=0.0.0.0
+export MCP_SERVER_PORT=8000
+export MCP_SERVER_TRANSPORT=http
+export MCP_DATABASE_HOST=localhost
+export MCP_DATABASE_PORT=5432
+export MCP_DATABASE_USER=user
+export MCP_DATABASE_PASSWORD=password
+export MCP_DATABASE_NAME=dbname
+export MCP_DATABASE_ROLE=admin
+export MCP_DATABASE_WRITE_MODE=false
 
 uv run postgres-fastmcp
 ```
 
-#### 4. Mixed Configuration
+#### 4. Приоритет конфигурации
 
-You can combine configuration sources. Priority order (highest to lowest):
+Порядок (от высшего к низшему):
 
-1. CLI parameters
-2. `config.json` file
-3. Environment variables
-4. Default values
+1. Параметры CLI (при указании `--database-uri` настройки БД берутся из CLI и переопределяют остальное)
+2. Файл `config.json` в текущей директории
+3. Переменные окружения и `.env`
+4. Значения по умолчанию
 
-## Configuration
+## Конфигурация
 
-### Access Control
+### Контроль доступа
 
-The project uses two independent parameters for flexible security control:
+Безопасность задаётся двумя независимыми параметрами:
 
-#### Role (`role`)
+#### Уровень доступа (`access_mode`)
 
-Determines schema access and available tools:
+Определяет доступ к схемам и набор доступных инструментов:
 
-| Role | Schemas | Tools | Description |
-|------|---------|-------|-------------|
-| `user` | Only `public` | Basic (4) | Basic role with access limited to public schema |
-| `full` | All schemas | All (9) | Full role with access to all schemas and extended privileges |
+| Роль    | Схемы          | Инструменты | Описание |
+| ------- | -------------- | ----------- | -------- |
+| `user`  | Только `public` | Базовые (4) | Только схема public; опционально `table_prefix` — ограничение по префиксу имён таблиц |
+| `admin` | Все схемы      | Все (9)     | Все схемы и расширенные инструменты (схемы, здоровье, топ запросов, анализ индексов) |
 
-#### Access Mode (`access_mode`)
+#### Режим записи (`write_mode`)
 
-Determines SQL access level:
+Определяет уровень выполнения SQL:
 
-| Access Mode | SQL Access | Description |
-|-------------|------------|-------------|
-| `restricted` | Read-only (SELECT only) | Restricted access mode |
-| `unrestricted` | Read-write (DML: INSERT/UPDATE/DELETE) or full access (DDL) | Unrestricted access mode |
+| write_mode | SQL-доступ                        | Описание |
+| ---------- | --------------------------------- | -------- |
+| `false`    | Только чтение (только SELECT)     | Разрешён только SELECT |
+| `true`     | Чтение-запись (DML); DDL при access_mode=full | Разрешены INSERT/UPDATE/DELETE; DDL только при access_mode=full |
 
-#### Combination Matrix
+#### Матрица комбинаций
 
-| Role | Access Mode | Tools | SQL Access | Schemas |
-|------|-------------|-------|------------|---------|
-| `user` | `restricted` | Basic (4) | Read-only | `public` |
-| `user` | `unrestricted` | Basic (4) | Read-write | `public` |
-| `full` | `restricted` | All (9) | Read-only | All |
-| `full` | `unrestricted` | All (9) | Full access (DDL) | All |
+| access_mode | write_mode | Инструменты | SQL-доступ        | Схемы |
+| -------- | ---------- | ----------- | ----------------- | ----- |
+| `basic`  | `false`    | Базовые (4) | Только чтение     | `public` (опционально `table_prefix`) |
+| `basic`  | `true`     | Базовые (4) | Чтение-запись    | `public` |
+| `full`   | `false`    | Все (9)     | Только чтение     | Все |
+| `full`   | `true`     | Все (9)     | Полный доступ (DDL) | Все |
 
-**Default values:**
+**По умолчанию:** `access_mode=basic`, `write_mode=false` (максимально ограниченный режим).
 
-- `role`: `"user"` (default)
-- `access_mode`: `"restricted"` (default)
-- Default combination: `role="user"` + `access_mode="restricted"` (maximum security)
+**Для access_mode=basic опционально:** `table_prefix` ограничивает видимые таблицы/представления/последовательности по префиксу имени; для full игнорируется.
 
-### Transports
+### Транспорты
 
-The server supports three transport types, each suitable for different use cases:
+Поддерживаются транспорты **http** и **stdio**.
 
-#### HTTP Transport
+#### HTTP
 
-HTTP transport allows running the server as a web application. This is ideal for:
-
-- Integration with web-based MCP clients (like Cursor)
-- Multiple clients connecting to the same server
-- Production deployments
-
-**Single database:**
+Запуск как HTTP-приложение для Cursor, веб-клиентов или production:
 
 ```bash
 uv run postgres-fastmcp \
@@ -222,88 +174,11 @@ uv run postgres-fastmcp \
   --port 8000
 ```
 
-The server will be available at `http://localhost:8000/mcp` (or at the specified endpoint).
+Сервер доступен по адресу `http://localhost:8000/mcp` (или по пути из `server.endpoint`). Проверка здоровья по `/health` при `MCP_SERVER_HEALTH_ENDPOINT_ENABLED=true` (по умолчанию включено).
 
-**Multiple databases (Server Composition):**
-When multiple databases are configured with `endpoint=false` (default), all tools are available at the main endpoint with prefixes:
+#### STDIO
 
-```json
-{
-    "transport": "http",
-    "databases": {
-        "db1": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        },
-        "db2": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        }
-    }
-}
-```
-
-Tools will be available as: `db1_list_objects`, `db2_list_objects`, etc.
-
-#### Streamable-HTTP Transport
-
-Streamable-HTTP provides streaming data transfer for large responses. This is useful for:
-
-- Large query results
-- Long-running operations
-- Real-time data streaming
-
-**Note:** Currently, MCP tools do not use streaming. Streamable-HTTP transport is available for future use and protocol-level streaming support.
-
-**Global streamable-http transport:**
-
-```json
-{
-    "transport": "streamable-http",
-    "databases": {
-        "db1": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        },
-        "db2": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        }
-    }
-}
-```
-
-**Per-server streamable-http transport (for servers with endpoint=true):**
-
-```json
-{
-    "transport": "http",
-    "databases": {
-        "analytics": {
-            "database_uri": "postgresql://...",
-            "endpoint": true,
-            "transport": "streamable-http"
-        },
-        "main": {
-            "database_uri": "postgresql://...",
-            "endpoint": true,
-            "transport": "http"
-        }
-    }
-}
-```
-
-Each server can have its own transport type (`"http"` or `"streamable-http"`). When using streamable-http globally, all servers in the main endpoint will use streaming transport. For separate endpoints, each server can specify its own transport type.
-
-#### STDIO Transport
-
-STDIO transport is used for integration with MCP clients via standard input/output. This is ideal for:
-
-- Desktop MCP clients (like Claude Desktop)
-- Direct process communication
-- Development and testing
-
-**Single database:**
+Для настольных MCP-клиентов (например Claude Desktop) или интеграции через процесс:
 
 ```bash
 uv run postgres-fastmcp \
@@ -311,111 +186,17 @@ uv run postgres-fastmcp \
   --transport stdio
 ```
 
-**Multiple databases:**
-In stdio mode, all databases are automatically registered with prefixes, regardless of the `endpoint` setting:
+### Справочник конфигурации
 
-```json
-{
-    "transport": "stdio",
-    "databases": {
-        "db1": {
-            "database_uri": "postgresql://...",
-            "endpoint": true  # Ignored in stdio mode
-        },
-        "db2": {
-            "database_uri": "postgresql://...",
-            "endpoint": false  # Ignored in stdio mode
-        }
-    }
-}
-```
+- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--workers`, `--write-mode`, `--access-mode`. Вывод версии: `--version`. При указании `--database-uri` подключение к БД и access_mode/write_mode берутся из CLI (и переопределяют config/env на этот запуск).
+- **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
+- **Переменные окружения / .env:** Префиксы `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
 
-All tools will be available with prefixes: `db1_list_objects`, `db2_list_objects`, etc.
+### Подключение MCP-клиентов
 
-### Configuration Methods
+#### Cursor (HTTP)
 
-The server supports multiple configuration methods with the following priority (highest to lowest):
-
-1. **CLI parameters** - Command-line arguments (highest priority)
-2. **config.json file** - JSON configuration file in the current directory
-3. **Environment variables** - System environment variables
-4. **Default values** - Built-in defaults (lowest priority)
-
-#### CLI Parameters
-
-All configuration can be provided via command-line arguments:
-
-```bash
-uv run postgres-fastmcp \
-  --database-uri "postgresql://user:password@localhost:5432/dbname" \
-  --transport http \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --role full \
-  --access-mode restricted \
-  --name "mydb" \
-  --endpoint
-```
-
-#### config.json File
-
-Create a `config.json` file in the current directory:
-
-```json
-{
-    "name": "postgres-fastmcp",
-    "transport": "http",
-    "host": "0.0.0.0",
-    "port": 8000,
-    "endpoint": "mcp",
-    "databases": {
-        "production": {
-            "database_uri": "postgresql://user:password@localhost:5432/production",
-            "role": "full",
-            "access_mode": "restricted",
-            "endpoint": false,
-            "transport": "http"
-        }
-    }
-}
-```
-
-#### Environment Variables
-
-Use nested delimiter `__` (double underscore) for nested configuration:
-
-```bash
-export TRANSPORT=http
-export HOST=0.0.0.0
-export PORT=8000
-export DATABASES__PRODUCTION__DATABASE_URI=postgresql://user:pass@localhost:5432/prod
-export DATABASES__PRODUCTION__ROLE=full
-export DATABASES__PRODUCTION__ACCESS_MODE=restricted
-export DATABASES__DEVELOPMENT__DATABASE_URI=postgresql://user:pass@localhost:5432/dev
-export DATABASES__DEVELOPMENT__ROLE=user
-export DATABASES__DEVELOPMENT__ACCESS_MODE=unrestricted
-```
-
-#### .env File
-
-You can also use a `.env` file in the current directory with the same format as environment variables:
-
-```env
-TRANSPORT=http
-HOST=0.0.0.0
-PORT=8000
-DATABASES__PRODUCTION__DATABASE_URI=postgresql://user:pass@localhost:5432/prod
-DATABASES__PRODUCTION__ROLE=full
-DATABASES__PRODUCTION__ACCESS_MODE=restricted
-```
-
-### MCP Client Integration
-
-#### Cursor (HTTP Transport)
-
-For HTTP transport, configure Cursor in `~/.cursor/mcp.json`:
-
-**Single database:**
+В файле `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -428,43 +209,22 @@ For HTTP transport, configure Cursor in `~/.cursor/mcp.json`:
 }
 ```
 
-**Multiple databases with separate endpoints:**
+#### Claude Desktop (STDIO)
 
-```json
-{
-    "mcpServers": {
-        "postgres-prod": {
-            "type": "sse",
-            "url": "http://localhost:8000/production/mcp"
-        },
-        "postgres-dev": {
-            "type": "sse",
-            "url": "http://localhost:8000/development/mcp"
-        }
-    }
-}
-```
-
-**Multiple databases with Server Composition (single endpoint with prefixes):**
+В файле `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) или `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
     "mcpServers": {
         "postgres": {
-            "type": "sse",
-            "url": "http://localhost:8000/mcp"
+            "command": "uv",
+            "args": ["run", "postgres-fastmcp", "--transport", "stdio", "--database-uri", "postgresql://user:pass@localhost:5432/dbname"]
         }
     }
 }
 ```
 
-Tools will be available as: `production_list_objects`, `development_list_objects`, etc.
-
-#### Claude Desktop (STDIO Transport)
-
-For stdio transport, configure Claude Desktop in `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-**Single database:**
+Либо задать подключение переменными окружения вместо `--database-uri`:
 
 ```json
 {
@@ -473,457 +233,310 @@ For stdio transport, configure Claude Desktop in `~/Library/Application Support/
             "command": "uv",
             "args": ["run", "postgres-fastmcp", "--transport", "stdio"],
             "env": {
-                "DATABASES__DEFAULT__DATABASE_URI": "postgresql://user:pass@localhost:5432/dbname"
+                "MCP_DATABASE_HOST": "localhost",
+                "MCP_DATABASE_PORT": "5432",
+                "MCP_DATABASE_USER": "user",
+                "MCP_DATABASE_PASSWORD": "pass",
+                "MCP_DATABASE_NAME": "dbname",
+                "MCP_DATABASE_ROLE": "user",
+                "MCP_DATABASE_WRITE_MODE": "false"
             }
         }
     }
 }
 ```
 
-**Multiple databases:**
-
-```json
-{
-    "mcpServers": {
-        "postgres": {
-            "command": "uv",
-            "args": ["run", "postgres-fastmcp", "--transport", "stdio"],
-            "env": {
-                "DATABASES__PRODUCTION__DATABASE_URI": "postgresql://user:pass@localhost:5432/prod",
-                "DATABASES__PRODUCTION__ROLE": "full",
-                "DATABASES__PRODUCTION__ACCESS_MODE": "restricted",
-                "DATABASES__DEVELOPMENT__DATABASE_URI": "postgresql://user:pass@localhost:5432/dev",
-                "DATABASES__DEVELOPMENT__ROLE": "full",
-                "DATABASES__DEVELOPMENT__ACCESS_MODE": "unrestricted"
-            }
-        }
-    }
-}
-```
-
-All tools will be available with prefixes: `production_list_objects`, `development_list_objects`, etc.
-
-## Multi-Server Architecture
-
-The server supports two mounting modes for multiple databases:
-
-### Server Composition (endpoint=false)
-
-When `endpoint=false` (default), all databases are mounted in the main endpoint using FastMCP's Server Composition feature. Tools are automatically prefixed with the server name to prevent conflicts.
-
-**Configuration:**
-
-```json
-{
-    "transport": "http",
-    "databases": {
-        "production": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        },
-        "development": {
-            "database_uri": "postgresql://...",
-            "endpoint": false
-        }
-    }
-}
-```
-
-**Result:**
-
-- All tools available at: `http://localhost:8000/mcp`
-- Tools prefixed: `production_list_objects`, `development_list_objects`, etc.
-- Single endpoint for all databases
-
-### Separate Endpoints (endpoint=true)
-
-When `endpoint=true`, each database gets its own HTTP endpoint. This allows different transport types per server and better isolation.
-
-**Configuration:**
-
-```json
-{
-    "transport": "http",
-    "databases": {
-        "app1": {
-            "database_uri": "postgresql://...",
-            "endpoint": true,
-            "transport": "http"
-        },
-        "app2": {
-            "database_uri": "postgresql://...",
-            "endpoint": true,
-            "transport": "streamable-http"
-        }
-    }
-}
-```
-
-**Result:**
-
-- App1 tools at: `http://localhost:8000/app1/mcp`
-- App2 tools at: `http://localhost:8000/app2/mcp`
-- Each endpoint can have different transport types
-- Tools always prefixed with server name
-
-### Tool Prefixes
-
-Tool prefixes are automatically added based on the server name to prevent conflicts when multiple MCP servers are connected to a single agent.
-
-**Rules:**
-
-- Single server with no explicit prefix: no prefix (tools: `list_objects`, `execute_sql`)
-- Single server with explicit prefix: uses prefix (tools: `mydb_list_objects`, `mydb_execute_sql`)
-- Multiple servers: always prefixed with server name (tools: `db1_list_objects`, `db2_list_objects`)
-
-For detailed architecture documentation, see [Multi-Endpoint Server Architecture](./docs/architecture/multi-endpoint-server.md).
-
-## Technical Details
+## Технические детали
 
 ### FastMCP
 
-This fork has been completely rewritten on top of [FastMCP](https://gofastmcp.com/), a modern framework for building MCP servers. FastMCP provides:
+Форк построен на [FastMCP](https://gofastmcp.com/), который обеспечивает:
 
-- High performance thanks to asynchronous architecture
-- Built-in support for HTTP and stdio transports
-- Server Composition for mounting multiple servers
-- Simplified API for tool registration
+- Асинхронное выполнение и высокую производительность
+- Транспорты HTTP и stdio
+- Управление жизненным циклом и внедрение зависимостей для инструментов
 
-### Multiple Databases
+### Управление жизненным циклом
 
-The project supports working with multiple databases simultaneously. Each database is configured separately with its own access mode and connection parameters.
+Сервер использует механизм lifespan FastMCP для подключений к БД:
 
-When using HTTP transport with multiple databases configured:
+- Создание пула соединений при старте
+- Корректное закрытие соединений при остановке
+- Обработка сигналов (SIGINT, SIGTERM)
 
-- With `endpoint=false`: tools available at main endpoint with prefixes (Server Composition)
-- With `endpoint=true`: each database gets its own endpoint at `/{server_name}/mcp`
+### Безопасное выполнение SQL
 
-### Lifecycle Management
+В проекте используется многоуровневая защита при выполнении SQL:
 
-The server uses FastMCP lifespan for managing database connection lifecycles:
-
-- Automatic connection pool creation on startup
-- Proper connection closure on shutdown
-- Signal handling (SIGINT, SIGTERM)
-
-### Safe SQL Execution
-
-The project uses multi-layered protection for safe SQL execution:
-
-1. **SQL Parsing** — uses `pglast` library to analyze SQL before execution
-2. **Read-only Transactions** — for read-only modes, PostgreSQL read-only transactions are used
-3. **COMMIT/ROLLBACK Checks** — blocks attempts to bypass read-only mode
-4. **Timeouts** — limits query execution time in restricted modes
+1. **Разбор SQL** — библиотека `pglast` анализирует SQL перед выполнением
+2. **Транзакции только для чтения** — в режимах только чтение используются read-only транзакции PostgreSQL
+3. **Проверки COMMIT/ROLLBACK** — блокируются попытки обойти режим только чтение
+4. **Таймауты** — ограничение времени выполнения запросов в ограниченных режимах
 
 ## MCP API
 
-The server provides functionality via [MCP tools](https://modelcontextprotocol.io/docs/concepts/tools).
+Функциональность сервера доступна через [инструменты MCP](https://modelcontextprotocol.io/docs/concepts/tools).
 
-### Available Tools
+### Доступные инструменты
 
-| Tool Name | Description |
-|-----------|-------------|
-| `list_schemas` | Lists all database schemas available in the PostgreSQL instance |
-| `list_objects` | Lists database objects (tables, views, sequences, extensions) within a specified schema |
-| `get_object_details` | Provides information about a specific database object, for example, a table's columns, constraints, and indexes |
-| `execute_sql` | Executes SQL statements on the database, with read-only limitations when connected in restricted modes |
-| `explain_query` | Gets the execution plan for a SQL query describing how PostgreSQL will process it. Can be invoked with hypothetical indexes to simulate the behavior after adding indexes |
-| `get_top_queries` | Reports the slowest SQL queries based on total execution time using `pg_stat_statements` data |
-| `analyze_workload_indexes` | Analyzes the database workload to identify resource-intensive queries, then recommends optimal indexes for them |
-| `analyze_query_indexes` | Analyzes a list of specific SQL queries (up to 10) and recommends optimal indexes for them |
-| `analyze_db_health` | Performs comprehensive health checks including: buffer cache hit rates, connection health, constraint validation, index health (duplicate/unused/invalid), sequence limits, and vacuum health |
+| Инструмент              | Описание |
+| ----------------------- | -------- |
+| `list_schemas`          | Список всех схем БД в экземпляре PostgreSQL |
+| `list_objects`          | Список объектов БД (таблицы, представления, последовательности, расширения) в указанной схеме |
+| `get_object_details`   | Информация об объекте БД: столбцы, ограничения, индексы таблицы и т.п. |
+| `execute_sql`           | Выполнение SQL с ограничениями только чтение при write_mode=false |
+| `explain_query`         | План выполнения запроса; поддерживаются гипотетические индексы для симуляции |
+| `get_top_queries`      | Самые медленные запросы по суммарному времени (данные `pg_stat_statements`) |
+| `analyze_workload_indexes` | Анализ нагрузки и рекомендации оптимальных индексов |
+| `analyze_query_indexes`    | Анализ списка запросов (до 10) и рекомендации индексов |
+| `analyze_db_health`    | Проверка здоровья БД: буферный кэш, соединения, ограничения, индексы (дубликаты/неиспользуемые/невалидные), последовательности, vacuum |
 
-### Access Control Limitations
+### Ограничения по доступу
 
-- **`user` role**: Only basic tools available (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`)
-- **`full` role**: All tools available (basic tools + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
-- **`restricted` access_mode**: Only SELECT queries allowed
-- **`unrestricted` access_mode**: DML (INSERT/UPDATE/DELETE) allowed; DDL allowed only for `full` role
+- **Роль `user`**: только базовые инструменты (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`); опционально `table_prefix` для ограничения набора таблиц
+- **Роль `admin`**: все инструменты (базовые + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
+- **write_mode=false**: разрешён только SELECT
+- **write_mode=true** (при access_mode=full): разрешён DML; DDL для access_mode=full
 
-## PostgreSQL Extension Installation (Optional)
+## Установка расширений PostgreSQL (опционально)
 
-To enable index tuning and comprehensive performance analysis, you need to install the `pg_stat_statements` and `hypopg` extensions in your database.
+Для подбора индексов и полного анализа производительности в БД нужно установить расширения `pg_stat_statements` и `hypopg`.
 
-### Installing Extensions
+### Установка расширений
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION IF NOT EXISTS hypopg;
 ```
 
-**Important**: For `pg_stat_statements`, you must add it to `shared_preload_libraries` in PostgreSQL configuration and restart the server.
+**Важно:** для `pg_stat_statements` необходимо добавить его в `shared_preload_libraries` в конфигурации PostgreSQL и перезапустить сервер.
 
-### Installing Extensions on Cloud Providers
+### Облачные провайдеры
 
-If your Postgres database is running on a cloud provider managed service (AWS RDS, Azure SQL, Google Cloud SQL), the `pg_stat_statements` and `hypopg` extensions should already be available. You can just run the `CREATE EXTENSION` commands using a role with sufficient privileges.
+Если PostgreSQL работает в управляемом сервисе (AWS RDS, Azure SQL, Google Cloud SQL), расширения `pg_stat_statements` и `hypopg` обычно уже доступны. Достаточно выполнить `CREATE EXTENSION` от имени роли с достаточными правами.
 
-### Installing Extensions on Self-Managed Postgres
+### Собственный экземпляр Postgres
 
-If you are managing your own Postgres installation, you may need to do additional work:
+При самостоятельном управлении Postgres может потребоваться:
 
-- Before loading the `pg_stat_statements` extension, ensure it is listed in `shared_preload_libraries` in the Postgres configuration file
-- The `hypopg` extension may require additional system-level installation (e.g., via your package manager) because it does not always ship with Postgres
+- Перед загрузкой `pg_stat_statements` — указать его в `shared_preload_libraries` в конфиге Postgres
+- Расширение `hypopg` может потребовать установки на уровне системы (например, через пакетный менеджер), так как не всегда поставляется с Postgres
 
-## Configuration Examples
+## Примеры конфигурации
 
-### Example 1: Production and Development Databases
+### Пример 1: Production (только чтение, access_mode=full)
 
-Separate production (read-only) and development (read-write) databases:
+`config.json` для одной production-БД с полным набором инструментов и SQL только на чтение:
 
 ```json
 {
-    "name": "postgres-fastmcp",
-    "transport": "http",
-    "host": "0.0.0.0",
-    "port": 8000,
-    "endpoint": "mcp",
-    "databases": {
-        "production": {
-            "database_uri": "postgresql://user:password@prod-server:5432/production",
-            "role": "full",
-            "access_mode": "restricted",
-            "endpoint": false
-        },
-        "development": {
-            "database_uri": "postgresql://user:password@localhost:5432/development",
-            "role": "full",
-            "access_mode": "unrestricted",
-            "endpoint": false
-        }
+    "server": { "host": "0.0.0.0", "port": 8000, "transport": "http" },
+    "fastmcp": { "server_name": "postgres-fastmcp" },
+    "database": {
+        "host": "prod-server",
+        "port": 5432,
+        "user": "user",
+        "password": "password",
+        "name": "production",
+        "access_mode": "full",
+        "write_mode": false
     }
 }
 ```
 
-Tools available at `http://localhost:8000/mcp`:
+### Пример 2: Роль user с префиксом таблиц
 
-- `production_list_objects`, `production_execute_sql` (read-only)
-- `development_list_objects`, `development_execute_sql` (read-write)
-
-### Example 2: Separate Endpoints for Different Apps
-
-Each application gets its own endpoint:
+Ограничение схемой `public` и объектами, имена которых начинаются с `app_`:
 
 ```json
 {
-    "name": "postgres-fastmcp",
-    "transport": "http",
-    "host": "0.0.0.0",
-    "port": 8000,
-    "endpoint": "mcp",
-    "databases": {
-        "analytics": {
-            "database_uri": "postgresql://user:password@localhost:5432/analytics",
-            "role": "full",
-            "access_mode": "restricted",
-            "endpoint": true,
-            "transport": "streamable-http"
-        },
-        "main": {
-            "database_uri": "postgresql://user:password@localhost:5432/main",
-            "role": "user",
-            "access_mode": "unrestricted",
-            "endpoint": true,
-            "transport": "http"
-        }
+    "server": { "transport": "http", "port": 8000 },
+    "database": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "appuser",
+        "password": "secret",
+        "name": "mydb",
+        "access_mode": "basic",
+        "write_mode": false,
+        "table_prefix": "app_"
     }
 }
 ```
 
-Endpoints:
+### Пример 3: STDIO для Claude Desktop
 
-- Analytics: `http://localhost:8000/analytics/mcp` (streamable-http transport)
-- Main: `http://localhost:8000/main/mcp` (standard HTTP)
+Запуск с одной БД через CLI:
 
-### Example 3: STDIO Mode with Multiple Databases
+```bash
+uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass@localhost:5432/dbname" --access-mode basic
+```
 
-For Claude Desktop or other stdio-based clients:
+### Пример 4: Разработка (чтение-запись, admin)
+
+Полный набор инструментов и разрешён DML/DDL:
 
 ```json
 {
-    "transport": "stdio",
-    "databases": {
-        "db1": {
-            "database_uri": "postgresql://user:password@localhost:5432/db1",
-            "role": "full",
-            "access_mode": "restricted"
-        },
-        "db2": {
-            "database_uri": "postgresql://user:password@localhost:5432/db2",
-            "role": "user",
-            "access_mode": "unrestricted"
-        }
+    "server": { "host": "127.0.0.1", "port": 8000, "transport": "http" },
+    "database": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "dev",
+        "password": "dev",
+        "name": "development",
+        "access_mode": "full",
+        "write_mode": true
     }
 }
 ```
 
-All tools available with prefixes: `db1_list_objects`, `db2_list_objects`, etc.
+## Примеры запросов к агенту
 
-### Example 4: User Role with Restricted Access
+### Проверка здоровья БД
 
-Basic user access with read-only SQL:
+Спросите у ИИ-агента:
+> Проверь здоровье моей базы данных и укажи возможные проблемы.
 
-```json
-{
-    "transport": "http",
-    "databases": {
-        "readonly": {
-            "database_uri": "postgresql://readonly_user:password@localhost:5432/mydb",
-            "role": "user",
-            "access_mode": "restricted",
-            "endpoint": false
-        }
-    }
-}
-```
+### Анализ медленных запросов
 
-Available tools (4): `list_objects`, `get_object_details`, `explain_query`, `execute_sql` (SELECT only)
+> Какие запросы в моей БД самые медленные и как их ускорить?
 
-## Usage Examples
+### Рекомендации по производительности
 
-### Get Database Health Overview
+> Приложение тормозит. Как его ускорить?
 
-Ask your AI agent:
-> Check the health of my database and identify any issues.
+### Рекомендации по индексам
 
-### Analyze Slow Queries
+> Проанализируй нагрузку на БД и предложи индексы для улучшения производительности.
 
-> What are the slowest queries in my database? And how can I speed them up?
+### Оптимизация конкретного запроса
 
-### Get Performance Recommendations
+> Помоги оптимизировать запрос: SELECT * FROM orders JOIN customers ON orders.customer_id = customers.id WHERE orders.created_at > '2023-01-01';
 
-> My app is slow. How can I make it faster?
+## Разработка
 
-### Generate Index Recommendations
+### Локальная настройка
 
-> Analyze my database workload and suggest indexes to improve performance.
-
-### Optimize a Specific Query
-
-> Help me optimize this query: SELECT * FROM orders JOIN customers ON orders.customer_id = customers.id WHERE orders.created_at > '2023-01-01';
-
-## Development
-
-### Local Development Setup
-
-1. **Install uv**:
+1. **Установка uv**:
 
    ```bash
    curl -sSL https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Clone the repository**:
+2. **Клонирование репозитория**:
 
    ```bash
    git clone https://github.com/your-username/postgres-fastmcp.git
    cd postgres-fastmcp
    ```
 
-3. **Install dependencies**:
+3. **Установка зависимостей**:
 
    ```bash
    uv sync
    ```
 
-4. **Install package in development mode**:
+4. **Установка пакета в режиме разработки**:
 
    ```bash
    uv pip install -e .
    ```
 
-### Running Tests
+### Запуск тестов
 
-**Prerequisites:**
+**Требования:**
 
-- Docker must be installed and running
-- Docker images will be built automatically on first test run, or you can prepare them manually:
+- Установлен и запущен Docker
+- Образы Docker собираются при первом запуске тестов или их можно подготовить вручную:
 
 ```bash
-# Prepare Docker images for testing (optional, but recommended for faster test runs)
+# Подготовка образов для тестов (опционально, ускоряет последующие запуски)
 uv run python tests/prepare_docker_images.py
 ```
 
-**Run all tests:**
+**Запуск всех тестов:**
 
 ```bash
 uv run python -m pytest
 ```
 
-**Run specific test file:**
+**Запуск конкретного файла тестов:**
 
 ```bash
 uv run python -m pytest tests/unit/index/test_dta_calc.py -v
 ```
 
-**Run tests with real database (integration tests):**
+**Интеграционные тесты с реальной БД:**
 
 ```bash
 uv run python -m pytest tests/integration/ -v
 ```
 
-### Code Formatting
+### Форматирование кода
 
-The project uses `ruff` for formatting and linting:
+В проекте используется `ruff` для форматирования и линтинга:
 
 ```bash
 uv run ruff format .
 uv run ruff check .
 ```
 
-### Type Checking
+### Проверка типов
 
-The project uses `mypy` for type checking:
+Проверка типов с помощью `mypy`:
 
 ```bash
 uv run mypy src/
 ```
 
-## Differences from Original Project
+## Отличия от оригинального проекта
 
-This fork differs from the original [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) with the following key changes:
+Этот форк отличается от [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) следующими изменениями:
 
-|Original Project|This Fork|
-|------------------|-----------|
-|Standard MCP implementation|FastMCP framework|
-|Single database per server|Multiple databases|
-|Modes: restricted/unrestricted|Modes: role (user/full) + access_mode (restricted/unrestricted)|
-|SSE transport only|HTTP, stdio, streamable-http|
-|Configuration via CLI/env|Configuration via config.json + env|
+| Оригинальный проект     | Этот форк |
+| ----------------------- | --------- |
+| Стандартная реализация MCP | Фреймворк FastMCP |
+| Режимы                        | access_mode (`basic` / `full`) + write_mode (true/false)                      |
+| Только транспорт SSE   | HTTP и stdio |
+| Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*`) и CLI |
+| —                      | Опциональный `table_prefix` для роли `user`; endpoint здоровья `/health` |
 
-## Technical Notes
+## Технические заметки
 
-### Index Tuning
+### Подбор индексов
 
-The index tuning implementation follows the same approach as the original project, using the [Anytime Algorithm of Database Tuning Advisor for Microsoft SQL Server](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf).
+Реализация подбора индексов следует подходу оригинального проекта и использует [Anytime Algorithm of Database Tuning Advisor for Microsoft SQL Server](https://www.microsoft.com/en-us/research/wp-content/uploads/2020/06/Anytime-Algorithm-of-Database-Tuning-Advisor-for-Microsoft-SQL-Server.pdf).
 
-### Database Health
+### Здоровье БД
 
-Database health checks are adapted from [PgHero](https://github.com/ankane/pghero) and include:
+Проверки здоровья БД адаптированы из [PgHero](https://github.com/ankane/pghero) и включают:
 
-- Index Health (unused, duplicate, bloated indexes)
-- Buffer Cache Hit Rate
-- Connection Health
-- Vacuum Health (transaction ID wraparound prevention)
-- Replication Health
-- Constraint Health
-- Sequence Health
+- Здоровье индексов (неиспользуемые, дубликаты, раздутые)
+- Доля попаданий буферного кэша
+- Здоровье соединений
+- Vacuum (предотвращение wraparound transaction ID)
+- Репликация
+- Ограничения
+- Последовательности
 
-### Postgres Client Library
+### Клиентская библиотека Postgres
 
-The project uses [psycopg3](https://www.psycopg.org/) for asynchronous I/O connections to Postgres, providing access to the full Postgres feature set.
+В проекте используется [psycopg3](https://www.psycopg.org/) для асинхронного I/O при подключении к Postgres с доступом к полному набору возможностей Postgres.
 
-### Protected SQL Execution
+### Защищённое выполнение SQL
 
-The project implements multi-layered SQL protection:
+Реализована многоуровневая защита при выполнении SQL:
 
-- SQL parsing using `pglast` to detect and reject unsafe statements
-- Read-only transactions for restricted modes
-- Timeout limits for query execution
-- Schema restrictions for user modes
+- Разбор SQL через `pglast` для выявления и отклонения небезопасных операторов
+- Транзакции только для чтения в ограниченных режимах
+- Таймауты выполнения запросов
+- Ограничения по схемам для пользовательских режимов
 
-## License
+## Лицензия
 
 MIT License
 
-## Acknowledgments
+## Благодарности
 
-This project is a fork of [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) by [Crystal DBA](https://www.crystaldba.ai), rewritten to use [FastMCP](https://gofastmcp.com/).
+Проект является форком [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) от [Crystal DBA](https://www.crystaldba.ai), переписанным на [FastMCP](https://gofastmcp.com/).

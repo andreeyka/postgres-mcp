@@ -1,6 +1,4 @@
-"""Types for MCP server configuration."""
-
-from __future__ import annotations
+"""Типы для конфигурации сервера MCP."""
 
 from enum import StrEnum
 from typing import Literal
@@ -11,68 +9,32 @@ MountMode = Literal["tool", "endpoint"]
 
 
 class AccessMode(StrEnum):
-    """SQL access level for the server."""
+    """Уровень доступа: область схем и набор инструментов."""
 
-    RESTRICTED = "restricted"  # Read-only access (SELECT only)
-    UNRESTRICTED = "unrestricted"  # Read-write access (DML: INSERT/UPDATE/DELETE), or full access (DDL) for full role
+    BASIC = "basic"  # Только схема public, базовые инструменты (4)
+    FULL = "full"  # Все схемы, все инструменты (9), расширенные привилегии
 
 
-class UserRole(StrEnum):
-    """User role that determines schema access and available tools."""
+class SslMode(StrEnum):
+    """Режим SSL для подключения к PostgreSQL (libpq)."""
 
-    USER = "user"  # Basic role: only public schema, basic tools (4)
-    FULL = "full"  # Full role: all schemas, all tools (9), extended privileges
+    DISABLE = "disable"
+    ALLOW = "allow"
+    PREFER = "prefer"
+    REQUIRE = "require"
+    VERIFY_CA = "verify-ca"
+    VERIFY_FULL = "verify-full"
 
 
 class TransportConfig(StrEnum):
-    """Transport types for configuration."""
+    """Типы транспорта для конфигурации."""
 
     HTTP = "http"
     STDIO = "stdio"
 
 
-class TransportHttpApp(StrEnum):
-    """HTTP transport types for FastMCP http_app."""
+class ToolTag(StrEnum):
+    """Теги для фильтрации инструментов (базовые и полные)."""
 
-    HTTP = "http"
-    STREAMABLE_HTTP = "streamable-http"
-
-
-class ToolName(StrEnum):
-    """Available tool names."""
-
-    LIST_SCHEMAS = "list_schemas"
-    LIST_OBJECTS = "list_objects"
-    GET_OBJECT_DETAILS = "get_object_details"
-    EXPLAIN_QUERY = "explain_query"
-    EXECUTE_SQL = "execute_sql"
-    ANALYZE_WORKLOAD_INDEXES = "analyze_workload_indexes"
-    ANALYZE_QUERY_INDEXES = "analyze_query_indexes"
-    ANALYZE_DB_HEALTH = "analyze_db_health"
-    GET_TOP_QUERIES = "get_top_queries"
-
-    @classmethod
-    def available_tools(cls) -> list[ToolName]:
-        """Get list of all available tools that can be enabled/disabled."""
-        return [
-            cls.LIST_SCHEMAS,
-            cls.LIST_OBJECTS,
-            cls.GET_OBJECT_DETAILS,
-            cls.EXPLAIN_QUERY,
-            cls.EXECUTE_SQL,
-            cls.ANALYZE_WORKLOAD_INDEXES,
-            cls.ANALYZE_QUERY_INDEXES,
-            cls.ANALYZE_DB_HEALTH,
-            cls.GET_TOP_QUERIES,
-        ]
-
-    @classmethod
-    def admin_tools(cls) -> list[ToolName]:
-        """Get list of admin tools that are only available for FULL role."""
-        return [
-            cls.LIST_SCHEMAS,
-            cls.ANALYZE_WORKLOAD_INDEXES,
-            cls.ANALYZE_QUERY_INDEXES,
-            cls.ANALYZE_DB_HEALTH,
-            cls.GET_TOP_QUERIES,
-        ]
+    BASIC = "basic"
+    FULL = "full"
