@@ -28,10 +28,16 @@ build-backend = "hatchling.build"
 [project.scripts]
 postgres-mcp = "postgres_fastmcp.main:app"
 
-[[tool.uv.index]]
-url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
+[tool.uv]
+publish-url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/"
 
 [[tool.uv.index]]
+name = "mgmt"
+url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
+default = true
+
+[[tool.uv.index]]
+name = "cpe"
 url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/simple"
 
 [dependency-groups]
