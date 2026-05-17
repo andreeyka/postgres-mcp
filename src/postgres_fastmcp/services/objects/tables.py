@@ -1,5 +1,6 @@
 """Таблицы и представления: список и детали (используется только модулем objects)."""
 
+import asyncio
 from typing import Any
 
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
@@ -80,7 +81,11 @@ class TablesService:
         """
         sql_driver = self.db.sql_driver
 
-        col_rows = await sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True)
+        col_rows, con_rows, idx_rows = await asyncio.gather(
+            sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True),
+            sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True),
+            sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True),
+        )
         columns = (
             [
                 {
@@ -95,7 +100,6 @@ class TablesService:
             else []
         )
 
-        con_rows = await sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True)
         constraints: dict[str, dict[str, Any]] = {}
         if con_rows:
             for row in con_rows:
@@ -109,7 +113,6 @@ class TablesService:
                         constraints[cname]["columns"].append(col)
         constraints_list = [{"name": k, **v} for k, v in constraints.items()]
 
-        idx_rows = await sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True)
         indexes = (
             [
                 {
