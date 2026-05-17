@@ -27,7 +27,7 @@ class TestMainTransportStdio:
     """Tests for main with transport=stdio (mocked to avoid starting server)."""
 
     def test_stdio_calls_configure_logging_with_disable(self) -> None:
-        with patch("postgres_fastmcp.main.compose_mcp") as mock_compose:
+        with patch("postgres_fastmcp.main.create_server") as mock_compose:
             with patch("postgres_fastmcp.main.configure_logging") as mock_configure:
                 with patch("postgres_fastmcp.main.build_settings_from_cli") as mock_build:
                     mock_build.return_value = type(

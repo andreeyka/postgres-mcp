@@ -69,6 +69,3 @@ def create_server(
     return mcp
 
 
-def compose_mcp(settings: Settings) -> FastMCP:
-    """Совместимость: тонкий алиас для create_server до миграции main.py (Task 6.2)."""
-    return create_server(settings)
