@@ -35,14 +35,6 @@ class UserFacingError(ToolError):
         self.message = message
 
 
-class SettingsNotInitializedError(BaseApplicationError):
-    """Settings singleton has not been initialized (init_settings not called)."""
-
-    def __init__(self) -> None:
-        """Инициализация."""
-        super().__init__("Settings not initialized. Call app_config.initialize() before accessing app_config.current.")
-
-
 class ConnectionNotEstablishedError(BaseApplicationError):
     """Подключение к БД не установлено (не заданы conn или engine_url)."""
 

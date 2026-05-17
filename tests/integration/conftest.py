@@ -5,7 +5,7 @@ from typing import Generator
 
 import pytest
 
-from postgres_fastmcp.config import Settings, app_config
+from postgres_fastmcp.config import Settings
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
@@ -22,7 +22,7 @@ def integration_settings(
         access_mode=AccessMode.FULL,
         write_mode=True,
     )
-    return app_config.initialize(database=database)
+    return Settings(database=database)
 
 
 @pytest.fixture

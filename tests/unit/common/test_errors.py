@@ -51,7 +51,6 @@ def test_statement_type_not_allowed_is_tool_error() -> None:
     [
         "SqlExecutionError",
         "ConnectionNotEstablishedError",
-        "SettingsNotInitializedError",
         "ExplainPlanError",
         "ExplainPlanNoResultsError",
     ],

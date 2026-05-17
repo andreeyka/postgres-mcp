@@ -43,14 +43,13 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from postgres_fastmcp.common.errors import SettingsNotInitializedError
 from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.config.fastmcp import FastMCPSettings
 from postgres_fastmcp.config.server import ServerSettings
 from postgres_fastmcp.enums import AccessMode
 
 
-__all__ = ["Settings", "app_config", "build_settings_from_cli"]
+__all__ = ["Settings", "build_settings_from_cli", "load_json_config"]
 
 
 class Settings(BaseSettings):
@@ -66,46 +65,6 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
-
-
-class AppConfig:
-    """Singleton конфигурации приложения. Единственный экземпляр Settings на процесс.
-
-    Инициализация один раз при старте через initialize(); доступ через current.
-    """
-
-    def __init__(self) -> None:
-        """Инициализация контейнера (без настроек — они загружаются через initialize)."""
-        self._settings: Settings | None = None
-
-    def initialize(self, **overrides: Any) -> Settings:
-        """Инициализировать и сохранить настройки. Вызывается один раз при старте.
-
-        Args:
-            **overrides: Параметры для переопределения (database, server, fastmcp и т.д.).
-
-        Returns:
-            Инициализированный экземпляр Settings (также доступен через current).
-        """
-        self._settings = _create_settings(**overrides)
-        return self._settings
-
-    @property
-    def current(self) -> Settings:
-        """Текущий экземпляр настроек.
-
-        Returns:
-            Текущий экземпляр Settings.
-
-        Raises:
-            SettingsNotInitializedError: Если initialize() ещё не вызывался.
-        """
-        if self._settings is None:
-            raise SettingsNotInitializedError
-        return self._settings
-
-
-app_config = AppConfig()
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:
@@ -179,7 +138,7 @@ def build_settings_from_cli(  # noqa: PLR0913
         server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
         if transport is not None:
             server_overrides["transport"] = transport
-        return app_config.initialize(database=database_config, server=server_overrides)
+        return _create_settings(database=database_config, server=server_overrides)
     if transport is not None:
-        return app_config.initialize(server={"transport": transport})
-    return app_config.initialize()
+        return _create_settings(server={"transport": transport})
+    return _create_settings()
