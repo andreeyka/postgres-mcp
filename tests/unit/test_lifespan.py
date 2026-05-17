@@ -1,7 +1,5 @@
 """Тесты для фабрики lifespan: создание и закрытие DbAccessService."""
 
-from typing import Any
-
 import pytest
 
 from postgres_fastmcp.config import Settings
@@ -14,7 +12,7 @@ async def test_lifespan_yields_db_and_settings(monkeypatch: pytest.MonkeyPatch) 
     closed = {"count": 0}
 
     class FakeDb:
-        def __init__(self, cfg: Any) -> None:
+        def __init__(self, cfg: object) -> None:
             self.cfg = cfg
 
         async def close(self) -> None:
@@ -38,7 +36,7 @@ async def test_lifespan_closes_db_on_exception(monkeypatch: pytest.MonkeyPatch) 
     closed = {"count": 0}
 
     class FakeDb:
-        def __init__(self, cfg: Any) -> None: ...
+        def __init__(self, cfg: object) -> None: ...
 
         async def close(self) -> None:
             closed["count"] += 1

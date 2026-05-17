@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from importlib.metadata import (
+    PackageNotFoundError,
+    version as _pkg_version,
+)
 from typing import TYPE_CHECKING, Any
 
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-from postgres_fastmcp import __version__
 from postgres_fastmcp.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.basic.execute_sql import execute_sql
 from postgres_fastmcp.tools.basic.explain_query import explain_query
@@ -36,7 +39,12 @@ if TYPE_CHECKING:
     from postgres_fastmcp.config import Settings
 
 
-_META: dict[str, Any] = {"version": __version__}
+try:
+    _VERSION = _pkg_version("postgres-fastmcp")
+except PackageNotFoundError:
+    _VERSION = "0.0.0"
+
+_META: dict[str, Any] = {"version": _VERSION}
 
 
 def _ann(title: str, preset: dict[str, bool]) -> ToolAnnotations:
