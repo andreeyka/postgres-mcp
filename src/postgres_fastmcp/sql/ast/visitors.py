@@ -10,7 +10,7 @@ TARGET_LIST_NONE_ERROR = "targetList cannot be None after validation"
 QUALIFIED_COLUMN_FIELDS = 2
 
 
-class TableAliasVisitor(Visitor):  # type: ignore[misc]
+class TableAliasVisitor(Visitor):
     """Извлекает имена таблиц и алиасы из AST SQL."""
 
     def __init__(self) -> None:
@@ -27,7 +27,7 @@ class TableAliasVisitor(Visitor):  # type: ignore[misc]
         Returns:
             Кортеж (алиасы: имя_алиаса -> имя_таблицы, множество имён таблиц).
         """
-        super().__call__(node)
+        super().__call__(node)  # type: ignore[no-untyped-call]
         return self.aliases, self.tables
 
     def visit_RangeVar(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
@@ -47,7 +47,7 @@ class TableAliasVisitor(Visitor):  # type: ignore[misc]
                 self(node.rarg)
 
 
-class ColumnCollector(Visitor):  # type: ignore[misc]
+class ColumnCollector(Visitor):
     """Собирает столбцы из SELECT, WHERE, JOIN, ORDER BY, GROUP BY, HAVING."""
 
     def __init__(self, column_cache: dict[str, set[str]] | None = None) -> None:
@@ -69,7 +69,7 @@ class ColumnCollector(Visitor):  # type: ignore[misc]
         Returns:
             Словарь: ключ контекста -> множество имён столбцов.
         """
-        super().__call__(node)
+        super().__call__(node)  # type: ignore[no-untyped-call]
         return self.columns
 
     def _column_exists(self, table: str, column: str) -> bool:

@@ -10,7 +10,7 @@ dependencies = [
     "pglast>=7.11.0",
     "attrs>=25.3.0",
     "psycopg-pool>=3.2.6",
-    "fastmcp>=3.0.0rc2",
+    "fastmcp>=3.3.1,<4",
     "pydantic-settings>=2.11.0",
     "pydantic>=2.12.4",
     "psycopg[binary]>=3.3.2",
@@ -25,13 +25,25 @@ email = "avshlyapin@cloud.ru"
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/postgres_fastmcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/postgres_fastmcp", "README.md", "pyproject.toml"]
+
 [project.scripts]
 postgres-mcp = "postgres_fastmcp.main:app"
 
-[[tool.uv.index]]
-url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
+[tool.uv]
+publish-url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/"
 
 [[tool.uv.index]]
+name = "mgmt"
+url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
+default = true
+
+[[tool.uv.index]]
+name = "cpe"
 url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/simple"
 
 [dependency-groups]
@@ -190,7 +202,6 @@ allow-star-arg-any = true
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
-default = true
 
 [tool.ruff.lint.flake8-bandit]
 check-typed-exception = true
@@ -203,7 +214,3 @@ detect-string-imports = true
 
 [tool.ruff.format]
 docstring-code-format = true
-
-[tool.uv]
-
-

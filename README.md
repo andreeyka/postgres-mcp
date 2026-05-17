@@ -414,6 +414,41 @@ uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass
 
 > Помоги оптимизировать запрос: SELECT * FROM orders JOIN customers ON orders.customer_id = customers.id WHERE orders.created_at > '2023-01-01';
 
+## Использование как библиотека
+
+Пакет экспортирует `create_server`, чтобы его можно было встроить в другой Python-проект как библиотеку. Публичное API:
+
+```python
+from postgres_fastmcp import (
+    create_server,
+    Settings,
+    LocalProvider,
+    FileSystemProvider,
+    Middleware,
+)
+
+settings = Settings()
+# При необходимости переопределите поля:
+# settings.database = settings.database.model_copy(update={"host": "db", "user": "u", "password": "p", "name": "x"})
+
+server = create_server(
+    settings,
+    # auth: передайте любой экземпляр AuthProvider из FastMCP (BearerAuth, JWT, OAuth, собственный наследник).
+    auth=None,
+    # extra_providers: расширьте сервер собственными tools/resources/prompts.
+    extra_providers=[],
+    # extra_middleware: добавляется после встроенных TimingMiddleware и LoggingMiddleware.
+    extra_middleware=[],
+)
+
+server.run(transport="http", host="0.0.0.0", port=8000)
+```
+
+Замечания:
+- `auth=None` означает отсутствие аутентификации. Это безопасно для транспорта `stdio` или доверенного localhost. Для сетевого HTTP-развёртывания подключите `AuthProvider` из `fastmcp.server.auth` или собственный.
+- `extra_providers` смешиваются со встроенными источниками инструментов. Имена инструментов не должны конфликтовать со встроенными (`execute_sql`, `list_objects`, `get_object_details`, `explain_query`, `list_schemas`, `analyze_db_health`, `get_top_queries`, `analyze_query_indexes`, `analyze_workload_indexes`) — установлен режим `on_duplicate="error"`, поэтому коллизии приведут к ошибке на старте.
+- `extra_middleware` выполняется после нашего timing/logging middleware, поэтому замеры времени запроса/ответа покрывают и ваши обработчики.
+
 ## Разработка
 
 ### Локальная настройка

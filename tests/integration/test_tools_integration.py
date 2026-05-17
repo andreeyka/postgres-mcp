@@ -17,7 +17,7 @@ import pytest
 from fastmcp import Client
 
 from postgres_fastmcp.config import Settings
-from postgres_fastmcp.server import compose_mcp
+from postgres_fastmcp.server import create_server
 
 
 def _tool_content(result: object) -> object:
@@ -76,7 +76,7 @@ def parse_schema_names(content: object) -> list[str]:
 @pytest.mark.asyncio
 async def test_tools_list_schemas(integration_settings: Settings) -> None:
     """list_schemas returns list of schemas; contract: items have schema_name, at least public present."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("list_schemas", {})
     assert result.is_error is False
@@ -97,7 +97,7 @@ async def test_tools_list_schemas(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_execute_sql(integration_settings: Settings) -> None:
     """execute_sql tool runs SELECT 1 and returns result."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("execute_sql", {"sql": "SELECT 1 AS num"})
     assert result.is_error is False
@@ -109,7 +109,7 @@ async def test_tools_execute_sql(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_execute_sql_empty_result(integration_settings: Settings) -> None:
     """execute_sql with query returning 0 rows returns empty or structured result."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("execute_sql", {"sql": "SELECT 1 WHERE FALSE"})
     assert result.is_error is False
@@ -121,7 +121,7 @@ async def test_tools_execute_sql_empty_result(integration_settings: Settings) ->
 @pytest.mark.asyncio
 async def test_tools_list_objects(integration_settings: Settings) -> None:
     """list_objects tool returns list (may be empty) for public schema."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "list_objects",
@@ -135,7 +135,7 @@ async def test_tools_list_objects(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_list_objects_view(integration_settings: Settings) -> None:
     """list_objects with object_type=view returns list (may be empty)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "list_objects",
@@ -149,7 +149,7 @@ async def test_tools_list_objects_view(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_list_objects_sequence(integration_settings: Settings) -> None:
     """list_objects with object_type=sequence returns list (may be empty)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "list_objects",
@@ -163,7 +163,7 @@ async def test_tools_list_objects_sequence(integration_settings: Settings) -> No
 @pytest.mark.asyncio
 async def test_tools_list_objects_extension(integration_settings: Settings) -> None:
     """list_objects with object_type=extension returns list (may be empty)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "list_objects",
@@ -177,7 +177,7 @@ async def test_tools_list_objects_extension(integration_settings: Settings) -> N
 @pytest.mark.asyncio
 async def test_tools_get_object_details(integration_settings: Settings) -> None:
     """get_object_details returns details for an existing object (table or sequence from list_objects)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         # Find an existing object: tables first, then sequences (no DDL in read-only)
         list_result = await client.call_tool(
@@ -224,7 +224,7 @@ async def test_tools_get_object_details(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_explain_query(integration_settings: Settings) -> None:
     """explain_query tool returns plan for SELECT 1 (default plain)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("explain_query", {"sql": "SELECT 1"})
     assert result.is_error is False
@@ -236,7 +236,7 @@ async def test_tools_explain_query(integration_settings: Settings) -> None:
 @pytest.mark.asyncio
 async def test_tools_explain_query_analyze(integration_settings: Settings) -> None:
     """explain_query with analyze=True runs query and returns plan with actual stats."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("explain_query", {"sql": "SELECT 1", "analyze": True})
     assert result.is_error is False
@@ -248,7 +248,7 @@ async def test_tools_explain_query_analyze(integration_settings: Settings) -> No
 @pytest.mark.asyncio
 async def test_tools_analyze_db_health_all(integration_settings: Settings) -> None:
     """analyze_db_health with health_type=all returns report string."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("analyze_db_health", {"health_type": "all"})
     assert result.is_error is False
@@ -260,7 +260,7 @@ async def test_tools_analyze_db_health_all(integration_settings: Settings) -> No
 @pytest.mark.asyncio
 async def test_tools_analyze_db_health_single(integration_settings: Settings) -> None:
     """analyze_db_health with single type (connection) returns report."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool("analyze_db_health", {"health_type": "connection"})
     assert result.is_error is False
@@ -272,7 +272,7 @@ async def test_tools_analyze_db_health_single(integration_settings: Settings) ->
 @pytest.mark.asyncio
 async def test_tools_analyze_workload_indexes_dta(integration_settings: Settings) -> None:
     """analyze_workload_indexes with method=dta returns dict (may contain error if hypopg missing)."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "analyze_workload_indexes",
@@ -289,7 +289,7 @@ async def test_tools_analyze_workload_indexes_dta(integration_settings: Settings
 @pytest.mark.asyncio
 async def test_tools_analyze_query_indexes_dta(integration_settings: Settings) -> None:
     """analyze_query_indexes with method=dta returns dict for given queries."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "analyze_query_indexes",
@@ -305,7 +305,7 @@ async def test_tools_analyze_query_indexes_dta(integration_settings: Settings) -
 @pytest.mark.asyncio
 async def test_tools_get_top_queries_total_time(integration_settings: Settings) -> None:
     """get_top_queries with sort_by=total_time returns report string."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "get_top_queries",
@@ -322,7 +322,7 @@ async def test_tools_get_top_queries_total_time(integration_settings: Settings) 
 @pytest.mark.asyncio
 async def test_tools_get_top_queries_mean_time(integration_settings: Settings) -> None:
     """get_top_queries with sort_by=mean_time returns report string."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "get_top_queries",
@@ -337,7 +337,7 @@ async def test_tools_get_top_queries_mean_time(integration_settings: Settings) -
 @pytest.mark.asyncio
 async def test_tools_get_top_queries_resources(integration_settings: Settings) -> None:
     """get_top_queries with sort_by=resources (default) returns report string."""
-    mcp = compose_mcp(integration_settings)
+    mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "get_top_queries",

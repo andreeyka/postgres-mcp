@@ -26,8 +26,8 @@ class TestIndexAnalysisServiceAnalyzeWorkloadIndexes:
         mock_presentation.analyze_workload = AsyncMock(return_value={"recommendations": []})
         mock_presentation_cls.return_value = mock_presentation
 
-        service = IndexAnalysisService(db=mock_db_access, method="dta")
-        result = await service.analyze_workload_indexes(max_index_size_mb=1000)
+        service = IndexAnalysisService(db=mock_db_access)
+        result = await service.analyze_workload_indexes(method="dta", max_index_size_mb=1000)
         assert result == {"recommendations": []}
 
     @patch("postgres_fastmcp.services.index.service.TextPresentation")
@@ -39,9 +39,9 @@ class TestIndexAnalysisServiceAnalyzeWorkloadIndexes:
         mock_db_access: MagicMock,
     ) -> None:
         """analyze_workload_indexes(method=llm) without ctx raises ContextRequiredError."""
-        service = IndexAnalysisService(db=mock_db_access, method="llm")
+        service = IndexAnalysisService(db=mock_db_access)
         with pytest.raises(ContextRequiredError):
-            await service.analyze_workload_indexes(ctx=None)
+            await service.analyze_workload_indexes(method="llm", ctx=None)
 
 
 class TestIndexAnalysisServiceAnalyzeQueryIndexes:
@@ -60,8 +60,8 @@ class TestIndexAnalysisServiceAnalyzeQueryIndexes:
         mock_presentation.analyze_queries = AsyncMock(return_value={"recommendations": []})
         mock_presentation_cls.return_value = mock_presentation
 
-        service = IndexAnalysisService(db=mock_db_access, method="dta")
-        result = await service.analyze_query_indexes(queries=["SELECT 1"])
+        service = IndexAnalysisService(db=mock_db_access)
+        result = await service.analyze_query_indexes(method="dta", queries=["SELECT 1"])
         assert result == {"recommendations": []}
 
     async def test_analyze_query_indexes_empty_queries_raises(
@@ -69,17 +69,85 @@ class TestIndexAnalysisServiceAnalyzeQueryIndexes:
         mock_db_access: MagicMock,
     ) -> None:
         """analyze_query_indexes(queries=[]) raises EmptyQueriesError."""
-        service = IndexAnalysisService(db=mock_db_access, method="dta")
+        service = IndexAnalysisService(db=mock_db_access)
         with pytest.raises(EmptyQueriesError):
-            await service.analyze_query_indexes(queries=[])
+            await service.analyze_query_indexes(method="dta", queries=[])
 
     async def test_analyze_query_indexes_over_limit_raises(
         self,
         mock_db_access: MagicMock,
     ) -> None:
         """analyze_query_indexes with more than MAX_NUM_INDEX_TUNING_QUERIES raises QueriesLimitError."""
-        service = IndexAnalysisService(db=mock_db_access, method="dta")
+        service = IndexAnalysisService(db=mock_db_access)
         too_many = ["SELECT 1"] * (MAX_NUM_INDEX_TUNING_QUERIES + 1)
         with pytest.raises(QueriesLimitError) as exc_info:
-            await service.analyze_query_indexes(queries=too_many)
+            await service.analyze_query_indexes(method="dta", queries=too_many)
         assert exc_info.value.limit == MAX_NUM_INDEX_TUNING_QUERIES
+
+
+class TestIndexAnalysisServiceDispatch:
+    """Tests for IndexAnalysisService method dispatch."""
+
+    async def test_analyze_query_indexes_dispatches_to_dta(
+        self, monkeypatch: pytest.MonkeyPatch, mock_db_access: MagicMock
+    ) -> None:
+        """analyze_query_indexes(method=dta) calls _dta_analyze_query."""
+        service = IndexAnalysisService(db=mock_db_access)
+        dta_mock = AsyncMock(return_value={"via": "dta"})
+        llm_mock = AsyncMock(return_value={"via": "llm"})
+        monkeypatch.setattr(service, "_dta_analyze_query", dta_mock)
+        monkeypatch.setattr(service, "_llm_analyze_query", llm_mock)
+
+        result = await service.analyze_query_indexes(method="dta", queries=["SELECT 1"], max_index_size_mb=10)
+        assert result == {"via": "dta"}
+        dta_mock.assert_awaited_once_with(queries=["SELECT 1"], max_index_size_mb=10)
+        llm_mock.assert_not_awaited()
+
+    async def test_analyze_query_indexes_dispatches_to_llm(
+        self, monkeypatch: pytest.MonkeyPatch, mock_db_access: MagicMock
+    ) -> None:
+        """analyze_query_indexes(method=llm) calls _llm_analyze_query."""
+        service = IndexAnalysisService(db=mock_db_access)
+        dta_mock = AsyncMock(return_value={"via": "dta"})
+        llm_mock = AsyncMock(return_value={"via": "llm"})
+        monkeypatch.setattr(service, "_dta_analyze_query", dta_mock)
+        monkeypatch.setattr(service, "_llm_analyze_query", llm_mock)
+        fake_ctx = MagicMock()
+
+        result = await service.analyze_query_indexes(
+            method="llm", queries=["SELECT 1"], max_index_size_mb=10, ctx=fake_ctx
+        )
+        assert result == {"via": "llm"}
+        llm_mock.assert_awaited_once_with(queries=["SELECT 1"], max_index_size_mb=10, ctx=fake_ctx)
+        dta_mock.assert_not_awaited()
+
+    async def test_analyze_workload_indexes_dispatches_to_dta(
+        self, monkeypatch: pytest.MonkeyPatch, mock_db_access: MagicMock
+    ) -> None:
+        """analyze_workload_indexes(method=dta) calls _dta_analyze_workload."""
+        service = IndexAnalysisService(db=mock_db_access)
+        dta_mock = AsyncMock(return_value={"via": "dta"})
+        llm_mock = AsyncMock(return_value={"via": "llm"})
+        monkeypatch.setattr(service, "_dta_analyze_workload", dta_mock)
+        monkeypatch.setattr(service, "_llm_analyze_workload", llm_mock)
+
+        result = await service.analyze_workload_indexes(method="dta", max_index_size_mb=10)
+        assert result == {"via": "dta"}
+        dta_mock.assert_awaited_once_with(max_index_size_mb=10)
+        llm_mock.assert_not_awaited()
+
+    async def test_analyze_workload_indexes_dispatches_to_llm(
+        self, monkeypatch: pytest.MonkeyPatch, mock_db_access: MagicMock
+    ) -> None:
+        """analyze_workload_indexes(method=llm) calls _llm_analyze_workload."""
+        service = IndexAnalysisService(db=mock_db_access)
+        dta_mock = AsyncMock(return_value={"via": "dta"})
+        llm_mock = AsyncMock(return_value={"via": "llm"})
+        monkeypatch.setattr(service, "_dta_analyze_workload", dta_mock)
+        monkeypatch.setattr(service, "_llm_analyze_workload", llm_mock)
+        fake_ctx = MagicMock()
+
+        result = await service.analyze_workload_indexes(method="llm", max_index_size_mb=10, ctx=fake_ctx)
+        assert result == {"via": "llm"}
+        llm_mock.assert_awaited_once_with(max_index_size_mb=10, ctx=fake_ctx)
+        dta_mock.assert_not_awaited()
