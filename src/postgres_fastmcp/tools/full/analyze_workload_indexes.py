@@ -1,18 +1,15 @@
 # ruff: noqa: E501
 """Инструмент analyze_workload_indexes (full)."""
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from fastmcp.tools import tool
 from pydantic import Field
 
-from postgres_fastmcp.enums import ToolTag
-from postgres_fastmcp.providers.index_analysis_provider import (
-    DtaIndexAnalysisServiceProvider,
-    LlmIndexAnalysisServiceProvider,
-)
+from postgres_fastmcp.enums import AnalysisMethod, ToolTag
+from postgres_fastmcp.providers.index_analysis_provider import IndexAnalysisServiceProvider
 from postgres_fastmcp.services.index.service import IndexAnalysisService
 from postgres_fastmcp.tools.constants import PG_STAT_STATEMENTS
 
@@ -54,7 +51,7 @@ async def analyze_workload_indexes(
         ),
     ] = 10000,
     method: Annotated[
-        Literal["dta", "llm"],
+        AnalysisMethod,
         Field(
             default="dta",
             description=(
@@ -64,16 +61,15 @@ async def analyze_workload_indexes(
         ),
     ] = "dta",
     ctx: Context = CurrentContext(),
-    dta_index_analysis_service: IndexAnalysisService = DtaIndexAnalysisServiceProvider,
-    llm_index_analysis_service: IndexAnalysisService = LlmIndexAnalysisServiceProvider,
+    index_analysis_service: IndexAnalysisService = IndexAnalysisServiceProvider,
 ) -> dict[str, Any]:
     """Проанализировать нагрузку и рекомендовать индексы.
 
     Returns:
         Рекомендации. FastMCP преобразует в ответ. При ошибке — исключение наружу.
     """
-    index_analysis_service = dta_index_analysis_service if method == "dta" else llm_index_analysis_service
     return await index_analysis_service.analyze_workload_indexes(
+        method=method,
         max_index_size_mb=max_index_size_mb,
         ctx=ctx,
     )
