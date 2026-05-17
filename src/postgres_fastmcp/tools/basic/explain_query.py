@@ -6,13 +6,8 @@ from typing import Annotated, Any
 from fastmcp.tools import tool
 from pydantic import Field
 
-from postgres_fastmcp.common.errors import ExplainAnalyzeWithHypotheticalError
 from postgres_fastmcp.enums import ToolTag
-from postgres_fastmcp.providers.explain_provider import (
-    ExplainAnalyzeServiceProvider,
-    ExplainHypotheticalServiceProvider,
-    ExplainPlainServiceProvider,
-)
+from postgres_fastmcp.providers.explain_provider import ExplainServiceProvider
 from postgres_fastmcp.services.explain.service import ExplainService
 
 
@@ -55,7 +50,7 @@ _DESC_HYPOTHETICAL_INDEXES = (
         "openWorldHint": True,
     },
 )
-async def explain_query(  # noqa: PLR0913
+async def explain_query(
     sql: Annotated[
         str,
         Field(description="SQL query as string value to explain and analyze execution plan"),
@@ -76,26 +71,15 @@ async def explain_query(  # noqa: PLR0913
         list[dict[str, Any]] | None,
         Field(default=None, description=_DESC_HYPOTHETICAL_INDEXES),
     ] = None,
-    explain_plain_service: ExplainService = ExplainPlainServiceProvider,
-    explain_analyze_service: ExplainService = ExplainAnalyzeServiceProvider,
-    explain_hypothetical_service: ExplainService = ExplainHypotheticalServiceProvider,
+    explain_service: ExplainService = ExplainServiceProvider,
 ) -> str:
     """Объяснить план выполнения SQL-запроса.
 
     Returns:
         Строка с планом выполнения. FastMCP преобразует в ответ. При ошибке — исключение наружу.
     """
-    if analyze and hypothetical_indexes:
-        raise ExplainAnalyzeWithHypotheticalError
-
-    if hypothetical_indexes:
-        service = explain_hypothetical_service
-    elif analyze:
-        service = explain_analyze_service
-    else:
-        service = explain_plain_service
-
-    return await service.explain_query(
+    return await explain_service.explain(
         sql,
-        hypothetical_indexes=hypothetical_indexes or [],
+        analyze=analyze,
+        hypothetical_indexes=hypothetical_indexes,
     )
