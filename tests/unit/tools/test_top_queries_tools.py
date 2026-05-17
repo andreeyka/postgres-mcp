@@ -1,15 +1,42 @@
-# mypy: ignore-errors
-"""Unit tests for top queries tool registration."""
+"""Тесты для тула get_top_queries."""
+
+from unittest import mock
+
+import pytest
+
+from postgres_fastmcp.tools.full import get_top_queries as get_top_queries_mod
+from postgres_fastmcp.tools.full.get_top_queries import get_top_queries
 
 
-class TestTopQueriesTools:
-    """Tests for get_top_queries tool."""
+@pytest.mark.asyncio
+async def test_get_top_queries_default(monkeypatch, db_mock, make_ctx) -> None:
+    fake_service = mock.AsyncMock()
+    fake_service.get_top_queries.return_value = "REPORT"
+    monkeypatch.setattr(
+        get_top_queries_mod, "TopQueriesService", lambda **kw: fake_service
+    )
 
-    async def test_get_top_queries_tool_registered(
-        self,
-        registered_tools_provider,
-    ) -> None:
-        """get_top_queries tool is present in the provider."""
-        tools = await registered_tools_provider.list_tools()
-        names = [t.name for t in tools]
-        assert "get_top_queries" in names
+    result = await get_top_queries(ctx=make_ctx(db_mock))
+
+    assert result == "REPORT"
+    fake_service.get_top_queries.assert_awaited_once_with(
+        sort_by="resources", limit=10
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_top_queries_custom_args(monkeypatch, db_mock, make_ctx) -> None:
+    fake_service = mock.AsyncMock()
+    fake_service.get_top_queries.return_value = "REPORT2"
+    monkeypatch.setattr(
+        get_top_queries_mod, "TopQueriesService", lambda **kw: fake_service
+    )
+
+    result = await get_top_queries(
+        sort_by="total_time", limit=5, ctx=make_ctx(db_mock)
+    )
+
+    assert result == "REPORT2"
+    fake_service.get_top_queries.assert_awaited_once_with(
+        sort_by="total_time", limit=5
+    )
