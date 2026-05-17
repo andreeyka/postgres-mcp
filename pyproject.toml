@@ -25,6 +25,12 @@ email = "avshlyapin@cloud.ru"
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/postgres_fastmcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/postgres_fastmcp", "README.md", "pyproject.toml"]
+
 [project.scripts]
 postgres-mcp = "postgres_fastmcp.main:app"
 

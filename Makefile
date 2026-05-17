@@ -1,146 +1,171 @@
-.PHONY: help lint format clean commit push release-patch release-minor release-major test docker-up docker-down docker-build docker-release docker-push
+# Установка цели по умолчанию
+.DEFAULT_GOAL := help
 
-ifneq (,$(wildcard .env))
-    $(foreach line,$(shell grep -E '^DOCKER_(IMAGE|TAG)=' .env 2>/dev/null),$(eval $(line)))
-endif
+# Переменные для Docker
+NAME ?= ia/postgres-mcp
+REPO ?= repo.mng.sbercloud.tech
+TAG ?= latest
+DOCKER_FULL_IMAGE := $(REPO)/$(NAME):$(TAG)
 
-# Docker image configuration (can be overridden via .env or command line)
-DOCKER_IMAGE ?= postgres-fastmcp
-DOCKER_TAG ?= latest
-DOCKER_FULL_IMAGE := $(DOCKER_IMAGE):$(DOCKER_TAG)
+# Вспомогательная цель для проверки переменных Docker
+.PHONY: check-docker-vars check-name check-repo
 
-help: ## Show help for available commands
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+check-name:
+	@if [ -z "$(NAME)" ]; then \
+		echo "Error: NAME is not set"; \
+		echo "Use: make <target> NAME=your-name"; \
+		exit 1; \
+	fi
 
-lint: ## Check code with linters (ruff + mypy)
+check-repo:
+	@if [ -z "$(REPO)" ]; then \
+		echo "Error: REPO is not set"; \
+		echo "Use: make <target> REPO=repo.example.com/namespace"; \
+		exit 1; \
+	fi
+
+check-docker-vars: check-name check-repo
+
+.PHONY: help lint format clean commit push release-patch release-minor release-major docker-build docker-push docker-run docker-run-it docker-stop check-docker-vars check-name check-repo copy-template
+
+help: ## Показать справку по командам
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' | sort
+
+# Копирование шаблона
+copy-template: ## Скопировать шаблон проекта в текущую директорию
+	@TEMPLATE_DIR="../default" bash "../default/copy_template.sh"
+
+lint: ## Проверить код линтерами (ruff + mypy)
 	uv run ruff check .
 	uv run mypy src/
 
-format: ## Format code (ruff format + auto-fixes)
+format: ## Отформатировать код (ruff format + автофиксы)
 	uv run ruff format .
 	uv run ruff check --fix .
 
-clean: ## Clean build artifacts and caches
+clean: ## Очистить артефакты сборки и кэши
 	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .ruff_cache/ .mypy_cache/ .coverage htmlcov/
 
-test: ## Run all tests
-	uv run python -m pytest
+# Управление версиями
 
-test-unit: ## Run unit tests only
-	uv run python -m pytest tests/unit/
-
-test-integration: ## Run integration tests only
-	uv run python -m pytest tests/integration/
-
-# Version management
-
-release-patch: ## Release PATCH version (clean → sync → bump → commit → push → merge)
-	@echo "Starting PATCH version release..."
-	@echo "Cleaning build artifacts..."
+release-patch: ## Релиз PATCH версии (clean → lock → bump → commit → push → merge)
+	@echo "Запускаю релиз PATCH версии..."
+	@echo "Очищаю артефакты сборки..."
 	$(MAKE) clean
-	@echo "Synchronizing dependencies..."
-	uv sync
-	@echo "Bumping PATCH version..."
+	@echo "Обновляю lock файл..."
+	uv lock
+	@echo "Увеличиваю PATCH версию..."
 	uv version --bump patch
 	@NEW_VERSION=$$(uv version --short); \
-	echo "New version: $$NEW_VERSION"; \
-	echo "Updating local repository..."; \
+	echo "Новая версия: $$NEW_VERSION"; \
+	echo "Обновляю локальный репозиторий..."; \
 	git pull; \
 	git add .; \
 	git commit -m "Release v$$NEW_VERSION"; \
 	git push; \
-	echo "Release v$$NEW_VERSION created and pushed!"; \
-	echo "Now create a Merge Request to the main branch"
+	echo "Релиз v$$NEW_VERSION создан и отправлен!"; \
+	echo "Теперь создайте Merge Request в main ветку"
 
-release-minor: ## Release MINOR version (clean → sync → bump → commit → push → merge)
-	@echo "Starting MINOR version release..."
-	@echo "Cleaning build artifacts..."
+release-minor: ## Релиз MINOR версии (clean → lock → bump → commit → push → merge)
+	@echo "Запускаю релиз MINOR версии..."
+	@echo "Очищаю артефакты сборки..."
 	$(MAKE) clean
-	@echo "Synchronizing dependencies..."
-	uv sync
-	@echo "Bumping MINOR version..."
+	@echo "Обновляю lock файл..."
+	uv lock
+	@echo "Увеличиваю MINOR версию..."
 	uv version --bump minor
 	@NEW_VERSION=$$(uv version --short); \
-	echo "New version: $$NEW_VERSION"; \
-	echo "Updating local repository..."; \
+	echo "Новая версия: $$NEW_VERSION"; \
+	echo "Обновляю локальный репозиторий..."; \
 	git pull; \
 	git add .; \
 	git commit -m "Release v$$NEW_VERSION"; \
 	git push; \
-	echo "Release v$$NEW_VERSION created and pushed!"; \
-	echo "Now create a Merge Request to the main branch"
+	echo "Релиз v$$NEW_VERSION создан и отправлен!"; \
+	echo "Теперь создайте Merge Request в main ветку"
 
-release-major: ## Release MAJOR version (clean → sync → bump → commit → push → merge)
-	@echo "Starting MAJOR version release..."
-	@echo "Cleaning build artifacts..."
+release-major: ## Релиз MAJOR версии (clean → lock → bump → commit → push → merge)
+	@echo "Запускаю релиз MAJOR версии..."
+	@echo "Очищаю артефакты сборки..."
 	$(MAKE) clean
-	@echo "Synchronizing dependencies..."
-	uv sync
-	@echo "Bumping MAJOR version..."
+	@echo "Обновляю lock файл..."
+	uv lock
+	@echo "Увеличиваю MAJOR версию..."
 	uv version --bump major
 	@NEW_VERSION=$$(uv version --short); \
-	echo "New version: $$NEW_VERSION"; \
-	echo "Updating local repository..."; \
+	echo "Новая версия: $$NEW_VERSION"; \
+	echo "Обновляю локальный репозиторий..."; \
 	git pull; \
 	git add .; \
 	git commit -m "Release v$$NEW_VERSION"; \
 	git push; \
-	echo "Release v$$NEW_VERSION created and pushed!"; \
-	echo "Now create a Merge Request to the main branch"
+	echo "Релиз v$$NEW_VERSION создан и отправлен!"; \
+	echo "Теперь создайте Merge Request в main ветку"
 
-# Git commands
+# Git команды
 
-commit: ## Make a commit with message (interactively prompts for message)
-	@echo "📝 Enter commit message:"
-	@read -p "Message: " msg; \
-	echo "🔄 Updating local repository..."; \
+commit: ## Сделать коммит с сообщением (интерактивно запрашивает сообщение)
+	@echo "📝 Введите сообщение для коммита:"
+	@read -p "Сообщение: " msg; \
+	echo "🔄 Обновляю локальный репозиторий..."; \
 	git pull; \
 	git add .; \
 	git commit -m "$$msg"; \
-	echo "✅ Commit created!"
+	echo "✅ Коммит создан!"
 
-push: ## Make a commit and push (interactively prompts for message)
-	@echo "📝 Enter commit message:"
-	@read -p "Message: " msg; \
-	echo "🔄 Updating local repository..."; \
+push: ## Сделать коммит и пуш (интерактивно запрашивает сообщение)
+	@echo "📝 Введите сообщение для коммита:"
+	@read -p "Сообщение: " msg; \
+	echo "🔄 Обновляю локальный репозиторий..."; \
 	git pull; \
 	git add .; \
 	git commit -m "$$msg"; \
 	git push; \
-	echo "✅ Commit created and pushed to remote repository!"
+	echo "✅ Коммит создан и отправлен в удаленный репозиторий!"
 
-# Docker commands
+# Docker команды
 
-docker-build: ## Build Docker image (reads DOCKER_IMAGE and DOCKER_TAG from .env)
-	@echo "🐳 Building Docker image $(DOCKER_FULL_IMAGE)..."
-	docker buildx build --platform=linux/amd64 --provenance=false --sbom=false -t $(DOCKER_FULL_IMAGE) --load -f Dockerfile .
-	@echo "✅ Docker image $(DOCKER_FULL_IMAGE) built successfully!"
+# Сборка образов
+docker-build: check-name ## Собрать Docker образ (для локального использования)
+	@echo "🐳 Собираю Docker образ $(NAME)..."
+	docker buildx build --provenance=false --sbom=false --build-arg NAME=$(NAME) --build-arg REPO=$(REPO) -t $(NAME):latest --load .
+	@echo "✅ Docker образ собран успешно!"
 
-docker-release: ## Build and push Docker image to registry (reads from .env)
-	@echo "🚀 Building and publishing $(DOCKER_FULL_IMAGE)..."
-	docker buildx build --platform=linux/amd64 --provenance=false --sbom=false -t $(DOCKER_FULL_IMAGE) --load -f Dockerfile .
-	@echo "📤 Pushing image to registry..."
-	docker push $(DOCKER_FULL_IMAGE)
-	@echo "✅ Image published: $(DOCKER_FULL_IMAGE)"
+# Полный цикл: мультиархитектурная сборка + загрузка
+docker-push: check-docker-vars ## Собрать (amd64 + arm64) и загрузить образ в реестр
+	@echo "🚀 Мультиархитектурная сборка → загрузка"
+	@echo "🐳 Собираю образ для linux/amd64,linux/arm64..."; \
+	docker buildx build --platform=linux/amd64,linux/arm64 --provenance=false --sbom=false --build-arg NAME=$(NAME) --build-arg REPO=$(REPO) -t $(DOCKER_FULL_IMAGE) --push -f Dockerfile . && \
+	echo "✅ Образ загружен: $(DOCKER_FULL_IMAGE)"
 
-docker-push: ## Push previously built Docker image to registry (reads from .env)
-	@echo "📤 Pushing image $(DOCKER_FULL_IMAGE) to registry..."
-	docker push $(DOCKER_FULL_IMAGE)
-	@echo "✅ Image pushed: $(DOCKER_FULL_IMAGE)"
+# Запуск контейнеров
+docker-run: check-name ## Запустить контейнер в фоновом режиме
+	@echo "🚀 Запускаю контейнер $(NAME) в фоновом режиме..."
+	@echo "💡 Передаю переменные окружения и .env файл..."
+	@if [ -f .env ]; then \
+		docker run -d --name $(NAME)-container \
+			--env-file .env \
+			$(NAME):latest; \
+	else \
+		docker run -d --name $(NAME)-container \
+			$(NAME):latest; \
+	fi
+	@echo "✅ Контейнер запущен! Используйте 'make docker-stop NAME=$(NAME)' для остановки."
 
-docker-up: ## Start Docker test environment
-	docker-compose up -d --build
+docker-run-it: check-name ## Запустить контейнер в интерактивном режиме
+	@echo "🚀 Запускаю контейнер $(NAME) в интерактивном режиме..."
+	@echo "💡 Передаю переменные окружения и .env файл..."
+	@if [ -f .env ]; then \
+		docker run -it --rm --name $(NAME)-interactive \
+			--env-file .env \
+			$(NAME):latest; \
+	else \
+		docker run -it --rm --name $(NAME)-interactive \
+			$(NAME):latest; \
+	fi
 
-docker-down: ## Stop Docker test environment
-	docker-compose down
-
-docker-logs: ## View Docker logs
-	docker-compose logs -f
-
-docker-clean: ## Stop Docker environment and remove volumes
-	docker-compose down -v
-
-# Special rule for handling arguments
-%:
-	@:
+docker-stop: check-name ## Остановить и удалить контейнер
+	@echo "🛑 Останавливаю контейнер $(NAME)..."
+	-docker stop $(NAME)-container
+	-docker rm $(NAME)-container
+	@echo "✅ Контейнер остановлен и удален!"
