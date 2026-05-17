@@ -55,7 +55,7 @@ class DatabaseConfig(BaseSettings):
         ge=1,
     )
     pool_max_size: int = Field(
-        default=5,
+        default=10,
         description="Максимальное количество соединений в пуле",
         ge=1,
     )
