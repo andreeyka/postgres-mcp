@@ -196,7 +196,6 @@ allow-star-arg-any = true
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"
-default = true
 
 [tool.ruff.lint.flake8-bandit]
 check-typed-exception = true
@@ -209,7 +208,3 @@ detect-string-imports = true
 
 [tool.ruff.format]
 docstring-code-format = true
-
-[tool.uv]
-
-
