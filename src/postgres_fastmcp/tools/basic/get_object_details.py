@@ -7,7 +7,7 @@ from fastmcp.tools import tool
 from pydantic import Field
 
 from postgres_fastmcp.config import app_config
-from postgres_fastmcp.enums import AccessMode, ToolTag
+from postgres_fastmcp.enums import AccessMode, ObjectType, ToolTag
 from postgres_fastmcp.providers.objects_provider import ObjectsServiceProvider
 from postgres_fastmcp.services.objects.service import ObjectsService
 
@@ -58,14 +58,8 @@ async def get_object_details(
         ),
     ],
     object_type: Annotated[
-        str,
-        Field(
-            default="table",
-            description=(
-                "Object type as string value: 'table' for tables, 'view' for views, "
-                "'sequence' for sequences, or 'extension' for PostgreSQL extensions"
-            ),
-        ),
+        ObjectType,
+        Field(default="table", description="Object type: 'table', 'view', 'sequence', or 'extension'"),
     ] = "table",
     objects_service: ObjectsService = ObjectsServiceProvider,
 ) -> dict[str, Any]:

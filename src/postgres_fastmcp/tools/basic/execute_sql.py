@@ -31,11 +31,12 @@ _DESC_UNRESTRICTED = (
     "Example: Use for CREATE TABLE, INSERT, UPDATE, DELETE, ALTER, and other DDL/DML operations."
 )
 _db = app_config.current.database
-_DESC = _DESC_UNRESTRICTED if (_db.access_mode == AccessMode.FULL and _db.write_mode) else _DESC_RESTRICTED
+_UNRESTRICTED = _db.access_mode == AccessMode.FULL and _db.write_mode
+_DESC = _DESC_UNRESTRICTED if _UNRESTRICTED else _DESC_RESTRICTED
 _SQL_PARAM_DESC = (
-    "SQL query as string value to execute against the database. Only SELECT queries are allowed (read-only)."
-    if not (_db.access_mode == AccessMode.FULL and _db.write_mode)
-    else "SQL query as string value to execute against the database. Any SQL statement (DDL, DML, DCL) is permitted."
+    "SQL query as string value to execute against the database. Any SQL statement (DDL, DML, DCL) is permitted."
+    if _UNRESTRICTED
+    else "SQL query as string value to execute against the database. Only SELECT queries are allowed (read-only)."
 )
 
 
@@ -51,13 +52,7 @@ _SQL_PARAM_DESC = (
     },
 )
 async def execute_sql(
-    sql: Annotated[
-        str,
-        Field(
-            default="all",
-            description=_SQL_PARAM_DESC,
-        ),
-    ] = "all",
+    sql: Annotated[str, Field(description=_SQL_PARAM_DESC)],
     sql_execution_service: SqlExecutionService = SqlExecutionServiceProvider,
 ) -> list[dict[str, Any]]:
     """Выполнить SQL-запрос к базе данных.

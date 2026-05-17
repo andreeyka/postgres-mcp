@@ -6,7 +6,7 @@ from typing import Annotated
 from fastmcp.tools import tool
 from pydantic import Field
 
-from postgres_fastmcp.enums import ToolTag
+from postgres_fastmcp.enums import ToolTag, TopQueriesSortBy
 from postgres_fastmcp.providers.top_queries_provider import TopQueriesServiceProvider
 from postgres_fastmcp.services.top_queries.service import TopQueriesService
 from postgres_fastmcp.tools.constants import PG_STAT_STATEMENTS
@@ -41,13 +41,12 @@ _DESC = (
 )
 async def get_top_queries(
     sort_by: Annotated[
-        str,
+        TopQueriesSortBy,
         Field(
             default="resources",
             description=(
-                "Ranking criteria as string value: 'total_time' for total execution time across all calls, "
-                "'mean_time' for mean execution time per call, or 'resources' for resource-intensive queries "
-                "based on I/O, WAL, and execution time"
+                "Ranking criteria: 'total_time' (total execution time across all calls), "
+                "'mean_time' (mean execution time per call), or 'resources' (I/O, WAL, time)"
             ),
         ),
     ] = "resources",

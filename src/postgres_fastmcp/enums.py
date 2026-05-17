@@ -7,6 +7,10 @@ from typing import Literal
 # Mount mode types
 MountMode = Literal["tool", "endpoint"]
 
+# Tool parameter types
+ObjectType = Literal["table", "view", "sequence", "extension"]
+TopQueriesSortBy = Literal["total_time", "mean_time", "resources"]
+
 
 class AccessMode(StrEnum):
     """Уровень доступа: область схем и набор инструментов."""
