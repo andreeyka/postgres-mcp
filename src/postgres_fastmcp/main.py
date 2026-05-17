@@ -9,7 +9,7 @@ from postgres_fastmcp import __version__
 from postgres_fastmcp.config import build_settings_from_cli
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.logger import get_logger
-from postgres_fastmcp.server import compose_mcp
+from postgres_fastmcp.server import create_server
 
 from .logger import configure_logging
 
@@ -70,7 +70,7 @@ def main(  # noqa: PLR0913
     if actual_transport == "stdio":
         configure_logging(disable=True)
 
-    mcp = compose_mcp(settings)
+    mcp = create_server(settings)
     try:
         if actual_transport == "http":
             mcp.run(

@@ -4,8 +4,10 @@
 import pytest
 
 from postgres_fastmcp.common.errors import (
-    BaseApplicationError,
+    CreateExtensionNotSupportedError,
     DdlNotAllowedError,
+    ExplainAnalyzeNotSupportedError,
+    FunctionNotAllowedError,
     SchemaNotAllowedError,
     SqlParseError,
     StatementTypeNotAllowedError,
@@ -90,7 +92,7 @@ class TestQueryValidatorFunctions:
     def test_blocks_disallowed_function(self) -> None:
         """Disallowed function raises FunctionNotAllowedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(BaseApplicationError) as exc_info:
+        with pytest.raises(FunctionNotAllowedError) as exc_info:
             v.validate("SELECT pg_sleep(1)")
         assert "not allowed" in str(exc_info.value).lower() or "pg_sleep" in str(exc_info.value)
 
@@ -101,7 +103,7 @@ class TestQueryValidatorExplainAnalyze:
     def test_explain_analyze_raises_when_not_allowed(self) -> None:
         """EXPLAIN (ANALYZE) raises ExplainAnalyzeNotSupportedError when allow_explain_analyze=False."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(BaseApplicationError) as exc_info:
+        with pytest.raises(ExplainAnalyzeNotSupportedError) as exc_info:
             v.validate("EXPLAIN (ANALYZE) SELECT 1")
         assert "ANALYZE" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
 
@@ -117,7 +119,7 @@ class TestQueryValidatorCreateExtension:
     def test_create_extension_disallowed_raises(self) -> None:
         """CREATE EXTENSION with non-whitelisted name raises CreateExtensionNotSupportedError."""
         v = QueryValidator(read_only=True)
-        with pytest.raises(BaseApplicationError) as exc_info:
+        with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
             v.validate("CREATE EXTENSION unknown_ext")
         assert "unknown_ext" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
 

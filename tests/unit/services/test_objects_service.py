@@ -133,6 +133,26 @@ class TestObjectsServiceGetObjectDetails:
         assert result["constraints"] == []
         assert result["indexes"] == []
 
+    async def test_get_object_details_table_runs_three_queries_in_parallel(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """columns/constraints/indexes queries must run concurrently via asyncio.gather."""
+        import asyncio
+        import time
+
+        async def slow_execute(*args, **kwargs):
+            await asyncio.sleep(0.15)
+            return []
+
+        mock_executor.execute.side_effect = slow_execute
+        service = ObjectsService(db=mock_db_access)
+        start = time.perf_counter()
+        await service.get_object_details("public", "users", "table")
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.3, f"Expected parallel execution (<0.3s), got {elapsed:.3f}s"
+
     async def test_get_object_details_unsupported_type_raises(
         self,
         mock_db_access: MagicMock,

@@ -1,7 +1,6 @@
 """Инструмент Database Tuning Advisor (DTA) для Postgres MCP."""
 
 import logging
-import os
 from typing import Any
 
 import humanize
@@ -127,21 +126,11 @@ class TextPresentation:
                 max_index_size_mb=max_index_size_mb,
             )
 
-            # Prepare the response to send back to the caller
-            include_langfuse_trace = os.environ.get("POSTGRES_FASTMCP_INCLUDE_LANGFUSE_TRACE", "true").lower() == "true"
-            langfuse_trace = {"_langfuse_trace": session.dta_traces} if include_langfuse_trace else {}
-
             if session.error:
-                return {
-                    "error": session.error,
-                    **langfuse_trace,
-                }
+                return {"error": session.error}
 
             if not session.recommendations:
-                return {
-                    "recommendations": "No index recommendations found.",
-                    **langfuse_trace,
-                }
+                return {"recommendations": "No index recommendations found."}
 
             # Calculate overall statistics
             total_size_bytes = sum(rec.estimated_size_bytes for rec in session.recommendations)
@@ -168,7 +157,6 @@ class TextPresentation:
                 },
                 "recommendations": recommendations,
                 "query_impact": query_impact,
-                **langfuse_trace,
             }
         except Exception as e:
             logger.exception("Error analyzing queries")

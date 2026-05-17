@@ -50,23 +50,24 @@ wheels = [
 
 [[package]]
 name = "attrs"
-version = "25.4.0"
+version = "26.1.0"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/attrs/25.4.0/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/attrs/26.1.0/attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/attrs/25.4.0/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/attrs/26.1.0/attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309" },
 ]
 
 [[package]]
 name = "authlib"
-version = "1.6.8"
+version = "1.7.2"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "cryptography" },
+    { name = "joserfc" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/authlib/1.6.8/authlib-1.6.8.tar.gz", hash = "sha256:41ae180a17cf672bc784e4a518e5c82687f1fe1e98b0cafaeda80c8e4ab2d1cb" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/authlib/1.7.2/authlib-1.7.2.tar.gz", hash = "sha256:2cea25fefcd4e7173bdf1372c0afc265c8034b23a8cd5dcb6a9164b826c64231" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/authlib/1.6.8/authlib-1.6.8-py2.py3-none-any.whl", hash = "sha256:97286fd7a15e6cfefc32771c8ef9c54f0ed58028f1322de6a2a7c969c3817888" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/authlib/1.7.2/authlib-1.7.2-py2.py3-none-any.whl", hash = "sha256:3e1faedc9d87e7d56a164eca3ccb6ace0d61b94abe83e92242f8dc8bba9b4a9f" },
 ]
 
 [[package]]
@@ -80,11 +81,11 @@ wheels = [
 
 [[package]]
 name = "cachetools"
-version = "7.0.1"
+version = "7.0.5"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cachetools/7.0.1/cachetools-7.0.1.tar.gz", hash = "sha256:e31e579d2c5b6e2944177a0397150d312888ddf4e16e12f1016068f0c03b8341" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cachetools/7.0.5/cachetools-7.0.5.tar.gz", hash = "sha256:0cd042c24377200c1dcd225f8b7b12b0ca53cc2c961b43757e774ebe190fd990" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cachetools/7.0.1/cachetools-7.0.1-py3-none-any.whl", hash = "sha256:8f086515c254d5664ae2146d14fc7f65c9a4bce75152eb247e5a9c5e6d7b2ecf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cachetools/7.0.5/cachetools-7.0.5-py3-none-any.whl", hash = "sha256:46bc8ebefbe485407621d0a4264b23c080cedd913921bad7ac3ed2f26c183114" },
 ]
 
 [[package]]
@@ -95,20 +96,26 @@ sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0
 wheels = [
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:fb7ff95af4c31ad3f03179149aab61097a71fd85e05f89b4786de0359dffd044" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp312-cp312-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:97084e4e30dfa598449d874c4d8e0c8d5ea17d2f752ef5e48e150ff9d240cd64" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:4fa69eba47e0f041b9d4f336e2ad40740681c43e686b18b191b6c5f4c5544bfb" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:6bebf6f079f1341d19f7386db9b8b1f07e8cc15ae13bfdaff573371ba0575d69" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:d6c2a3411af97762a2b03840c3cec2f7f728921ff8adda53d7ea2315a8563451" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp313-cp313-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0998210a4d5cd5cb565b32ccfe4e53d67303f868a76f212e002a8554692870e6" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:1a177d4777141b96f175fe2c37a3d96dec7911ed9ad5f02bac38aaa1c936611f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:9ed3cfb28c0e99fec5e208c934e5c157d0866aa9c32aa4dc5e9b6034af6286b7" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:fab6078b9348e883c80a5e14b382e6ad6aabbc4429ca034e76e730cf464269db" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp314-cp314-manylinux2010_x86_64.manylinux2014_x86_64.manylinux_2_12_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:44a6b58e52d488c75cfaa5ecaa404b2b41cc965e6c417e03251e868ecd5b6d77" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:628a630eb7fb22381dd8e3c8ab7f59e854b9c806639811fc3f4310c6bd711d79" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:0ba16aa605ccb174665357fc729cf500679c2d94d5f1458a6f0d5ca48f2060a7" },
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/caio/0.9.25/caio-0.9.25-py3-none-any.whl", hash = "sha256:06c0bb02d6b929119b1cfbe1ca403c768b2013a369e2db46bfa2a5761cf82e40" },
 ]
 
 [[package]]
 name = "certifi"
-version = "2026.1.4"
+version = "2026.2.25"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/certifi/2026.1.4/certifi-2026.1.4.tar.gz", hash = "sha256:ac726dd470482006e014ad384921ed6438c457018f4b3d204aea4281258b2120" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/certifi/2026.2.25/certifi-2026.2.25.tar.gz", hash = "sha256:e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/certifi/2026.1.4/certifi-2026.1.4-py3-none-any.whl", hash = "sha256:9943707519e4add1115f44c2bc244f782c0249876bf51b6599fee1ffbedd685c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/certifi/2026.2.25/certifi-2026.2.25-py3-none-any.whl", hash = "sha256:027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa" },
 ]
 
 [[package]]
@@ -170,59 +177,75 @@ wheels = [
 
 [[package]]
 name = "charset-normalizer"
-version = "3.4.4"
+version = "3.4.6"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4.tar.gz", hash = "sha256:94537985111c35f28720e43603b8e7b43a6ecfb2ce1d3058bbe955b73404e21a" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6.tar.gz", hash = "sha256:1ae6b62897110aa7c79ea2f5dd38d1abca6db663687c0b1ad9aed6f6bae3d9d6" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:0a98e6759f854bd25a58a73fa88833fba3b7c491169f86ce1180c948ab3fd394" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b5b290ccc2a263e8d185130284f8501e3e36c5e02750fc6b6bdeb2e9e96f1e25" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:74bb723680f9f7a6234dcf67aea57e708ec1fbdf5699fb91dfd6f511b0a320ef" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:f1e34719c6ed0b92f418c7c780480b26b5d9c50349e9a9af7d76bf757530350d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:2437418e20515acec67d86e12bf70056a33abdacb5cb1655042f6538d6b085a8" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:11d694519d7f29d6cd09f6ac70028dba10f92f6cdd059096db198c283794ac86" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:ac1c4a689edcc530fc9d9aa11f5774b9e2f33f9a0c6a57864e90908f5208d30a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:21d142cc6c0ec30d2efee5068ca36c128a30b0f2c53c1c07bd78cb6bc1d3be5f" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:5dbe56a36425d26d6cfb40ce79c314a2e4dd6211d51d6d2191c00bed34f354cc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:5bfbb1b9acf3334612667b61bd3002196fe2a1eb4dd74d247e0f2a4d50ec9bbf" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:d055ec1e26e441f6187acf818b73564e6e6282709e9bcb5b63f5b23068356a15" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_s390x.whl", hash = "sha256:af2d8c67d8e573d6de5bc30cdb27e9b95e49115cd9baad5ddbd1a6207aaa82a9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:780236ac706e66881f3b7f2f32dfe90507a09e67d1d454c762cf642e6e1586e0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-win32.whl", hash = "sha256:5833d2c39d8896e4e19b689ffc198f08ea58116bee26dea51e362ecc7cd3ed26" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-win_amd64.whl", hash = "sha256:a79cfe37875f822425b89a82333404539ae63dbdddf97f84dcbc3d339aae9525" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp312-cp312-win_arm64.whl", hash = "sha256:376bec83a63b8021bb5c8ea75e21c4ccb86e7e45ca4eb81146091b56599b80c3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:e1f185f86a6f3403aa2420e815904c67b2f9ebc443f045edd0de921108345794" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6b39f987ae8ccdf0d2642338faf2abb1862340facc796048b604ef14919e55ed" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:3162d5d8ce1bb98dd51af660f2121c55d0fa541b46dff7bb9b9f86ea1d87de72" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:81d5eb2a312700f4ecaa977a8235b634ce853200e828fbadf3a9c50bab278328" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:5bd2293095d766545ec1a8f612559f6b40abc0eb18bb2f5d1171872d34036ede" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a8a8b89589086a25749f471e6a900d3f662d1d3b6e2e59dcecf787b1cc3a1894" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:bc7637e2f80d8530ee4a78e878bce464f70087ce73cf7c1caf142416923b98f1" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:f8bf04158c6b607d747e93949aa60618b61312fe647a6369f88ce2ff16043490" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_armv7l.whl", hash = "sha256:554af85e960429cf30784dd47447d5125aaa3b99a6f0683589dbd27e2f45da44" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:74018750915ee7ad843a774364e13a3db91682f26142baddf775342c3f5b1133" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:c0463276121fdee9c49b98908b3a89c39be45d86d1dbaa22957e38f6321d4ce3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_s390x.whl", hash = "sha256:362d61fd13843997c1c446760ef36f240cf81d3ebf74ac62652aebaf7838561e" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:9a26f18905b8dd5d685d6d07b0cdf98a79f3c7a918906af7cc143ea2e164c8bc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-win32.whl", hash = "sha256:9b35f4c90079ff2e2edc5b26c0c77925e5d2d255c42c74fdb70fb49b172726ac" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-win_amd64.whl", hash = "sha256:b435cba5f4f750aa6c0a0d92c541fb79f69a387c91e61f1795227e4ed9cece14" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp313-cp313-win_arm64.whl", hash = "sha256:542d2cee80be6f80247095cc36c418f7bddd14f4a6de45af91dfad36d817bba2" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-macosx_10_13_universal2.whl", hash = "sha256:da3326d9e65ef63a817ecbcc0df6e94463713b754fe293eaa03da99befb9a5bd" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8af65f14dc14a79b924524b1e7fffe304517b2bff5a58bf64f30b98bbc5079eb" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:74664978bb272435107de04e36db5a9735e78232b85b77d45cfb38f758efd33e" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:752944c7ffbfdd10c074dc58ec2d5a8a4cd9493b314d367c14d24c17684ddd14" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:d1f13550535ad8cff21b8d757a3257963e951d96e20ec82ab44bc64aeb62a191" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ecaae4149d99b1c9e7b88bb03e3221956f68fd6d50be2ef061b2381b61d20838" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:cb6254dc36b47a990e59e1068afacdcd02958bdcce30bb50cc1700a8b9d624a6" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:c8ae8a0f02f57a6e61203a31428fa1d677cbe50c93622b4149d5c0f319c1d19e" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_armv7l.whl", hash = "sha256:47cc91b2f4dd2833fddaedd2893006b0106129d4b94fdb6af1f4ce5a9965577c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_ppc64le.whl", hash = "sha256:82004af6c302b5d3ab2cfc4cc5f29db16123b1a8417f2e25f9066f91d4411090" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:2b7d8f6c26245217bd2ad053761201e9f9680f8ce52f0fcd8d0755aeae5b2152" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_s390x.whl", hash = "sha256:799a7a5e4fb2d5898c60b640fd4981d6a25f1c11790935a44ce38c54e985f828" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:99ae2cffebb06e6c22bdc25801d7b30f503cc87dbd283479e7b606f70aff57ec" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-win32.whl", hash = "sha256:f9d332f8c2a2fcbffe1378594431458ddbef721c1769d78e2cbc06280d8155f9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-win_amd64.whl", hash = "sha256:8a6562c3700cce886c5be75ade4a5db4214fda19fede41d9792d100288d8f94c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-cp314-cp314-win_arm64.whl", hash = "sha256:de00632ca48df9daf77a2c65a484531649261ec9f25489917f09e455cb09ddb2" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.4/charset_normalizer-3.4.4-py3-none-any.whl", hash = "sha256:7a32c560861a02ff789ad905a2fe94e3f840803362c84fecf1851cb4cf3dc37f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:2ef7fedc7a6ecbe99969cd09632516738a97eeb8bd7258bf8a0f23114c057dab" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a4ea868bc28109052790eb2b52a9ab33f3aa7adc02f96673526ff47419490e21" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:836ab36280f21fc1a03c99cd05c6b7af70d2697e374c7af0b61ed271401a72a2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:f1ce721c8a7dfec21fcbdfe04e8f68174183cf4e8188e0645e92aa23985c57ff" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0e28d62a8fc7a1fa411c43bd65e346f3bce9716dc51b897fbe930c5987b402d5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux_2_31_armv7l.whl", hash = "sha256:530d548084c4a9f7a16ed4a294d459b4f229db50df689bfe92027452452943a0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:30f445ae60aad5e1f8bdbb3108e39f6fbc09f4ea16c815c66578878325f8f15a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:ac2393c73378fea4e52aa56285a3d64be50f1a12395afef9cce47772f60334c2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:90ca27cd8da8118b18a52d5f547859cc1f8354a00cd1e8e5120df3e30d6279e5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:8e5a94886bedca0f9b78fecd6afb6629142fd2605aa70a125d49f4edc6037ee6" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:695f5c2823691a25f17bc5d5ffe79fa90972cc34b002ac6c843bb8a1720e950d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_s390x.whl", hash = "sha256:231d4da14bcd9301310faf492051bee27df11f2bc7549bc0bb41fef11b82daa2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:a056d1ad2633548ca18ffa2f85c202cfb48b68615129143915b8dc72a806a923" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-win32.whl", hash = "sha256:c2274ca724536f173122f36c98ce188fd24ce3dad886ec2b7af859518ce008a4" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-win_amd64.whl", hash = "sha256:c8ae56368f8cc97c7e40a7ee18e1cedaf8e780cd8bc5ed5ac8b81f238614facb" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp312-cp312-win_arm64.whl", hash = "sha256:899d28f422116b08be5118ef350c292b36fc15ec2daeb9ea987c89281c7bb5c4" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:11afb56037cbc4b1555a34dd69151e8e069bee82e613a73bef6e714ce733585f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:423fb7e748a08f854a08a222b983f4df1912b1daedce51a72bd24fe8f26a1843" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:d73beaac5e90173ac3deb9928a74763a6d230f494e4bfb422c217a0ad8e629bf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:d60377dce4511655582e300dc1e5a5f24ba0cb229005a1d5c8d0cb72bb758ab8" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:530e8cebeea0d76bdcf93357aa5e41336f48c3dc709ac52da2bb167c5b8271d9" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux_2_31_armv7l.whl", hash = "sha256:a26611d9987b230566f24a0a125f17fe0de6a6aff9f25c9f564aaa2721a5fb88" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:34315ff4fc374b285ad7f4a0bf7dcbfe769e1b104230d40f49f700d4ab6bbd84" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:5f8ddd609f9e1af8c7bd6e2aca279c931aefecd148a14402d4e368f3171769fd" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_armv7l.whl", hash = "sha256:80d0a5615143c0b3225e5e3ef22c8d5d51f3f72ce0ea6fb84c943546c7b25b6c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:92734d4d8d187a354a556626c221cd1a892a4e0802ccb2af432a1d85ec012194" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:613f19aa6e082cf96e17e3ffd89383343d0d589abda756b7764cf78361fd41dc" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_s390x.whl", hash = "sha256:2b1a63e8224e401cafe7739f77efd3f9e7f5f2026bda4aead8e59afab537784f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:6cceb5473417d28edd20c6c984ab6fee6c6267d38d906823ebfe20b03d607dc2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-win32.whl", hash = "sha256:d7de2637729c67d67cf87614b566626057e95c303bc0a55ffe391f5205e7003d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-win_amd64.whl", hash = "sha256:572d7c822caf521f0525ba1bce1a622a0b85cf47ffbdae6c9c19e3b5ac3c4389" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp313-cp313-win_arm64.whl", hash = "sha256:a4474d924a47185a06411e0064b803c68be044be2d60e50e8bddcc2649957c1f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:9cc6e6d9e571d2f863fa77700701dae73ed5f78881efc8b3f9a4398772ff53e8" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ef5960d965e67165d75b7c7ffc60a83ec5abfc5c11b764ec13ea54fbef8b4421" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:b3694e3f87f8ac7ce279d4355645b3c878d24d1424581b46282f24b92f5a4ae2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:5d11595abf8dd942a77883a39d81433739b287b6aa71620f15164f8096221b30" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7bda6eebafd42133efdca535b04ccb338ab29467b3f7bf79569883676fc628db" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux_2_31_armv7l.whl", hash = "sha256:bbc8c8650c6e51041ad1be191742b8b421d05bbd3410f43fa2a00c8db87678e8" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:22c6f0c2fbc31e76c3b8a86fba1a56eda6166e238c29cdd3d14befdb4a4e4815" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:7edbed096e4a4798710ed6bc75dcaa2a21b68b6c356553ac4823c3658d53743a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_armv7l.whl", hash = "sha256:7f9019c9cb613f084481bd6a100b12e1547cf2efe362d873c2e31e4035a6fa43" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_ppc64le.whl", hash = "sha256:58c948d0d086229efc484fe2f30c2d382c86720f55cd9bc33591774348ad44e0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:419a9d91bd238052642a51938af8ac05da5b3343becde08d5cdeab9046df9ee1" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_s390x.whl", hash = "sha256:5273b9f0b5835ff0350c0828faea623c68bfa65b792720c453e22b25cc72930f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:0e901eb1049fdb80f5bd11ed5ea1e498ec423102f7a9b9e4645d5b8204ff2815" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-win32.whl", hash = "sha256:b4ff1d35e8c5bd078be89349b6f3a845128e685e751b6ea1169cf2160b344c4d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-win_amd64.whl", hash = "sha256:74119174722c4349af9708993118581686f343adc1c8c9c007d59be90d077f3f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314-win_arm64.whl", hash = "sha256:e5bcc1a1ae744e0bb59641171ae53743760130600da8db48cbb6e4918e186e4e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:ad8faf8df23f0378c6d527d8b0b15ea4a2e23c89376877c598c4870d1b2c7866" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:f5ea69428fa1b49573eef0cc44a1d43bebd45ad0c611eb7d7eac760c7ae771bc" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:06a7e86163334edfc5d20fe104db92fcd666e5a5df0977cb5680a506fe26cc8e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:e1f6e2f00a6b8edb562826e4632e26d063ac10307e80f7461f7de3ad8ef3f077" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:95b52c68d64c1878818687a473a10547b3292e82b6f6fe483808fb1468e2f52f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux_2_31_armv7l.whl", hash = "sha256:7504e9b7dc05f99a9bbb4525c67a2c155073b44d720470a148b34166a69c054e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:172985e4ff804a7ad08eebec0a1640ece87ba5041d565fff23c8f99c1f389484" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:4be9f4830ba8741527693848403e2c457c16e499100963ec711b1c6f2049b7c7" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_armv7l.whl", hash = "sha256:79090741d842f564b1b2827c0b82d846405b744d31e84f18d7a7b41c20e473ff" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_ppc64le.whl", hash = "sha256:87725cfb1a4f1f8c2fc9890ae2f42094120f4b44db9360be5d99a4c6b0e03a9e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_riscv64.whl", hash = "sha256:fcce033e4021347d80ed9c66dcf1e7b1546319834b74445f561d2e2221de5659" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_s390x.whl", hash = "sha256:ca0276464d148c72defa8bb4390cce01b4a0e425f3b50d1435aa6d7a18107602" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:197c1a244a274bb016dd8b79204850144ef77fe81c5b797dc389327adb552407" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-win32.whl", hash = "sha256:2a24157fa36980478dd1770b585c0f30d19e18f4fb0c47c13aa568f871718579" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-win_amd64.whl", hash = "sha256:cd5e2801c89992ed8c0a3f0293ae83c159a60d9a5d685005383ef4caca77f2c4" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-cp314-cp314t-win_arm64.whl", hash = "sha256:47955475ac79cc504ef2704b192364e51d0d473ad452caedd0002605f780101c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/charset-normalizer/3.4.6/charset_normalizer-3.4.6-py3-none-any.whl", hash = "sha256:947cf925bc916d90adba35a64c82aace04fa39b46b52d4630ece166655905a69" },
 ]
 
 [[package]]
@@ -248,86 +271,86 @@ wheels = [
 
 [[package]]
 name = "coverage"
-version = "7.13.4"
+version = "7.13.5"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4.tar.gz", hash = "sha256:e5c8f6ed1e61a8b2dcdf31eb0b9bbf0130750ca79c1c49eb898e2ad86f5ccc91" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5.tar.gz", hash = "sha256:c81f6515c4c40141f83f502b07bbfa5c240ba25bbe73da7b33f1e5b6120ff179" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:02231499b08dabbe2b96612993e5fc34217cdae907a51b906ac7fca8027a4459" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:40aa8808140e55dc022b15d8aa7f651b6b3d68b365ea0398f1441e0b04d859c3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:5b856a8ccf749480024ff3bd7310adaef57bf31fd17e1bfc404b7940b6986634" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:2c048ea43875fbf8b45d476ad79f179809c590ec7b79e2035c662e7afa3192e3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b7b38448866e83176e28086674fe7368ab8590e4610fb662b44e345b86d63ffa" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:de6defc1c9badbf8b9e67ae90fd00519186d6ab64e5cc5f3d21359c2a9b2c1d3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:7eda778067ad7ffccd23ecffce537dface96212576a07924cbf0d8799d2ded5a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:e87f6c587c3f34356c3759f0420693e35e7eb0e2e41e4c011cb6ec6ecbbf1db7" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:8248977c2e33aecb2ced42fef99f2d319e9904a36e55a8a68b69207fb7e43edc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:25381386e80ae727608e662474db537d4df1ecd42379b5ba33c84633a2b36d47" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:ee756f00726693e5ba94d6df2bdfd64d4852d23b09bb0bc700e3b30e6f333985" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:fdfc1e28e7c7cdce44985b3043bc13bbd9c747520f94a4d7164af8260b3d91f0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-win32.whl", hash = "sha256:01d4cbc3c283a17fc1e42d614a119f7f438eabb593391283adca8dc86eff1246" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-win_amd64.whl", hash = "sha256:9401ebc7ef522f01d01d45532c68c5ac40fb27113019b6b7d8b208f6e9baa126" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp312-cp312-win_arm64.whl", hash = "sha256:b1ec7b6b6e93255f952e27ab58fbc68dcc468844b16ecbee881aeb29b6ab4d8d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:b66a2da594b6068b48b2692f043f35d4d3693fb639d5ea8b39533c2ad9ac3ab9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:3599eb3992d814d23b35c536c28df1a882caa950f8f507cef23d1cbf334995ac" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:93550784d9281e374fb5a12bf1324cc8a963fd63b2d2f223503ef0fd4aa339ea" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:b720ce6a88a2755f7c697c23268ddc47a571b88052e6b155224347389fdf6a3b" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7b322db1284a2ed3aa28ffd8ebe3db91c929b7a333c0820abec3d838ef5b3525" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:f4594c67d8a7c89cf922d9df0438c7c7bb022ad506eddb0fdb2863359ff78242" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:53d133df809c743eb8bce33b24bcababb371f4441340578cd406e084d94a6148" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:76451d1978b95ba6507a039090ba076105c87cc76fc3efd5d35d72093964d49a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:7f57b33491e281e962021de110b451ab8a24182589be17e12a22c79047935e23" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:1731dc33dc276dafc410a885cbf5992f1ff171393e48a21453b78727d090de80" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:bd60d4fe2f6fa7dff9223ca1bbc9f05d2b6697bc5961072e5d3b952d46e1b1ea" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:9181a3ccead280b828fae232df12b16652702b49d41e99d657f46cc7b1f6ec7a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-win32.whl", hash = "sha256:f53d492307962561ac7de4cd1de3e363589b000ab69617c6156a16ba7237998d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-win_amd64.whl", hash = "sha256:e6f70dec1cc557e52df5306d051ef56003f74d56e9c4dd7ddb07e07ef32a84dd" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313-win_arm64.whl", hash = "sha256:fb07dc5da7e849e2ad31a5d74e9bece81f30ecf5a42909d0a695f8bd1874d6af" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:40d74da8e6c4b9ac18b15331c4b5ebc35a17069410cad462ad4f40dcd2d50c0d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:4223b4230a376138939a9173f1bdd6521994f2aff8047fae100d6d94d50c5a12" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:1d4be36a5114c499f9f1f9195e95ebf979460dbe2d88e6816ea202010ba1c34b" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:200dea7d1e8095cc6e98cdabe3fd1d21ab17d3cee6dab00cadbb2fe35d9c15b9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b8eb931ee8e6d8243e253e5ed7336deea6904369d2fd8ae6e43f68abbf167092" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:75eab1ebe4f2f64d9509b984f9314d4aa788540368218b858dad56dc8f3e5eb9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:c35eb28c1d085eb7d8c9b3296567a1bebe03ce72962e932431b9a61f28facf26" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:eb88b316ec33760714a4720feb2816a3a59180fd58c1985012054fa7aebee4c2" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-musllinux_1_2_i686.whl", hash = "sha256:7d41eead3cc673cbd38a4417deb7fd0b4ca26954ff7dc6078e33f6ff97bed940" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-musllinux_1_2_ppc64le.whl", hash = "sha256:fb26a934946a6afe0e326aebe0730cdff393a8bc0bbb65a2f41e30feddca399c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-musllinux_1_2_riscv64.whl", hash = "sha256:dae88bc0fc77edaa65c14be099bd57ee140cf507e6bfdeea7938457ab387efb0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:845f352911777a8e722bfce168958214951e07e47e5d5d9744109fa5fe77f79b" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-win32.whl", hash = "sha256:2fa8d5f8de70688a28240de9e139fa16b153cc3cbb01c5f16d88d6505ebdadf9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-win_amd64.whl", hash = "sha256:9351229c8c8407645840edcc277f4a2d44814d1bc34a2128c11c2a031d45a5dd" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp313-cp313t-win_arm64.whl", hash = "sha256:30b8d0512f2dc8c8747557e8fb459d6176a2c9e5731e2b74d311c03b78451997" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:300deaee342f90696ed186e3a00c71b5b3d27bffe9e827677954f4ee56969601" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:29e3220258d682b6226a9b0925bc563ed9a1ebcff3cad30f043eceea7eaf2689" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:391ee8f19bef69210978363ca930f7328081c6a0152f1166c91f0b5fdd2a773c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:0dd7ab8278f0d58a0128ba2fca25824321f05d059c1441800e934ff2efa52129" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:78cdf0d578b15148b009ccf18c686aa4f719d887e76e6b40c38ffb61d264a552" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:48685fee12c2eb3b27c62f2658e7ea21e9c3239cba5a8a242801a0a3f6a8c62a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:4e83efc079eb39480e6346a15a1bcb3e9b04759c5202d157e1dd4303cd619356" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:ecae9737b72408d6a950f7e525f30aca12d4bd8dd95e37342e5beb3a2a8c4f71" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-musllinux_1_2_i686.whl", hash = "sha256:ae4578f8528569d3cf303fef2ea569c7f4c4059a38c8667ccef15c6e1f118aa5" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-musllinux_1_2_ppc64le.whl", hash = "sha256:6fdef321fdfbb30a197efa02d48fcd9981f0d8ad2ae8903ac318adc653f5df98" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:2b0f6ccf3dbe577170bebfce1318707d0e8c3650003cb4b3a9dd744575daa8b5" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:75fcd519f2a5765db3f0e391eb3b7d150cce1a771bf4c9f861aeab86c767a3c0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-win32.whl", hash = "sha256:8e798c266c378da2bd819b0677df41ab46d78065fb2a399558f3f6cae78b2fbb" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-win_amd64.whl", hash = "sha256:245e37f664d89861cf2329c9afa2c1fe9e6d4e1a09d872c947e70718aeeac505" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314-win_arm64.whl", hash = "sha256:ad27098a189e5838900ce4c2a99f2fe42a0bf0c2093c17c69b45a71579e8d4a2" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:85480adfb35ffc32d40918aad81b89c69c9cc5661a9b8a81476d3e645321a056" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:79be69cf7f3bf9b0deeeb062eab7ac7f36cd4cc4c4dd694bd28921ba4d8596cc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:caa421e2684e382c5d8973ac55e4f36bed6821a9bad5c953494de960c74595c9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:14375934243ee05f56c45393fe2ce81fe5cc503c07cee2bdf1725fb8bef3ffaf" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:25a41c3104d08edb094d9db0d905ca54d0cd41c928bb6be3c4c799a54753af55" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:6f01afcff62bf9a08fb32b2c1d6e924236c0383c02c790732b6537269e466a72" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:eb9078108fbf0bcdde37c3f4779303673c2fa1fe8f7956e68d447d0dd426d38a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:0e086334e8537ddd17e5f16a344777c1ab8194986ec533711cbe6c41cde841b6" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-musllinux_1_2_i686.whl", hash = "sha256:725d985c5ab621268b2edb8e50dfe57633dc69bda071abc470fed55a14935fd3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-musllinux_1_2_ppc64le.whl", hash = "sha256:3c06f0f1337c667b971ca2f975523347e63ec5e500b9aa5882d91931cd3ef750" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-musllinux_1_2_riscv64.whl", hash = "sha256:590c0ed4bf8e85f745e6b805b2e1c457b2e33d5255dd9729743165253bc9ad39" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:eb30bf180de3f632cd043322dad5751390e5385108b2807368997d1a92a509d0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-win32.whl", hash = "sha256:c4240e7eded42d131a2d2c4dec70374b781b043ddc79a9de4d55ca71f8e98aea" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-win_amd64.whl", hash = "sha256:4c7d3cc01e7350f2f0f6f7036caaf5673fb56b6998889ccfe9e1c1fe75a9c932" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-cp314-cp314t-win_arm64.whl", hash = "sha256:23e3f687cf945070d1c90f85db66d11e3025665d8dafa831301a0e0038f3db9b" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.4/coverage-7.13.4-py3-none-any.whl", hash = "sha256:1af1641e57cf7ba1bd67d677c9abdbcd6cc2ab7da3bca7fa1e2b7e50e65f2ad0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:460cf0114c5016fa841214ff5564aa4864f11948da9440bc97e21ad1f4ba1e01" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:0e223ce4b4ed47f065bfb123687686512e37629be25cc63728557ae7db261422" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:6e3370441f4513c6252bf042b9c36d22491142385049243253c7e48398a15a9f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:03ccc709a17a1de074fb1d11f217342fb0d2b1582ed544f554fc9fc3f07e95f5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3f4818d065964db3c1c66dc0fbdac5ac692ecbc875555e13374fdbe7eedb4376" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:012d5319e66e9d5a218834642d6c35d265515a62f01157a45bcc036ecf947256" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:8dd02af98971bdb956363e4827d34425cb3df19ee550ef92855b0acb9c7ce51c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:f08fd75c50a760c7eb068ae823777268daaf16a80b918fa58eea888f8e3919f5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:843ea8643cf967d1ac7e8ecd4bb00c99135adf4816c0c0593fdcc47b597fcf09" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:9d44d7aa963820b1b971dbecd90bfe5fe8f81cff79787eb6cca15750bd2f79b9" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:7132bed4bd7b836200c591410ae7d97bf7ae8be6fc87d160b2bd881df929e7bf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:a698e363641b98843c517817db75373c83254781426e94ada3197cabbc2c919c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-win32.whl", hash = "sha256:bdba0a6b8812e8c7df002d908a9a2ea3c36e92611b5708633c50869e6d922fdf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-win_amd64.whl", hash = "sha256:d2c87e0c473a10bffe991502eac389220533024c8082ec1ce849f4218dded810" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp312-cp312-win_arm64.whl", hash = "sha256:bf69236a9a81bdca3bff53796237aab096cdbf8d78a66ad61e992d9dac7eb2de" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:5ec4af212df513e399cf11610cc27063f1586419e814755ab362e50a85ea69c1" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:941617e518602e2d64942c88ec8499f7fbd49d3f6c4327d3a71d43a1973032f3" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:da305e9937617ee95c2e39d8ff9f040e0487cbf1ac174f777ed5eddd7a7c1f26" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:78e696e1cc714e57e8b25760b33a8b1026b7048d270140d25dafe1b0a1ee05a3" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:02ca0eed225b2ff301c474aeeeae27d26e2537942aa0f87491d3e147e784a82b" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:04690832cbea4e4663d9149e05dba142546ca05cb1848816760e7f58285c970a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:0590e44dd2745c696a778f7bab6aa95256de2cbc8b8cff4f7db8ff09813d6969" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:d7cfad2d6d81dd298ab6b89fe72c3b7b05ec7544bdda3b707ddaecff8d25c161" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:e092b9499de38ae0fbfbc603a74660eb6ff3e869e507b50d85a13b6db9863e15" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:48c39bc4a04d983a54a705a6389512883d4a3b9862991b3617d547940e9f52b1" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:2d3807015f138ffea1ed9afeeb8624fd781703f2858b62a8dd8da5a0994c57b6" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:ee2aa19e03161671ec964004fb74b2257805d9710bf14a5c704558b9d8dbaf17" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-win32.whl", hash = "sha256:ce1998c0483007608c8382f4ff50164bfc5bd07a2246dd272aa4043b75e61e85" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-win_amd64.whl", hash = "sha256:631efb83f01569670a5e866ceb80fe483e7c159fac6f167e6571522636104a0b" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313-win_arm64.whl", hash = "sha256:f4cd16206ad171cbc2470dbea9103cf9a7607d5fe8c242fdf1edf36174020664" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:0428cbef5783ad91fe240f673cc1f76b25e74bbfe1a13115e4aa30d3f538162d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:e0b216a19534b2427cc201a26c25da4a48633f29a487c61258643e89d28200c0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:972a9cd27894afe4bc2b1480107054e062df08e671df7c2f18c205e805ccd806" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:4b59148601efcd2bac8c4dbf1f0ad6391693ccf7a74b8205781751637076aee3" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:505d7083c8b0c87a8fa8c07370c285847c1f77739b22e299ad75a6af6c32c5c9" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:60365289c3741e4db327e7baff2a4aaacf22f788e80fa4683393891b70a89fbd" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:1b88c69c8ef5d4b6fe7dea66d6636056a0f6a7527c440e890cf9259011f5e606" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:5b13955d31d1633cf9376908089b7cebe7d15ddad7aeaabcbe969a595a97e95e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-musllinux_1_2_i686.whl", hash = "sha256:f70c9ab2595c56f81a89620e22899eea8b212a4041bd728ac6f4a28bf5d3ddd0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-musllinux_1_2_ppc64le.whl", hash = "sha256:084b84a8c63e8d6fc7e3931b316a9bcafca1458d753c539db82d31ed20091a87" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-musllinux_1_2_riscv64.whl", hash = "sha256:ad14385487393e386e2ea988b09d62dd42c397662ac2dabc3832d71253eee479" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:7f2c47b36fe7709a6e83bfadf4eefb90bd25fbe4014d715224c4316f808e59a2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-win32.whl", hash = "sha256:67e9bc5449801fad0e5dff329499fb090ba4c5800b86805c80617b4e29809b2a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-win_amd64.whl", hash = "sha256:da86cdcf10d2519e10cabb8ac2de03da1bcb6e4853790b7fbd48523332e3a819" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp313-cp313t-win_arm64.whl", hash = "sha256:0ecf12ecb326fe2c339d93fc131816f3a7367d223db37817208905c89bded911" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:fbabfaceaeb587e16f7008f7795cd80d20ec548dc7f94fbb0d4ec2e038ce563f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:9bb2a28101a443669a423b665939381084412b81c3f8c0fcfbac57f4e30b5b8e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:bd3a2fbc1c6cccb3c5106140d87cc6a8715110373ef42b63cf5aea29df8c217a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:6c36ddb64ed9d7e496028d1d00dfec3e428e0aabf4006583bb1839958d280510" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:380e8e9084d8eb38db3a9176a1a4f3c0082c3806fa0dc882d1d87abc3c789247" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:e808af52a0513762df4d945ea164a24b37f2f518cbe97e03deaa0ee66139b4d6" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:e301d30dd7e95ae068671d746ba8c34e945a82682e62918e41b2679acd2051a0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:800bc829053c80d240a687ceeb927a94fd108bbdc68dfbe505d0d75ab578a882" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-musllinux_1_2_i686.whl", hash = "sha256:0b67af5492adb31940ee418a5a655c28e48165da5afab8c7fa6fd72a142f8740" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-musllinux_1_2_ppc64le.whl", hash = "sha256:c9136ff29c3a91e25b1d1552b5308e53a1e0653a23e53b6366d7c2dcbbaf8a16" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-musllinux_1_2_riscv64.whl", hash = "sha256:cff784eef7f0b8f6cb28804fbddcfa99f89efe4cc35fb5627e3ac58f91ed3ac0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:68a4953be99b17ac3c23b6efbc8a38330d99680c9458927491d18700ef23ded0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-win32.whl", hash = "sha256:35a31f2b1578185fbe6aa2e74cea1b1d0bbf4c552774247d9160d29b80ed56cc" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-win_amd64.whl", hash = "sha256:2aa055ae1857258f9e0045be26a6d62bdb47a72448b62d7b55f4820f361a2633" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314-win_arm64.whl", hash = "sha256:1b11eef33edeae9d142f9b4358edb76273b3bfd30bc3df9a4f95d0e49caf94e8" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:10a0c37f0b646eaff7cce1874c31d1f1ccb297688d4c747291f4f4c70741cc8b" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:b5db73ba3c41c7008037fa731ad5459fc3944cb7452fc0aa9f822ad3533c583c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:750db93a81e3e5a9831b534be7b1229df848b2e125a604fe6651e48aa070e5f9" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:9ddb4f4a5479f2539644be484da179b653273bca1a323947d48ab107b3ed1f29" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d8a7a2049c14f413163e2bdabd37e41179b1d1ccb10ffc6ccc4b7a718429c607" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:e1c85e0b6c05c592ea6d8768a66a254bfb3874b53774b12d4c89c481eb78cb90" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:777c4d1eff1b67876139d24288aaf1817f6c03d6bae9c5cc8d27b83bcfe38fe3" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:6697e29b93707167687543480a40f0db8f356e86d9f67ddf2e37e2dfd91a9dab" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-musllinux_1_2_i686.whl", hash = "sha256:8fdf453a942c3e4d99bd80088141c4c6960bb232c409d9c3558e2dbaa3998562" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-musllinux_1_2_ppc64le.whl", hash = "sha256:32ca0c0114c9834a43f045a87dcebd69d108d8ffb666957ea65aa132f50332e2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-musllinux_1_2_riscv64.whl", hash = "sha256:8769751c10f339021e2638cd354e13adeac54004d1941119b2c96fe5276d45ea" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:cec2d83125531bd153175354055cdb7a09987af08a9430bd173c937c6d0fba2a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-win32.whl", hash = "sha256:0cd9ed7a8b181775459296e402ca4fb27db1279740a24e93b3b41942ebe4b215" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-win_amd64.whl", hash = "sha256:301e3b7dfefecaca37c9f1aa6f0049b7d4ab8dd933742b607765d757aca77d43" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-cp314-cp314t-win_arm64.whl", hash = "sha256:9dacc2ad679b292709e0f5fc1ac74a6d4d5562e424058962c7bb0c658ad25e45" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/coverage/7.13.5/coverage-7.13.5-py3-none-any.whl", hash = "sha256:34b02417cf070e173989b3db962f7ed56d2f644307b2cf9d5a0f258e13084a61" },
 ]
 
 [[package]]
@@ -385,7 +408,7 @@ wheels = [
 
 [[package]]
 name = "cyclopts"
-version = "4.6.0"
+version = "4.10.1"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "attrs" },
@@ -393,9 +416,9 @@ dependencies = [
     { name = "rich" },
     { name = "rich-rst" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cyclopts/4.6.0/cyclopts-4.6.0.tar.gz", hash = "sha256:483c4704b953ea6da742e8de15972f405d2e748d19a848a4d61595e8e5360ee5" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cyclopts/4.10.1/cyclopts-4.10.1.tar.gz", hash = "sha256:ad4e4bb90576412d32276b14a76f55d43353753d16217f2c3cd5bdceba7f15a0" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cyclopts/4.6.0/cyclopts-4.6.0-py3-none-any.whl", hash = "sha256:0a891cb55bfd79a3cdce024db8987b33316aba11071e5258c21ac12a640ba9f2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/cyclopts/4.10.1/cyclopts-4.10.1-py3-none-any.whl", hash = "sha256:35f37257139380a386d9fe4475e1e7c87ca7795765ef4f31abba579fcfcb6ecd" },
 ]
 
 [[package]]
@@ -489,12 +512,47 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "3.0.2"
+version = "3.3.1"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
+    { name = "fastmcp-slim", extra = ["client", "server"] },
+]
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp/3.3.1/fastmcp-3.3.1.tar.gz", hash = "sha256:979362ea557de42a5f40342563c7e4b236bcc8e7cd192715f50030695d1a71cd" }
+wheels = [
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp/3.3.1/fastmcp-3.3.1-py3-none-any.whl", hash = "sha256:862440c5c4d281363a5995eee59d77f0f7cac1f18869038729cecf03b02fc522" },
+]
+
+[[package]]
+name = "fastmcp-slim"
+version = "3.3.1"
+source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
+dependencies = [
+    { name = "platformdirs" },
+    { name = "pydantic", extra = ["email"] },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp-slim/3.3.1/fastmcp_slim-3.3.1.tar.gz", hash = "sha256:0957835fc59452e143ab2f4b7836d2d2df9b2d9958408edc79ba8b56232b2a88" }
+wheels = [
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp-slim/3.3.1/fastmcp_slim-3.3.1-py3-none-any.whl", hash = "sha256:6cf1c2d77e3adb0d409d6825ed6b0b2a999062973e00b8eea03bd48bf9b4c043" },
+]
+
+[package.optional-dependencies]
+client = [
+    { name = "authlib" },
+    { name = "exceptiongroup" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "opentelemetry-api" },
+    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"] },
+]
+server = [
     { name = "authlib" },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
+    { name = "griffelib" },
     { name = "httpx" },
     { name = "jsonref" },
     { name = "jsonschema-path" },
@@ -502,20 +560,23 @@ dependencies = [
     { name = "openapi-pydantic" },
     { name = "opentelemetry-api" },
     { name = "packaging" },
-    { name = "platformdirs" },
     { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"] },
-    { name = "pydantic", extra = ["email"] },
     { name = "pyperclip" },
-    { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
-    { name = "rich" },
+    { name = "uncalled-for" },
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp/3.0.2/fastmcp-3.0.2.tar.gz", hash = "sha256:6bd73b4a3bab773ee6932df5249dcbcd78ed18365ed0aeeb97bb42702a7198d7" }
+
+[[package]]
+name = "griffelib"
+version = "2.0.2"
+source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/griffelib/2.0.2/griffelib-2.0.2.tar.gz", hash = "sha256:3cf20b3bc470e83763ffbf236e0076b1211bac1bc67de13daf494640f2de707e" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/fastmcp/3.0.2/fastmcp-3.0.2-py3-none-any.whl", hash = "sha256:f513d80d4b30b54749fe8950116b1aab843f3c293f5cb971fc8665cb48dbb028" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/griffelib/2.0.2/griffelib-2.0.2-py3-none-any.whl", hash = "sha256:925c857658fb1ba40c0772c37acbc2ab650bd794d9c1b9726922e36ea4117ea1" },
 ]
 
 [[package]]
@@ -617,11 +678,11 @@ wheels = [
 
 [[package]]
 name = "jaraco-context"
-version = "6.1.0"
+version = "6.1.2"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jaraco-context/6.1.0/jaraco_context-6.1.0.tar.gz", hash = "sha256:129a341b0a85a7db7879e22acd66902fda67882db771754574338898b2d5d86f" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jaraco-context/6.1.2/jaraco_context-6.1.2.tar.gz", hash = "sha256:f1a6c9d391e661cc5b8d39861ff077a7dc24dc23833ccee564b234b81c82dfe3" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jaraco-context/6.1.0/jaraco_context-6.1.0-py3-none-any.whl", hash = "sha256:a43b5ed85815223d0d3cfdb6d7ca0d2bc8946f28f30b6f3216bda070f68badda" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jaraco-context/6.1.2/jaraco_context-6.1.2-py3-none-any.whl", hash = "sha256:bf8150b79a2d5d91ae48629d8b427a8f7ba0e1097dd6202a9059f29a36379535" },
 ]
 
 [[package]]
@@ -643,6 +704,18 @@ source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jeepney/0.9.0/jeepney-0.9.0.tar.gz", hash = "sha256:cf0e9e845622b81e4a28df94c40345400256ec608d0e55bb8a3feaa9163f5732" }
 wheels = [
     { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jeepney/0.9.0/jeepney-0.9.0-py3-none-any.whl", hash = "sha256:97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683" },
+]
+
+[[package]]
+name = "joserfc"
+version = "1.6.5"
+source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/joserfc/1.6.5/joserfc-1.6.5.tar.gz", hash = "sha256:1482a7db78fb4602e44ed89e51b599d052e091288c7c532c5b694e20149dec48" }
+wheels = [
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/joserfc/1.6.5/joserfc-1.6.5-py3-none-any.whl", hash = "sha256:e9878a0f8243fe7b95e11fdda81374ca9f7a689e302751579d3dfdeec559675e" },
 ]
 
 [[package]]
@@ -671,16 +744,16 @@ wheels = [
 
 [[package]]
 name = "jsonschema-path"
-version = "0.4.2"
+version = "0.4.5"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "pathable" },
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jsonschema-path/0.4.2/jsonschema_path-0.4.2.tar.gz", hash = "sha256:5f5ff183150030ea24bb51cf1ddac9bf5dbf030272e2792a7ffe8262f7eea2a5" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jsonschema-path/0.4.5/jsonschema_path-0.4.5.tar.gz", hash = "sha256:c6cd7d577ae290c7defd4f4029e86fdb248ca1bd41a07557795b3c95e5144918" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jsonschema-path/0.4.2/jsonschema_path-0.4.2-py3-none-any.whl", hash = "sha256:9c3d88e727cc4f1a88e51dbbed4211dbcd815d27799d2685efd904435c3d39e7" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/jsonschema-path/0.4.5/jsonschema_path-0.4.5-py3-none-any.whl", hash = "sha256:7d77a2c3f3ec569a40efe5c5f942c44c1af2a6f96fe0866794c9ef5b8f87fd65" },
 ]
 
 [[package]]
@@ -883,15 +956,15 @@ wheels = [
 
 [[package]]
 name = "opentelemetry-api"
-version = "1.39.1"
+version = "1.40.0"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "importlib-metadata" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/opentelemetry-api/1.39.1/opentelemetry_api-1.39.1.tar.gz", hash = "sha256:fbde8c80e1b937a2c61f20347e91c0c18a1940cecf012d62e65a7caf08967c9c" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/opentelemetry-api/1.40.0/opentelemetry_api-1.40.0.tar.gz", hash = "sha256:159be641c0b04d11e9ecd576906462773eb97ae1b657730f0ecf64d32071569f" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/opentelemetry-api/1.39.1/opentelemetry_api-1.39.1-py3-none-any.whl", hash = "sha256:2edd8463432a7f8443edce90972169b195e7d6a05500cd29e6d13898187c9950" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/opentelemetry-api/1.40.0/opentelemetry_api-1.40.0-py3-none-any.whl", hash = "sha256:82dd69331ae74b06f6a874704be0cfaa49a1650e1537d4a813b86ecef7d0ecf9" },
 ]
 
 [[package]]
@@ -923,51 +996,51 @@ wheels = [
 
 [[package]]
 name = "pglast"
-version = "7.11"
+version = "7.13"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11.tar.gz", hash = "sha256:77aed78bb78c0e56f169a41833f6fdc7ce63aa3830b8c771fc263105a8834745" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13.tar.gz", hash = "sha256:88c2c1f2f2510fb6dded649da62fe24e5bb2f956d4dcd595c7f862f43d7ca689" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:13a21b68a16f7cdafe2deb99260e5fdfdccd9cd9d26336e279f04cacf43d3692" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b98d536ad8e890566ee11c5c93a9dee607e41be5a7cde6c77d08258ea4ac9aaa" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:309934ef7472efb56e1244005f8e967ad947894923a35c5f88bcc5f0576eeba0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:91b1e9e4c0268ee578165ec5326789dcd8242f2c11e52cb342f02345a1e1f0dc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:2f6edf4e15ab263dcc02d48c784bb3e4e230a243649441c36c0a88aa06f29af9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:971131487b4984d218698af7d72c29e4e630f105b6022064b9eb4b0b38f7d3cc" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-win32.whl", hash = "sha256:6d0833c776a1cd93bcbfc1dd998f1bc3e9d229cc62a013938e83c93b3d4a3a7a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp312-cp312-win_amd64.whl", hash = "sha256:3cbd282073b64198aebe1fdb159a34946a9c5dfcbf07ac9c9aea9730b73d1dda" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:2805f23269dc3e782320538058d0296ae5b7be7609f3cef9a0dc84a91ae8a8b3" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a093e7f7c1665208ff1d17835a2f3a53831984851e0b14f8686f8d53533f3c13" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4b0b3ed00b65ae9b1fb0b40cc35c657e5ff47a499c39bc4cabd64ab52179bbe9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2b24a1f10fff28bbc4802f2b4742281efefeb7c8720e52e1fb6f9702c2b67895" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:bc2dac25b4aeaebe347f5379e8be7d9e1f76a69dc179091d562ceac6da1208a1" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:18a7c6a851f0845a871fdbb0ad1111b3bf2d536decf18140f08b2ae6b60f0d20" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-win32.whl", hash = "sha256:2fee3433ac618e3bf26ec9101a59f8be4242ef5a2bb72015ddc9a290af9084a6" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp313-cp313-win_amd64.whl", hash = "sha256:6857c6f84d15a9b126775b5078e109af21fe5748bc0df62c9ca285b7bd6d61a4" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:a28106c16f1f05faed0bcc147c50b4d8037f832715566cd4c974a946e033792d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:9fd56a54f4f8bc78f34cbb96c7be5f6c1dcdc5bc7a41e627abd12132a63d6864" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1fd414067a5a400dfba6bffe42cda69fb5c14eeb572bbb1d91d2d96106d7a939" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:45d8f7188c10a454edfeabcc02a44f30301ee1f9df4170a2dffe0fa17385c1f0" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:f83cd6a12b3b9d2c5f83ed89e9a443ffbf97dcf441badebdf5e768cd8c2f67c8" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:695eaa780cb5f4e39fb5133dcfec31385e473d1ba5c66233b7db789c5aa459e7" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-win32.whl", hash = "sha256:11fef15b52415e9d75f1d6679534962367c6e63563d03084ecae5f56ef5bea22" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314-win_amd64.whl", hash = "sha256:bfaccf8e488772545b62ce8f8490f1509c60b740a6d863db8bee8612f96d2294" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:92a56b272b6a6ef19e646b9d04b74dba70a023421d2e300e4682fad71bd19c74" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:eb398a4a0cb56521315ad89221575e5d6117c602b25f198bab599ecbb1451cf4" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:33667018bda595e21f8eff61bb3067c52541581d4680ade93167f7721a6859a2" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a0b322975a743464d59bd6ec5d8b2116a5eb6ceab1781f2c6289d28e32ab2b9b" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:63b01e4b5855f98da52f9c3b0be9e319e71c31ad3c309e803b525b9798d6c29e" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:7f3a84ad6f7dacdadb679354a685f0af1f201f4e68384e730542efa350d2fb4f" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-win32.whl", hash = "sha256:60aeb1f39a4f1f586a1cb17bfa4df393ad110a5765643ae3be62f57fff32bf2c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.11/pglast-7.11-cp314-cp314t-win_amd64.whl", hash = "sha256:4cca2ac4b8bd794ca3b4398167020abc0fbcdd1ef8f17aef6ade6f9272e70bf1" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:32a1a5c7c55e7763b8f37103ee7e7a634452f09871e3cc920808eaa0d2ad622b" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c815d3f3833718418c5ed1f8bb19a9663ba82612095b2d33c13d94eaf9a4d630" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:222d0aa9ebef82a3f97cbf3843ed5af72844ad0d9360a6450937db2f4377487d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:52fa94e90a2ecfd9a79e3036924e528e226a4b7be8783e7e38997e9ba9b06923" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:7d8f3d7b81b64fe40f30455f40124f587795935256ede7c6cd9801ed6ec2b6b0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:01c5411c9253fcd00abc955f01c0b56291307a1f58f36fd1845b768ecea48af8" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-win32.whl", hash = "sha256:1fc9fc3fadecbedcd5ba624d63b8df8d2b851e2b858a367c18bb22e4bb383f54" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp312-cp312-win_amd64.whl", hash = "sha256:1d02bac38cec807c4cabfe31fd84673a1dc82bcf23ae477d0c9e3b0ebbbc706d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:e6098312e2bd0e6ce068331d001d331330e80dc136fcb9e439f6852a9c904f42" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:aacde2ad7356ce735bec0bd1767b5437e2c2e7297b01f957f8f4773a5d3495bb" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5ea6c9d0a859083e0d2b5cad5fe845f6b57af7086db74b992410ff143c7f1aad" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9ce29c949facb503ffecd25803d0c1ffd3bd6105ba0d2afb8f9ce4ee12c3f994" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:3a476e53dcc90a1b9095d3799f74ee342af8eef3ab720ad994e46fa786b08e5d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:4a8ee80977d15511eba3249737cee0e1dd8b7f1f71ddee603ee28d417610f4d5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-win32.whl", hash = "sha256:2fa2e36368e201f9c306ccb8638774a4a4108d8390e8a19c38846f384d4c9c60" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp313-cp313-win_amd64.whl", hash = "sha256:dc42521507a19254eac7a81028c4d16c101d59ee9e59df15f461bbd53ed56c41" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:330d1b042666148adeabb35a68adf44d01e5a4c156da92c9346f2608d9658035" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:da518bfcfc8360bc75190a712e1675d6fe4351f46148b3ac555d6f055f09d547" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6b16d20c7539e0e0c0a2babc563c0844a6ba73501f67da5f40a933d1140775e4" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cc53db0c8aa6e4ea5b309fa63466aa49896143b2b6e50c6525b4d242d161d0e2" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:6782a15a03c62fa85505bb23a31e2ea5e8af88594017ccd33daa2b73fe34de2a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:8a69805564f3a59ec6d5efba967d852ff582e6fac4a608355206e6f7d8fe844a" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-win32.whl", hash = "sha256:b6baf363e682f22cf4159b0842379fb6b4ab8c0d86854a30f00e5ad2de1d0cdd" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314-win_amd64.whl", hash = "sha256:41ccc83b9c75c0e62c0669ad92db7179d44b437b1f367c941ce5c9315d3aad63" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:7b9ff51f40996920c8644c05275e83b85b5872845d59e56f5d9dad21a7879019" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:13f9259b4ef88018ad5e3411c943bf1e49b0819682847c6ec4d30ee406fe89e5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8cd6eaf942acffe22b11400e1bac7d5aaaebc9f9d8c7195f16373be0312dabab" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cdadec93285f0ad0eb0a366477bb0b0e6bd3118e145ce80406d8f46f847aa00f" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:cfcd25ce2ab1982a73b024164c52e0465cfc5795271c17b9bb94a3fb4953cae9" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:0ee4a8dfe8a53c86e34d66122b3fec235c201fb119fd02c43f8163753feed594" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-win32.whl", hash = "sha256:2220b5141cd0ed16973a941ba0cfdb2aaebb1541b892a1fbabe5cf1648ab8596" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pglast/7.13/pglast-7.13-cp314-cp314t-win_amd64.whl", hash = "sha256:fcfb5c0516149f90feb1e4334df605dfd271509ba837b242edce1c9e4f6d281b" },
 ]
 
 [[package]]
 name = "platformdirs"
-version = "4.9.2"
+version = "4.9.4"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/platformdirs/4.9.2/platformdirs-4.9.2.tar.gz", hash = "sha256:9a33809944b9db043ad67ca0db94b14bf452cc6aeaac46a88ea55b26e2e9d291" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/platformdirs/4.9.4/platformdirs-4.9.4.tar.gz", hash = "sha256:1ec356301b7dc906d83f371c8f487070e99d3ccf9e501686456394622a01a934" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/platformdirs/4.9.2/platformdirs-4.9.2-py3-none-any.whl", hash = "sha256:9170634f126f8efdae22fb58ae8a0eaa86f38365bc57897a6c4f781d1f5875bd" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/platformdirs/4.9.4/platformdirs-4.9.4-py3-none-any.whl", hash = "sha256:68a9a4619a666ea6439f2ff250c12a853cd1cbd5158d258bd824a7df6be2f868" },
 ]
 
 [[package]]
@@ -1011,7 +1084,7 @@ dev = [
 requires-dist = [
     { name = "attrs", specifier = ">=25.3.0" },
     { name = "cyclopts", specifier = ">=3.0.0" },
-    { name = "fastmcp", specifier = ">=3.0.0rc2" },
+    { name = "fastmcp", specifier = ">=3.3.1,<4" },
     { name = "humanize", specifier = ">=4.8.0" },
     { name = "pglast", specifier = ">=7.11.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.2" },
@@ -1252,11 +1325,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.11.0"
+version = "2.12.1"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pyjwt/2.11.0/pyjwt-2.11.0.tar.gz", hash = "sha256:35f95c1f0fbe5d5ba6e43f00271c275f7a1a4db1dab27bf708073b75318ea623" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pyjwt/2.12.1/pyjwt-2.12.1.tar.gz", hash = "sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pyjwt/2.11.0/pyjwt-2.11.0-py3-none-any.whl", hash = "sha256:94a6bde30eb5c8e04fee991062b534071fd1439ef58d2adc9ccb823e7bcd0469" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pyjwt/2.12.1/pyjwt-2.12.1-py3-none-any.whl", hash = "sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c" },
 ]
 
 [package.optional-dependencies]
@@ -1304,34 +1377,34 @@ wheels = [
 
 [[package]]
 name = "pytest-cov"
-version = "7.0.0"
+version = "7.1.0"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "coverage" },
     { name = "pluggy" },
     { name = "pytest" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pytest-cov/7.0.0/pytest_cov-7.0.0.tar.gz", hash = "sha256:33c97eda2e049a0c5298e91f519302a1334c26ac65c1a483d6206fd458361af1" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pytest-cov/7.1.0/pytest_cov-7.1.0.tar.gz", hash = "sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pytest-cov/7.0.0/pytest_cov-7.0.0-py3-none-any.whl", hash = "sha256:3b8e9558b16cc1479da72058bdecf8073661c7f57f7d3c5f22a1c23507f2d861" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/pytest-cov/7.1.0/pytest_cov-7.1.0-py3-none-any.whl", hash = "sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678" },
 ]
 
 [[package]]
 name = "python-dotenv"
-version = "1.2.1"
+version = "1.2.2"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-dotenv/1.2.1/python_dotenv-1.2.1.tar.gz", hash = "sha256:42667e897e16ab0d66954af0e60a9caa94f0fd4ecf3aaf6d2d260eec1aa36ad6" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-dotenv/1.2.2/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-dotenv/1.2.1/python_dotenv-1.2.1-py3-none-any.whl", hash = "sha256:b81ee9561e9ca4004139c6cbba3a238c32b03e4894671e181b671e8cb8425d61" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-dotenv/1.2.2/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a" },
 ]
 
 [[package]]
 name = "python-multipart"
-version = "0.0.22"
+version = "0.0.29"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-multipart/0.0.22/python_multipart-0.0.22.tar.gz", hash = "sha256:7340bef99a7e0032613f56dc36027b959fd3b30a787ed62d310e951f7c3a3a58" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-multipart/0.0.29/python_multipart-0.0.29.tar.gz", hash = "sha256:643e93849196645e2dbdd81a0f8829a23123ad7f797a84a364c6fb3563f18904" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-multipart/0.0.22/python_multipart-0.0.22-py3-none-any.whl", hash = "sha256:2b2cd894c83d21bf49d702499531c7bafd057d730c201782048f7945d82de155" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/python-multipart/0.0.29/python_multipart-0.0.29-py3-none-any.whl", hash = "sha256:2ddcc971cef266225f54f552d8fa10bcfbb1f14446caec199060daac59ff2d69" },
 ]
 
 [[package]]
@@ -1543,27 +1616,27 @@ wheels = [
 
 [[package]]
 name = "ruff"
-version = "0.15.2"
+version = "0.15.7"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2.tar.gz", hash = "sha256:14b965afee0969e68bb871eba625343b8673375f457af4abe98553e8bbb98342" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7.tar.gz", hash = "sha256:04f1ae61fc20fe0b148617c324d9d009b5f63412c0b16474f3d5f1a1a665f7ac" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-linux_armv6l.whl", hash = "sha256:120691a6fdae2f16d65435648160f5b81a9625288f75544dc40637436b5d3c0d" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:a89056d831256099658b6bba4037ac6dd06f49d194199215befe2bb10457ea5e" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-macosx_11_0_arm64.whl", hash = "sha256:e36dee3a64be0ebd23c86ffa3aa3fd3ac9a712ff295e192243f814a830b6bd87" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a9fb47b6d9764677f8c0a193c0943ce9a05d6763523f132325af8a858eadc2b9" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:f376990f9d0d6442ea9014b19621d8f2aaf2b8e39fdbfc79220b7f0c596c9b80" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:2dcc987551952d73cbf5c88d9fdee815618d497e4df86cd4c4824cc59d5dd75f" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:42a47fd785cbe8c01b9ff45031af875d101b040ad8f4de7bbb716487c74c9a77" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:cbe9f49354866e575b4c6943856989f966421870e85cd2ac94dccb0a9dcb2fea" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b7a672c82b5f9887576087d97be5ce439f04bbaf548ee987b92d3a7dede41d3a" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:72ecc64f46f7019e2bcc3cdc05d4a7da958b629a5ab7033195e11a438403d956" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:8dcf243b15b561c655c1ef2f2b0050e5d50db37fe90115507f6ff37d865dc8b4" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:dab6941c862c05739774677c6273166d2510d254dac0695c0e3f5efa1b5585de" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-musllinux_1_2_i686.whl", hash = "sha256:1b9164f57fc36058e9a6806eb92af185b0697c9fe4c7c52caa431c6554521e5c" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:80d24fcae24d42659db7e335b9e1531697a7102c19185b8dc4a028b952865fd8" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-win32.whl", hash = "sha256:fd5ff9e5f519a7e1bd99cbe8daa324010a74f5e2ebc97c6242c08f26f3714f6f" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-win_amd64.whl", hash = "sha256:d20014e3dfa400f3ff84830dfb5755ece2de45ab62ecea4af6b7262d0fb4f7c5" },
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.2/ruff-0.15.2-py3-none-win_arm64.whl", hash = "sha256:cabddc5822acdc8f7b5527b36ceac55cc51eec7b1946e60181de8fe83ca8876e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-linux_armv6l.whl", hash = "sha256:a81cc5b6910fb7dfc7c32d20652e50fa05963f6e13ead3c5915c41ac5d16668e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:722d165bd52403f3bdabc0ce9e41fc47070ac56d7a91b4e0d097b516a53a3477" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7fbc2448094262552146cbe1b9643a92f66559d3761f1ad0656d4991491af49e" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6b39329b60eba44156d138275323cc726bbfbddcec3063da57caa8a8b1d50adf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:87768c151808505f2bfc93ae44e5f9e7c8518943e5074f76ac21558ef5627c85" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:fb0511670002c6c529ec66c0e30641c976c8963de26a113f3a30456b702468b0" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:e0d19644f801849229db8345180a71bee5407b429dd217f853ec515e968a6912" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:4806d8e09ef5e84eb19ba833d0442f7e300b23fe3f0981cae159a248a10f0036" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dce0896488562f09a27b9c91b1f58a097457143931f3c4d519690dea54e624c5" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:1852ce241d2bc89e5dc823e03cff4ce73d816b5c6cdadd27dbfe7b03217d2a12" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:5f3e4b221fb4bd293f79912fc5e93a9063ebd6d0dcbd528f91b89172a9b8436c" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:b15e48602c9c1d9bdc504b472e90b90c97dc7d46c7028011ae67f3861ceba7b4" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-musllinux_1_2_i686.whl", hash = "sha256:1b4705e0e85cedc74b0a23cf6a179dbb3df184cb227761979cc76c0440b5ab0d" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:112c1fa316a558bb34319282c1200a8bf0495f1b735aeb78bfcb2991e6087580" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-win32.whl", hash = "sha256:6d39e2d3505b082323352f733599f28169d12e891f7dd407f2d4f54b4c2886de" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-win_amd64.whl", hash = "sha256:4d53d712ddebcd7dace1bc395367aec12c057aacfe9adbb6d832302575f4d3a1" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/ruff/0.15.7/ruff-0.15.7-py3-none-win_arm64.whl", hash = "sha256:18e8d73f1c3fdf27931497972250340f92e8c861722161a9caeb89a58ead6ed2" },
 ]
 
 [[package]]
@@ -1590,28 +1663,28 @@ wheels = [
 
 [[package]]
 name = "sse-starlette"
-version = "3.2.0"
+version = "3.3.3"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "starlette" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/sse-starlette/3.2.0/sse_starlette-3.2.0.tar.gz", hash = "sha256:8127594edfb51abe44eac9c49e59b0b01f1039d0c7461c6fd91d4e03b70da422" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/sse-starlette/3.3.3/sse_starlette-3.3.3.tar.gz", hash = "sha256:72a95d7575fd5129bd0ae15275ac6432bb35ac542fdebb82889c24bb9f3f4049" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/sse-starlette/3.2.0/sse_starlette-3.2.0-py3-none-any.whl", hash = "sha256:5876954bd51920fc2cd51baee47a080eb88a37b5b784e615abb0b283f801cdbf" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/sse-starlette/3.3.3/sse_starlette-3.3.3-py3-none-any.whl", hash = "sha256:c5abb5082a1cc1c6294d89c5290c46b5f67808cfdb612b7ec27e8ba061c22e8d" },
 ]
 
 [[package]]
 name = "starlette"
-version = "0.52.1"
+version = "1.0.0"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/starlette/0.52.1/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/starlette/1.0.0/starlette-1.0.0.tar.gz", hash = "sha256:6a4beaf1f81bb472fd19ea9b918b50dc3a77a6f2e190a12954b25e6ed5eea149" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/starlette/0.52.1/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/starlette/1.0.0/starlette-1.0.0-py3-none-any.whl", hash = "sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b" },
 ]
 
 [[package]]
@@ -1645,6 +1718,15 @@ wheels = [
 ]
 
 [[package]]
+name = "uncalled-for"
+version = "0.2.0"
+source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uncalled-for/0.2.0/uncalled_for-0.2.0.tar.gz", hash = "sha256:b4f8fdbcec328c5a113807d653e041c5094473dd4afa7c34599ace69ccb7e69f" }
+wheels = [
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uncalled-for/0.2.0/uncalled_for-0.2.0-py3-none-any.whl", hash = "sha256:2c0bd338faff5f930918f79e7eb9ff48290df2cb05fcc0b40a7f334e55d4d85f" },
+]
+
+[[package]]
 name = "urllib3"
 version = "2.6.3"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
@@ -1655,15 +1737,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.41.0"
+version = "0.42.0"
 source = { registry = "https://repo.mng.sbercloud.tech/repository/pypi/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uvicorn/0.41.0/uvicorn-0.41.0.tar.gz", hash = "sha256:09d11cf7008da33113824ee5a1c6422d89fbc2ff476540d69a34c87fab8b571a" }
+sdist = { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uvicorn/0.42.0/uvicorn-0.42.0.tar.gz", hash = "sha256:9b1f190ce15a2dd22e7758651d9b6d12df09a13d51ba5bf4fc33c383a48e1775" }
 wheels = [
-    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uvicorn/0.41.0/uvicorn-0.41.0-py3-none-any.whl", hash = "sha256:29e35b1d2c36a04b9e180d4007ede3bcb32a85fbdfd6c6aeb3f26839de088187" },
+    { url = "https://repo.mng.sbercloud.tech/repository/pypi/packages/uvicorn/0.42.0/uvicorn-0.42.0-py3-none-any.whl", hash = "sha256:96c30f5c7abe6f74ae8900a70e92b85ad6613b745d4879eb9b16ccad15645359" },
 ]
 
 [[package]]

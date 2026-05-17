@@ -27,7 +27,7 @@ class TestMainTransportStdio:
     """Tests for main with transport=stdio (mocked to avoid starting server)."""
 
     def test_stdio_calls_configure_logging_with_disable(self) -> None:
-        with patch("postgres_fastmcp.main.compose_mcp") as mock_compose:
+        with patch("postgres_fastmcp.main.create_server") as mock_compose:
             with patch("postgres_fastmcp.main.configure_logging") as mock_configure:
                 with patch("postgres_fastmcp.main.build_settings_from_cli") as mock_build:
                     mock_build.return_value = type(
@@ -49,3 +49,18 @@ class TestMainTransportStdio:
                     calls = mock_configure.call_args_list
                     disable_calls = [c for c in calls if c[1].get("disable") is True]
                     assert len(disable_calls) == 1
+
+
+def test_pool_max_size_default_is_10() -> None:
+    from pydantic import SecretStr
+
+    from postgres_fastmcp.config.database import DatabaseConfig
+
+    cfg = DatabaseConfig(
+        host="localhost",
+        port=5432,
+        user="u",
+        password=SecretStr("p"),
+        name="db",
+    )
+    assert cfg.pool_max_size == 10

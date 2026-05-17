@@ -96,6 +96,8 @@ class TopQueriesCalc:
                     {mean_time_col},
                     rows
                 FROM pg_stat_statements
+                WHERE calls > 0
+                  AND query NOT LIKE '%pg_stat_statements%'
                 ORDER BY {order_by_column} DESC
                 LIMIT {{}};
             """  # noqa: S608
@@ -175,6 +177,8 @@ class TopQueriesCalc:
                         shared_blks_dirtied / SUM(shared_blks_dirtied) OVER () AS shared_blks_dirtied_frac,
                         wal_bytes / SUM(wal_bytes) OVER () AS total_wal_bytes_frac
                     FROM pg_stat_statements
+                    WHERE calls > 0
+                      AND query NOT LIKE '%pg_stat_statements%'
                 )
                 SELECT
                     query,

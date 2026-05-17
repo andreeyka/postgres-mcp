@@ -7,10 +7,11 @@ from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 class IndexHealthCalc:
     """Калькулятор для проверок состояния индексов базы данных."""
 
-    _cached_indexes: list[dict[str, Any]] | None = None
+    _cached_indexes: list[dict[str, Any]] | None
 
     def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
         self.sql_driver = sql_driver
+        self._cached_indexes = None
 
     async def invalid_index_check(self) -> str:
         """Проверка недействительных индексов в базе данных.

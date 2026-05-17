@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from collections.abc import Awaitable
 from enum import StrEnum
 
 from mcp import types
@@ -43,7 +45,45 @@ class DatabaseHealthTool:
         """
         self.sql_driver = sql_driver
 
-    async def health(self, health_type: str) -> str:  # noqa: C901
+    def _build_tasks(self, health_types: set[HealthType]) -> list[tuple[str, Awaitable[str]]]:
+        """Собирает список (label, coroutine) задач для запрошенных типов проверок."""
+        tasks: list[tuple[str, Awaitable[str]]] = []
+
+        if HealthType.INDEX in health_types:
+            index_health = IndexHealthCalc(self.sql_driver)
+            tasks.append(("Invalid index check", index_health.invalid_index_check()))
+            tasks.append(("Duplicate index check", index_health.duplicate_index_check()))
+            tasks.append(("Index bloat", index_health.index_bloat()))
+            tasks.append(("Unused index check", index_health.unused_indexes()))
+
+        if HealthType.CONNECTION in health_types:
+            connection_health = ConnectionHealthCalc(self.sql_driver)
+            tasks.append(("Connection health", connection_health.connection_health_check()))
+
+        if HealthType.VACUUM in health_types:
+            vacuum_health = VacuumHealthCalc(self.sql_driver)
+            tasks.append(("Vacuum health", vacuum_health.transaction_id_danger_check()))
+
+        if HealthType.SEQUENCE in health_types:
+            sequence_health = SequenceHealthCalc(self.sql_driver)
+            tasks.append(("Sequence health", sequence_health.sequence_danger_check()))
+
+        if HealthType.REPLICATION in health_types:
+            replication_health = ReplicationCalc(self.sql_driver)
+            tasks.append(("Replication health", replication_health.replication_health_check()))
+
+        if HealthType.BUFFER in health_types:
+            buffer_health = BufferHealthCalc(self.sql_driver)
+            tasks.append(("Buffer health for indexes", buffer_health.index_hit_rate()))
+            tasks.append(("Buffer health for tables", buffer_health.table_hit_rate()))
+
+        if HealthType.CONSTRAINT in health_types:
+            constraint_health = ConstraintHealthCalc(self.sql_driver)
+            tasks.append(("Constraint health", constraint_health.invalid_constraints_check()))
+
+        return tasks
+
+    async def health(self, health_type: str) -> str:
         """Запуск проверок состояния базы данных для указанных компонентов.
 
         Args:
@@ -54,7 +94,6 @@ class DatabaseHealthTool:
             Строка с результатами проверок состояния.
         """
         try:
-            result = ""
             try:
                 health_types = {HealthType(x.strip()) for x in health_type.split(",")}
             except ValueError:
@@ -67,40 +106,27 @@ class DatabaseHealthTool:
             if HealthType.ALL in health_types:
                 health_types = {t for t in HealthType if t != HealthType.ALL}
 
-            if HealthType.INDEX in health_types:
-                index_health = IndexHealthCalc(self.sql_driver)
-                result += "Invalid index check: " + await index_health.invalid_index_check() + "\n"
-                result += "Duplicate index check: " + await index_health.duplicate_index_check() + "\n"
-                result += "Index bloat: " + await index_health.index_bloat() + "\n"
-                result += "Unused index check: " + await index_health.unused_indexes() + "\n"
+            tasks = self._build_tasks(health_types)
+            if not tasks:
+                return "No health checks were performed."
 
-            if HealthType.CONNECTION in health_types:
-                connection_health = ConnectionHealthCalc(self.sql_driver)
-                result += "Connection health: " + await connection_health.connection_health_check() + "\n"
+            labels = [label for label, _ in tasks]
+            coros = [coro for _, coro in tasks]
+            results = await asyncio.gather(*coros, return_exceptions=True)
 
-            if HealthType.VACUUM in health_types:
-                vacuum_health = VacuumHealthCalc(self.sql_driver)
-                result += "Vacuum health: " + await vacuum_health.transaction_id_danger_check() + "\n"
-
-            if HealthType.SEQUENCE in health_types:
-                sequence_health = SequenceHealthCalc(self.sql_driver)
-                result += "Sequence health: " + await sequence_health.sequence_danger_check() + "\n"
-
-            if HealthType.REPLICATION in health_types:
-                replication_health = ReplicationCalc(self.sql_driver)
-                result += "Replication health: " + await replication_health.replication_health_check() + "\n"
-
-            if HealthType.BUFFER in health_types:
-                buffer_health = BufferHealthCalc(self.sql_driver)
-                result += "Buffer health for indexes: " + await buffer_health.index_hit_rate() + "\n"
-                result += "Buffer health for tables: " + await buffer_health.table_hit_rate() + "\n"
-
-            if HealthType.CONSTRAINT in health_types:
-                constraint_health = ConstraintHealthCalc(self.sql_driver)
-                result += "Constraint health: " + await constraint_health.invalid_constraints_check() + "\n"
+            lines: list[str] = []
+            for label, res in zip(labels, results, strict=True):
+                if isinstance(res, BaseException):
+                    logger.exception(
+                        "Health check '%s' failed",
+                        label,
+                        exc_info=(type(res), res, res.__traceback__),
+                    )
+                    lines.append(f"{label}: check failed: {res}")
+                else:
+                    lines.append(f"{label}: {res}")
+            return "\n".join(lines) + "\n"
 
         except Exception as e:
             logger.exception("Error calculating database health")
             return f"Error calculating database health: {e}"
-        else:
-            return result or "No health checks were performed."

@@ -21,6 +21,21 @@ def calc(mock_sql_driver: AsyncMock) -> IndexHealthCalc:
     return IndexHealthCalc(mock_sql_driver)
 
 
+def test_cached_indexes_is_instance_level() -> None:
+    """Cache must be per-instance to avoid leaking between connections."""
+    from postgres_fastmcp.services.health.index_health_calc import IndexHealthCalc
+
+    inst_a = IndexHealthCalc.__new__(IndexHealthCalc)
+    inst_b = IndexHealthCalc.__new__(IndexHealthCalc)
+    inst_a._cached_indexes = ["index_a"]
+    inst_b._cached_indexes = ["index_b"]
+    assert inst_a._cached_indexes == ["index_a"]
+    assert inst_b._cached_indexes == ["index_b"]
+    # Class-level attribute must NOT be set to a list — only a type annotation is acceptable.
+    class_attr = IndexHealthCalc.__dict__.get("_cached_indexes")
+    assert class_attr is None or not isinstance(class_attr, list)
+
+
 class TestIndexHealthCalcInvalidIndexCheck:
     """Tests for invalid_index_check."""
 

@@ -1,151 +1,92 @@
-# mypy: ignore-errors
-"""Unit tests for configure() + FileSystemProvider discovery (mode-aware descriptions)."""
+"""Тесты описаний тулов в реестре."""
 
-import sys
+from __future__ import annotations
 
-import pytest
-from fastmcp.server.providers import FileSystemProvider
+import asyncio
 
-from postgres_fastmcp.config import app_config
-from postgres_fastmcp.server import _tools_root
-from postgres_fastmcp.tools.basic.execute_sql import _DESC_RESTRICTED, _DESC_UNRESTRICTED
-from postgres_fastmcp.tools.basic.explain_query import _DESC_EXPLAIN_QUERY
-from postgres_fastmcp.tools.basic.get_object_details import (
-    _DESC_FULL as _GET_OBJECT_DETAILS_FULL,
-    _DESC_USER as _GET_OBJECT_DETAILS_USER,
-)
-from postgres_fastmcp.tools.basic.list_objects import (
-    _DESC_FULL as _LIST_OBJECTS_FULL,
-    _DESC_USER as _LIST_OBJECTS_USER,
-)
+from fastmcp import FastMCP
+
+from postgres_fastmcp.config import Settings
+from postgres_fastmcp.enums import AccessMode
+from postgres_fastmcp.tools.registry import register_tools
 
 
-def _clear_basic_tools_modules() -> None:
-    """Remove basic tool modules from sys.modules so next provider creation re-imports with new config."""
-    to_remove = [k for k in sys.modules if k.startswith("postgres_fastmcp.tools.basic.")]
-    for k in to_remove:
-        sys.modules.pop(k, None)
+def _make_settings(*, access_mode: AccessMode, write_mode: bool = False) -> Settings:
+    s = Settings()
+    s.database = s.database.model_copy(
+        update={"access_mode": access_mode, "write_mode": write_mode}
+    )
+    return s
 
 
-def _get_tool_by_name(tools: list, name: str):
-    """Return tool with given name from list returned by list_tools()."""
-    for t in tools:
-        if getattr(t, "name", None) == name:
-            return t
-    return None
+def _descriptions(mcp: FastMCP) -> dict[str, str]:
+    result = asyncio.run(mcp.list_tools())
+    if isinstance(result, dict):
+        return {name: (t.description or "") for name, t in result.items()}
+    return {t.name: (t.description or "") for t in result}
 
 
-class TestConfigureAndDiscovery:
-    """Tests for configure() + FileSystemProvider yielding correct descriptions."""
+def test_execute_sql_description_restricted_in_basic_mode() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
+    desc = _descriptions(mcp)["execute_sql"]
+    assert "read-only" in desc.lower()
 
-    @pytest.mark.asyncio
-    async def test_list_objects_basic_returns_user_description(
-        self,
-        database_config_user,
-    ) -> None:
-        """access_mode=basic: list_objects has USER description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_user)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "list_objects")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _LIST_OBJECTS_USER
 
-    @pytest.mark.asyncio
-    async def test_list_objects_full_returns_full_description(
-        self,
-        database_config_full_restricted,
-    ) -> None:
-        """access_mode=full: list_objects has FULL description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_full_restricted)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "list_objects")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _LIST_OBJECTS_FULL
+def test_execute_sql_description_restricted_in_full_without_write_mode() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL, write_mode=False))
+    desc = _descriptions(mcp)["execute_sql"]
+    assert "read-only" in desc.lower()
 
-    @pytest.mark.asyncio
-    async def test_get_object_details_basic_returns_user_description(
-        self,
-        database_config_user,
-    ) -> None:
-        """access_mode=basic: get_object_details has USER description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_user)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "get_object_details")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _GET_OBJECT_DETAILS_USER
 
-    @pytest.mark.asyncio
-    async def test_get_object_details_full_returns_full_description(
-        self,
-        database_config_full_restricted,
-    ) -> None:
-        """access_mode=full: get_object_details has FULL description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_full_restricted)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "get_object_details")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _GET_OBJECT_DETAILS_FULL
+def test_execute_sql_description_unrestricted_when_full_and_write_mode() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL, write_mode=True))
+    desc = _descriptions(mcp)["execute_sql"]
+    lower = desc.lower()
+    assert "any sql" in lower or "ddl" in lower
 
-    @pytest.mark.asyncio
-    async def test_explain_query_same_for_all(
-        self,
-        database_config_user,
-    ) -> None:
-        """explain_query description does not depend on access_mode."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_user)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "explain_query")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _DESC_EXPLAIN_QUERY
 
-    @pytest.mark.asyncio
-    async def test_execute_sql_restricted_for_basic(
-        self,
-        database_config_user,
-    ) -> None:
-        """access_mode=basic: execute_sql has RESTRICTED description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_user)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "execute_sql")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _DESC_RESTRICTED
+def test_list_objects_description_mentions_public_in_basic() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
+    desc = _descriptions(mcp)["list_objects"]
+    assert "public" in desc.lower()
 
-    @pytest.mark.asyncio
-    async def test_execute_sql_restricted_for_full_restricted(
-        self,
-        database_config_full_restricted,
-    ) -> None:
-        """access_mode=full, write_mode=False: execute_sql has RESTRICTED description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_full_restricted)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "execute_sql")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _DESC_RESTRICTED
 
-    @pytest.mark.asyncio
-    async def test_execute_sql_unrestricted_for_full_unrestricted(
-        self,
-        database_config_full_unrestricted,
-    ) -> None:
-        """access_mode=full, write_mode=True: execute_sql has UNRESTRICTED description."""
-        _clear_basic_tools_modules()
-        app_config.initialize(database=database_config_full_unrestricted)
-        provider = FileSystemProvider(_tools_root() / "basic")
-        tools = await provider.list_tools()
-        tool = _get_tool_by_name(tools, "execute_sql")
-        assert tool is not None
-        assert getattr(tool, "description", None) == _DESC_UNRESTRICTED
+def test_list_objects_description_in_full_mentions_schema() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL))
+    desc = _descriptions(mcp)["list_objects"]
+    assert "specified schema" in desc.lower()
+
+
+def test_get_object_details_description_mentions_public_in_basic() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
+    desc = _descriptions(mcp)["get_object_details"]
+    assert "public" in desc.lower()
+
+
+def test_explain_query_description_present() -> None:
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
+    desc = _descriptions(mcp)["explain_query"]
+    assert "execution plan" in desc.lower()
+
+
+def test_annotation_presets_have_expected_keys() -> None:
+    from postgres_fastmcp.tools.constants import DESTRUCTIVE, READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT
+
+    required = {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
+    for preset in (READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, DESTRUCTIVE):
+        assert set(preset.keys()) == required
+
+
+def test_destructive_preset_marks_writes() -> None:
+    from postgres_fastmcp.tools.constants import DESTRUCTIVE
+
+    assert DESTRUCTIVE["readOnlyHint"] is False
+    assert DESTRUCTIVE["destructiveHint"] is True
+    assert DESTRUCTIVE["idempotentHint"] is False
