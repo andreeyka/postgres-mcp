@@ -104,6 +104,8 @@ async def app_lifespan(server):
 
 ### Регистрация тулов
 
+Используется **`Tool.from_function(fn, description=..., tags=..., annotations=..., timeout=..., meta=...) + mcp.add_tool(tool)`** — единственный из семи способов, документированных в FastMCP 3.x, который позволяет вычислять `description` в момент вызова (когда `settings` уже на руках). Альтернативы (декоратор, классы с методами) исполняют код на этапе импорта или class-body, что несовместимо с зависимостью описания от runtime-конфига.
+
 `tools/registry.py`:
 
 ```python
@@ -115,6 +117,29 @@ def _register_tools(mcp: FastMCP, settings: Settings) -> None:
 ```
 
 `_basic_tool_specs(settings)` строит описания тулов с учётом `settings.database.access_mode` и `write_mode` (для `execute_sql`). Description вычисляется при регистрации — после того, как `settings` уже на руках. Никакого `app_config.current` на module-level.
+
+**Параметры регистрации каждого тула:**
+
+- `fn` — функция-тул, обычная `async def` в `tools/basic/*` или `tools/full/*`.
+- `description` — LLM-facing **английский** текст, построенный в registry с учётом `settings`. Покрывает назначение тула, когда выбирать, workflow с другими тулами, важные предупреждения. Параметры в description **не** дублируются — они описываются в `Annotated[..., Field(description=...)]`.
+- `tags={ToolTag.BASIC}` или `{ToolTag.FULL}` — для visibility-фильтра.
+- `annotations` — один из трёх пресетов (`READ_ONLY_IDEMPOTENT`, `READ_ONLY_NON_IDEMPOTENT`, `DESTRUCTIVE`) + индивидуальный `title`.
+- `timeout` — серверный таймаут на исполнение. Для долгих тулов (`analyze_query_indexes`, `analyze_workload_indexes`) — 60 секунд; для остальных — 30. Точные значения подобрать на этапе плана. Этот таймаут — независимая защита поверх `SafeSqlDriver.timeout`: SQL-таймаут защищает только запрос к БД, а tool-timeout покрывает всю работу включая LLM-вызовы в `method=llm`.
+- `meta={"version": __version__}` — версия пакета, прокидывается клиенту для дебага.
+
+**Запреты:**
+
+- Параметр `enabled=` декоратора `@mcp.tool` не использовать — deprecated в FastMCP 3.0. Видимость управляется только через `mcp.disable(tags={...})`.
+- Декоратор `@mcp.tool` (без аргументов или с аргументами) не использовать вообще — все тулы регистрируются только программно через `Tool.from_function`.
+
+### Docstrings vs description
+
+Когда `description=` передаётся в `Tool.from_function`, docstring функции **игнорируется** для MCP-схемы. Мы используем это разделение:
+
+- **Docstring функции тула** — короткий **русский** текст для разработчиков, читающих код. Описывает, что делает функция на уровне реализации.
+- **`description=` в `Tool.from_function`** — **английский** текст для LLM-клиента, построенный в registry с учётом `settings`.
+
+Это разные аудитории; смешивать языки или дублировать содержание не нужно.
 
 ### Visibility
 
@@ -195,7 +220,7 @@ for m in extra_middleware:
 
 | Файл | Изменение |
 |---|---|
-| `server.py` | Текущий `compose_mcp` → `create_server(settings, *, auth, extra_providers, extra_middleware)`. Применяет lifespan, middleware, регистрирует тулы через registry, делает visibility-фильтр по тегам, передаёт `auth` и `extra_providers` в `FastMCP(...)`, `mask_error_details=True`. |
+| `server.py` | Текущий `compose_mcp` → `create_server(settings, *, auth, extra_providers, extra_middleware)`. Применяет lifespan, middleware, регистрирует тулы через registry, делает visibility-фильтр по тегам, передаёт `auth` и `extra_providers` в `FastMCP(...)`, `mask_error_details=True`, `on_duplicate_tools="error"` (страховка от случайного перетирания тула, когда потребитель добавит свой через `extra_providers`). |
 | `main.py` | Зовёт `create_server(settings)` (без auth). Без других изменений. |
 | `__init__.py` | Реэкспортирует `create_server`, `Settings`, `BearerAuthProvider`, `JWTAuthProvider`, `LocalProvider`, `FileSystemProvider`, `Middleware`. |
 
