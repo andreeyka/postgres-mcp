@@ -6,9 +6,24 @@
 
 from typing import Any
 
+from fastmcp.exceptions import ToolError
+
 
 class BaseApplicationError(Exception):
     """Базовый класс для всех ошибок приложения."""
+
+    def __init__(self, message: str) -> None:
+        """Инициализация с сообщением об ошибке.
+
+        Args:
+            message: Текст сообщения.
+        """
+        super().__init__(message)
+        self.message = message
+
+
+class UserFacingError(ToolError):
+    """Базовый класс для ошибок, сообщение которых безопасно показывать MCP-клиенту."""
 
     def __init__(self, message: str) -> None:
         """Инициализация с сообщением об ошибке.
@@ -36,7 +51,7 @@ class ConnectionNotEstablishedError(BaseApplicationError):
         super().__init__("Connection not established. Either conn or engine_url must be provided.")
 
 
-class SchemaAccessError(BaseApplicationError):
+class SchemaAccessError(UserFacingError):
     """Доступ к запрашиваемой схеме не разрешен (например, роль пользователя или непубличная схема)."""
 
     def __init__(self, schema_name: str) -> None:
@@ -50,7 +65,7 @@ class SchemaAccessError(BaseApplicationError):
         self.schema_name = schema_name
 
 
-class SchemaNotAllowedError(BaseApplicationError):
+class SchemaNotAllowedError(UserFacingError):
     """Доступ к указанной схеме запрещён; разрешена только заданная схема (валидация SQL)."""
 
     def __init__(self, schema_name: str, allowed_schema: str) -> None:
@@ -66,7 +81,7 @@ class SchemaNotAllowedError(BaseApplicationError):
         self.allowed_schema = allowed_schema
 
 
-class TablePrefixAccessError(BaseApplicationError):
+class TablePrefixAccessError(UserFacingError):
     """Доступ к таблице запрещён: имя не соответствует обязательному префиксу (валидация SQL)."""
 
     def __init__(self, table_name: str, table_prefix: str) -> None:
@@ -85,7 +100,7 @@ class TablePrefixAccessError(BaseApplicationError):
         self.table_prefix = table_prefix
 
 
-class SchemataTableAccessError(BaseApplicationError):
+class SchemataTableAccessError(UserFacingError):
     """Доступ к information_schema.schemata в пользовательском режиме запрещён."""
 
     def __init__(self, schema_name: str, table_name: str) -> None:
@@ -104,7 +119,7 @@ class SchemataTableAccessError(BaseApplicationError):
         self.table_name = table_name
 
 
-class SqlParseError(BaseApplicationError):
+class SqlParseError(UserFacingError):
     """Не удалось разобрать SQL-запрос (синтаксическая ошибка)."""
 
     def __init__(self) -> None:
@@ -112,7 +127,7 @@ class SqlParseError(BaseApplicationError):
         super().__init__("Failed to parse SQL statement")
 
 
-class StatementTypeNotAllowedError(BaseApplicationError):
+class StatementTypeNotAllowedError(UserFacingError):
     """Тип оператора не разрешён при текущей политике (read-only или DML)."""
 
     def __init__(self, *, read_only: bool, stmt_type_name: str) -> None:
@@ -140,7 +155,7 @@ class StatementTypeNotAllowedError(BaseApplicationError):
         self.stmt_type_name = stmt_type_name
 
 
-class DdlNotAllowedError(BaseApplicationError):
+class DdlNotAllowedError(UserFacingError):
     """DDL-операции (CREATE/DROP/ALTER) не разрешены при валидации запроса."""
 
     def __init__(self, stmt_type_name: str) -> None:
@@ -154,7 +169,7 @@ class DdlNotAllowedError(BaseApplicationError):
         self.stmt_type_name = stmt_type_name
 
 
-class DisallowedNodeTypeError(BaseApplicationError):
+class DisallowedNodeTypeError(UserFacingError):
     """Тип узла AST не разрешён при валидации запроса."""
 
     def __init__(self, node_type: type) -> None:
@@ -168,7 +183,7 @@ class DisallowedNodeTypeError(BaseApplicationError):
         self.node_type = node_type
 
 
-class LikePatternNotConstantError(BaseApplicationError):
+class LikePatternNotConstantError(UserFacingError):
     """В LIKE/ILIKE выражении паттерн должен быть константной строкой."""
 
     def __init__(self) -> None:
@@ -176,7 +191,7 @@ class LikePatternNotConstantError(BaseApplicationError):
         super().__init__("LIKE pattern must be a constant string")
 
 
-class FunctionNotAllowedError(BaseApplicationError):
+class FunctionNotAllowedError(UserFacingError):
     """Использование указанной функции в запросе не разрешено."""
 
     def __init__(self, func_name: str) -> None:
@@ -190,7 +205,7 @@ class FunctionNotAllowedError(BaseApplicationError):
         self.func_name = func_name
 
 
-class LockingClauseProhibitedError(BaseApplicationError):
+class LockingClauseProhibitedError(UserFacingError):
     """Использование блокирующих предложений в SELECT запрещено."""
 
     def __init__(self) -> None:
@@ -198,7 +213,7 @@ class LockingClauseProhibitedError(BaseApplicationError):
         super().__init__("Locking clause on select is prohibited")
 
 
-class ExplainAnalyzeNotSupportedError(BaseApplicationError):
+class ExplainAnalyzeNotSupportedError(UserFacingError):
     """EXPLAIN ANALYZE не поддерживается при валидации запроса."""
 
     def __init__(self) -> None:
@@ -206,7 +221,7 @@ class ExplainAnalyzeNotSupportedError(BaseApplicationError):
         super().__init__("EXPLAIN ANALYZE is not supported")
 
 
-class CreateExtensionNotSupportedError(BaseApplicationError):
+class CreateExtensionNotSupportedError(UserFacingError):
     """Создание указанного расширения не разрешено."""
 
     def __init__(self, extname: str) -> None:
@@ -220,7 +235,7 @@ class CreateExtensionNotSupportedError(BaseApplicationError):
         self.extname = extname
 
 
-class UnsupportedObjectTypeError(BaseApplicationError):
+class UnsupportedObjectTypeError(UserFacingError):
     """Запрашиваемый тип объекта не поддерживается."""
 
     def __init__(self, object_type: str) -> None:
@@ -343,7 +358,7 @@ class ExplainPlanExecutionError(ExplainPlanError):
         self.inner = inner
 
 
-class ExplainAnalyzeWithHypotheticalError(BaseApplicationError):
+class ExplainAnalyzeWithHypotheticalError(UserFacingError):
     """Нельзя использовать analyze и гипотетические индексы вместе."""
 
     def __init__(self) -> None:
@@ -351,7 +366,7 @@ class ExplainAnalyzeWithHypotheticalError(BaseApplicationError):
         super().__init__("Нельзя использовать analyze и гипотетические индексы вместе.")
 
 
-class EmptyQueriesError(BaseApplicationError):
+class EmptyQueriesError(UserFacingError):
     """Пустой список запросов, где требуется хотя бы один."""
 
     def __init__(self) -> None:
@@ -359,7 +374,7 @@ class EmptyQueriesError(BaseApplicationError):
         super().__init__("Пожалуйста, предоставьте непустой список запросов для анализа.")
 
 
-class QueriesLimitError(BaseApplicationError):
+class QueriesLimitError(UserFacingError):
     """Слишком много запросов в списке (превышен допустимый лимит)."""
 
     def __init__(self, limit: int) -> None:
@@ -373,7 +388,7 @@ class QueriesLimitError(BaseApplicationError):
         self.limit = limit
 
 
-class ContextRequiredError(BaseApplicationError):
+class ContextRequiredError(UserFacingError):
     """Контекст требуется для этой операции (например, оптимизация LLM)."""
 
     def __init__(self) -> None:
@@ -381,7 +396,7 @@ class ContextRequiredError(BaseApplicationError):
         super().__init__("Контекст требуется для метода оптимизации LLM.")
 
 
-class InvalidSortCriteriaError(BaseApplicationError):
+class InvalidSortCriteriaError(UserFacingError):
     """Неверный критерий сортировки для топ-запросов."""
 
     def __init__(self) -> None:
@@ -403,7 +418,7 @@ class SqlExecutionError(BaseApplicationError):
         super().__init__(message)
 
 
-class HypopgNotInstalledError(BaseApplicationError):
+class HypopgNotInstalledError(UserFacingError):
     """Расширение HypoPG не установлено или недоступно."""
 
     def __init__(self, message: str) -> None:
@@ -415,7 +430,7 @@ class HypopgNotInstalledError(BaseApplicationError):
         super().__init__(message)
 
 
-class InvalidHealthTypeError(BaseApplicationError):
+class InvalidHealthTypeError(UserFacingError):
     """Предоставлен(ы) неверный тип(ы) проверки состояния."""
 
     def __init__(self, health_type: str, valid_values: str) -> None:
@@ -435,7 +450,7 @@ class InvalidHealthTypeError(BaseApplicationError):
         self.valid_values = valid_values
 
 
-class QueryTimeoutError(BaseApplicationError):
+class QueryTimeoutError(UserFacingError):
     """Выполнение запроса превысило заданный таймаут в режиме ограничения."""
 
     def __init__(self, timeout_seconds: float) -> None:
