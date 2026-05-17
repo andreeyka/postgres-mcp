@@ -1,44 +1,74 @@
-"""Сборка FastMCP: lifespan (db + текущие права), два провайдера (basic + full по access_mode)."""
+"""Фабрика MCP-сервера: create_server(settings, *, auth, extra_providers, extra_middleware) -> FastMCP."""
 
-from collections.abc import AsyncIterator
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import FastMCP
-from fastmcp.server.lifespan import lifespan
-from fastmcp.server.providers import FileSystemProvider
+from fastmcp.server.middleware.logging import LoggingMiddleware
+from fastmcp.server.middleware.timing import TimingMiddleware
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode
-from postgres_fastmcp.services.db_access_service import DbAccessService
+from postgres_fastmcp.enums import AccessMode, ToolTag
+from postgres_fastmcp.lifespan import build_lifespan
+from postgres_fastmcp.tools.registry import register_tools
 
 
-def _tools_root() -> Path:
-    """Корень каталогов инструментов (basic / full)."""
-    return Path(__file__).resolve().parent / "tools"
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from postgres_fastmcp.config import Settings
+
+
+def create_server(
+    settings: Settings,
+    *,
+    auth: Any = None,  # noqa: ANN401
+    extra_providers: Sequence[Any] = (),
+    extra_middleware: Sequence[Any] = (),
+) -> FastMCP:
+    """Собрать FastMCP-сервер: lifespan + middleware + регистрация тулов + visibility.
+
+    Args:
+        settings: Конфигурация (database, server, fastmcp блоки).
+        auth: Опциональный auth-provider FastMCP (Bearer/JWT/custom).
+            По умолчанию без авторизации.
+        extra_providers: Дополнительные FastMCP-провайдеры от потребителя библиотеки.
+        extra_middleware: Дополнительные middleware (встают после встроенных Timing/Logging).
+
+    Returns:
+        Готовый FastMCP, на котором можно сразу вызывать `.run(...)`.
+    """
+    lifespan_cm = build_lifespan(settings)
+
+    fastmcp_kwargs: dict[str, Any] = {
+        "name": settings.fastmcp.server_name,
+        "lifespan": lifespan_cm,
+        "mask_error_details": True,
+        "on_duplicate": "error",
+    }
+    instructions = getattr(settings.fastmcp, "instructions", None)
+    if instructions:
+        fastmcp_kwargs["instructions"] = instructions
+    if auth is not None:
+        fastmcp_kwargs["auth"] = auth
+    if extra_providers:
+        fastmcp_kwargs["providers"] = list(extra_providers)
+
+    mcp = FastMCP(**fastmcp_kwargs)
+
+    mcp.add_middleware(TimingMiddleware())
+    mcp.add_middleware(LoggingMiddleware())
+    for m in extra_middleware:
+        mcp.add_middleware(m)
+
+    register_tools(mcp, settings)
+
+    if settings.database.access_mode == AccessMode.BASIC:
+        mcp.disable(tags={ToolTag.FULL.value})
+
+    return mcp
 
 
 def compose_mcp(settings: Settings) -> FastMCP:
-    """Собирает MCP: lifespan, basic (4 tools), при full — full (5 tools). Описания по access_mode/write_mode."""
-    database = settings.database
-
-    @lifespan
-    async def app_lifespan(
-        _: FastMCP,
-    ) -> AsyncIterator[dict[str, DbAccessService | DatabaseConfig]]:
-        db_service = DbAccessService(database)
-        try:
-            yield {"db": db_service, "database_config": database}
-        finally:
-            await db_service.close()
-
-    providers: list[FileSystemProvider] = [FileSystemProvider(_tools_root() / "basic")]
-    if database.access_mode == AccessMode.FULL:
-        providers.append(FileSystemProvider(_tools_root() / "full"))
-
-    return FastMCP(
-        name=settings.fastmcp.server_name,
-        instructions=settings.fastmcp.instructions,
-        lifespan=app_lifespan,
-        providers=providers,
-    )
+    """Совместимость: тонкий алиас для create_server до миграции main.py (Task 6.2)."""
+    return create_server(settings)
