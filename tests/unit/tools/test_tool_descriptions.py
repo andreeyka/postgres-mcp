@@ -149,3 +149,24 @@ class TestConfigureAndDiscovery:
         tool = _get_tool_by_name(tools, "execute_sql")
         assert tool is not None
         assert getattr(tool, "description", None) == _DESC_UNRESTRICTED
+
+
+def test_annotation_presets_have_expected_keys() -> None:
+    """Все три пресета содержат те же четыре поля ToolAnnotations."""
+    from postgres_fastmcp.tools.constants import (
+        DESTRUCTIVE,
+        READ_ONLY_IDEMPOTENT,
+        READ_ONLY_NON_IDEMPOTENT,
+    )
+
+    required = {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
+    for preset in (READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, DESTRUCTIVE):
+        assert set(preset.keys()) == required
+
+
+def test_destructive_preset_marks_writes() -> None:
+    from postgres_fastmcp.tools.constants import DESTRUCTIVE
+
+    assert DESTRUCTIVE["readOnlyHint"] is False
+    assert DESTRUCTIVE["destructiveHint"] is True
+    assert DESTRUCTIVE["idempotentHint"] is False
