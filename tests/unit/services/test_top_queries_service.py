@@ -72,3 +72,14 @@ class TestTopQueriesService:
         service = TopQueriesService(db=mock_db_access)
         with pytest.raises(InvalidSortCriteriaError):
             await service.get_top_queries(sort_by="invalid")
+
+
+def test_top_queries_sql_filters_self_queries_and_zero_calls() -> None:
+    """Generated SQL must filter out pg_stat_statements self-queries and zero-call entries."""
+    from pathlib import Path
+
+    from postgres_fastmcp.services.top_queries import top_queries_calc as mod
+
+    src = Path(mod.__file__).read_text()
+    assert "calls > 0" in src
+    assert "NOT LIKE '%pg_stat_statements%'" in src
