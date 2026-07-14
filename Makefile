@@ -2,10 +2,10 @@
 .DEFAULT_GOAL := help
 
 # Переменные для Docker
-NAME ?= ia/postgres-mcp
-REPO ?= repo.mng.sbercloud.tech
+NAME ?= postgres-mcp
+REPO ?=
 TAG ?= latest
-DOCKER_FULL_IMAGE := $(REPO)/$(NAME):$(TAG)
+DOCKER_FULL_IMAGE := $(if $(REPO),$(REPO)/$(NAME),$(NAME)):$(TAG)
 
 # Вспомогательная цель для проверки переменных Docker
 .PHONY: check-docker-vars check-name check-repo
@@ -26,14 +26,10 @@ check-repo:
 
 check-docker-vars: check-name check-repo
 
-.PHONY: help lint format clean commit push release-patch release-minor release-major docker-build docker-push docker-run docker-run-it docker-stop check-docker-vars check-name check-repo copy-template
+.PHONY: help lint format clean commit push release-patch release-minor release-major docker-build docker-push docker-run docker-run-it docker-stop check-docker-vars check-name check-repo
 
 help: ## Показать справку по командам
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' | sort
-
-# Копирование шаблона
-copy-template: ## Скопировать шаблон проекта в текущую директорию
-	@TEMPLATE_DIR="../default" bash "../default/copy_template.sh"
 
 lint: ## Проверить код линтерами (ruff + mypy)
 	uv run ruff check .
@@ -128,14 +124,14 @@ push: ## Сделать коммит и пуш (интерактивно зап�
 # Сборка образов
 docker-build: check-name ## Собрать Docker образ (для локального использования)
 	@echo "🐳 Собираю Docker образ $(NAME)..."
-	docker buildx build --provenance=false --sbom=false --build-arg NAME=$(NAME) --build-arg REPO=$(REPO) -t $(NAME):latest --load .
+	docker buildx build --provenance=false --sbom=false -t $(NAME):latest --load .
 	@echo "✅ Docker образ собран успешно!"
 
 # Полный цикл: мультиархитектурная сборка + загрузка
 docker-push: check-docker-vars ## Собрать (amd64 + arm64) и загрузить образ в реестр
 	@echo "🚀 Мультиархитектурная сборка → загрузка"
 	@echo "🐳 Собираю образ для linux/amd64,linux/arm64..."; \
-	docker buildx build --platform=linux/amd64,linux/arm64 --provenance=false --sbom=false --build-arg NAME=$(NAME) --build-arg REPO=$(REPO) -t $(DOCKER_FULL_IMAGE) --push -f Dockerfile . && \
+	docker buildx build --platform=linux/amd64,linux/arm64 --provenance=false --sbom=false -t $(DOCKER_FULL_IMAGE) --push -f Dockerfile . && \
 	echo "✅ Образ загружен: $(DOCKER_FULL_IMAGE)"
 
 # Запуск контейнеров

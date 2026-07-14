@@ -33,10 +33,10 @@
 **Examples (feature name, dash, then message in English):**
 
 ```text
-IA-7576 - Add agent configuration validation
-IA-7576 - Fix timeout handling when calling MCP
-IA-7576 - Remove deprecated netbox_client dependency
-IA-7576 - Update AGENTS.md: language policy for errors, commits, and logger
+FEATURE-123 - Add agent configuration validation
+FEATURE-123 - Fix timeout handling when calling MCP
+FEATURE-123 - Remove deprecated dependency
+FEATURE-123 - Update AGENTS.md: language policy for errors, commits, and logger
 ```
 
 ---

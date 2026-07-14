@@ -19,7 +19,7 @@ dependencies = [
 
 [[project.authors]]
 name = "Andrey Shlyapin"
-email = "avshlyapin@cloud.ru"
+email = "andrey@skzd.ru"
 
 [build-system]
 requires = [ "hatchling",]
@@ -33,18 +33,6 @@ include = ["src/postgres_fastmcp", "README.md", "pyproject.toml"]
 
 [project.scripts]
 postgres-mcp = "postgres_fastmcp.main:app"
-
-[tool.uv]
-publish-url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/"
-
-[[tool.uv.index]]
-name = "mgmt"
-url = "https://repo.mng.sbercloud.tech/repository/pypi/simple"
-default = true
-
-[[tool.uv.index]]
-name = "cpe"
-url = "https://repo.mng.sbercloud.tech/repository/cpe_automation/simple"
 
 [dependency-groups]
 dev = [

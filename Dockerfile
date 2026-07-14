@@ -4,14 +4,13 @@
 # Настройки сборки (можно переопределить через --build-arg)  #
 #                                                            #
 # Большинство слоёв и объёма образа — из базового образа      #
-# (repo.mng.sbercloud.tech/python:3.12-alpine3.22).          #
+# (python:3.12-alpine3.22).                                   #
 # Наш образ добавляет ~6 слоёв и ~104 MB (.venv).            #
 # Для меньшего числа слоёв: docker build --squash .          #
 ##############################################################
 
-# Репозиторий Docker образов
-ARG REPO=repo.mng.sbercloud.tech
-# Базовый образ Python (alpine3.21 поддерживается до Nov 2026)
+# Базовый образ Python (alpine3.21 поддерживается до Nov 2026).
+# Для приватного зеркала переопредели целиком: --build-arg PYTHON_IMAGE=my.registry/python:3.12-alpine3.22
 ARG PYTHON_IMAGE=python:3.12-alpine3.22
 # Версия uv для установки через pip
 ARG UV_VERSION=0.9.26
@@ -24,7 +23,7 @@ ARG UV_WORKDIR=/app
 # ============================================================
 # Stage 1: Сборка — установка зависимостей и компиляция
 # ============================================================
-FROM ${REPO}/${PYTHON_IMAGE} AS build
+FROM ${PYTHON_IMAGE} AS build
 ARG BUILD_PACKAGES
 ARG UV_VERSION
 ARG UV_WORKDIR
@@ -33,11 +32,8 @@ ARG UV_COMPILE_BYTECODE=1
 WORKDIR $UV_WORKDIR
 SHELL ["/bin/sh", "-exc"]
 
-# Устанавливаем uv через pip (работает через корпоративное зеркало pypi)
-RUN pip install --no-cache-dir \
-    --index-url https://repo.mng.sbercloud.tech/repository/pypi/simple \
-    --trusted-host repo.mng.sbercloud.tech \
-    uv==${UV_VERSION}
+# Устанавливаем uv через pip
+RUN pip install --no-cache-dir uv==${UV_VERSION}
 
 # Устанавливаем системные зависимости для сборки (если указаны)
 RUN if [ -n "$BUILD_PACKAGES" ]; then apk add --no-cache $BUILD_PACKAGES; fi
@@ -48,8 +44,7 @@ ENV UV_COMPILE_BYTECODE=${UV_COMPILE_BYTECODE} \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     UV_FROZEN=1 \
-    UV_LOCKED=0 \
-    UV_INDEX="cpe=https://repo.mng.sbercloud.tech/repository/cpe_automation/simple mgmt=https://repo.mng.sbercloud.tech/repository/pypi/simple"
+    UV_LOCKED=0
 
 # Устанавливаем зависимости проекта (кэшируется пока uv.lock не изменится)
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -68,7 +63,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ============================================================
 # Stage 2: Production — минимальный runtime-образ
 # ============================================================
-FROM ${REPO}/${PYTHON_IMAGE} AS production
+FROM ${PYTHON_IMAGE} AS production
 ARG UV_WORKDIR
 
 # Системные зависимости для runtime (libpq для PostgreSQL).
