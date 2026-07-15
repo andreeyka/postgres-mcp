@@ -146,6 +146,66 @@ class TestReplicationCalcGetReplicationMetrics:
         assert metrics.replication_slots == []
 
 
+class TestReplicationCalcReplicatingSource:
+    """is_replicating must come from pg_stat_wal_receiver on a replica, pg_stat_replication on a primary."""
+
+    @pytest.mark.asyncio
+    async def test_replica_uses_wal_receiver(self) -> None:
+        """On a replica, is_replicating is sourced from _is_receiving_wal, not _is_replicating."""
+        calc = ReplicationCalc(AsyncMock())
+        calc._is_replica = AsyncMock(return_value=True)
+        calc._is_receiving_wal = AsyncMock(return_value=True)
+        calc._is_replicating = AsyncMock(return_value=False)  # wrong source: must not be used
+        calc._get_replication_lag = AsyncMock(return_value=0.0)
+        calc._get_replication_slots = AsyncMock(return_value=[])
+
+        metrics = await calc._get_replication_metrics()
+
+        assert metrics.is_replicating is True
+        calc._is_receiving_wal.assert_awaited_once()
+        calc._is_replicating.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_primary_uses_pg_stat_replication(self) -> None:
+        """On a primary, is_replicating is sourced from _is_replicating (downstream standbys)."""
+        calc = ReplicationCalc(AsyncMock())
+        calc._is_replica = AsyncMock(return_value=False)
+        calc._is_receiving_wal = AsyncMock(return_value=False)
+        calc._is_replicating = AsyncMock(return_value=True)
+        calc._get_replication_lag = AsyncMock(return_value=None)
+        calc._get_replication_slots = AsyncMock(return_value=[])
+
+        metrics = await calc._get_replication_metrics()
+
+        assert metrics.is_replicating is True
+        calc._is_replicating.assert_awaited_once()
+        calc._is_receiving_wal.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_is_receiving_wal_queries_wal_receiver(self) -> None:
+        """_is_receiving_wal issues a query against pg_stat_wal_receiver."""
+        from postgres_fastmcp.sql.models.row_result import RowResult
+
+        driver = AsyncMock()
+        driver.execute = AsyncMock(return_value=[RowResult(cells={"status": "streaming"})])
+        calc = ReplicationCalc(driver)
+
+        result = await calc._is_receiving_wal()
+
+        assert result is True
+        assert "pg_stat_wal_receiver" in driver.execute.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_is_receiving_wal_false_and_cached_on_error(self) -> None:
+        """When the receiver view is unavailable, _is_receiving_wal returns False and caches it off."""
+        driver = AsyncMock()
+        driver.execute = AsyncMock(side_effect=Exception("no view"))
+        calc = ReplicationCalc(driver)
+
+        assert await calc._is_receiving_wal() is False
+        assert calc._feature_supported("wal_receiver") is False
+
+
 class TestReplicationCalcIsReplica:
     """Tests for _is_replica."""
 

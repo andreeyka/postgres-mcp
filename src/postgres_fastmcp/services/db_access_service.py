@@ -99,6 +99,11 @@ class DbAccessService:
         return "public" if self.access_mode == AccessMode.BASIC else None
 
     @property
+    def table_prefix(self) -> str | None:
+        """Префикс имён таблиц из конфигурации (для access_mode=basic); None, если не задан."""
+        return self.config.table_prefix
+
+    @property
     def connection_id(self) -> str:
         """Устойчивый идентификатор для этого соединения (например, для кэша версий/расширений)."""
         if not self.db_connection or not self.db_connection.connection_url:

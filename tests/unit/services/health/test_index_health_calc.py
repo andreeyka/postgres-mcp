@@ -238,6 +238,26 @@ class TestIndexHealthCalcUnusedIndexes:
         assert "t_pkey" not in result
 
     @pytest.mark.asyncio
+    async def test_reports_index_with_null_scans(self, calc: IndexHealthCalc, mock_sql_driver: AsyncMock) -> None:
+        """Scenario: index with NULL idx_scan (stats reset on PG16+) is still reported as 0 scans."""
+        mock_sql_driver.execute.return_value = [
+            RowResult(
+                cells={
+                    "schema": "public",
+                    "table": "users",
+                    "index": "ix_null",
+                    "size_bytes": 1024 * 1024,
+                    "index_scans": None,
+                    "definition": "",
+                    "primary": False,
+                }
+            ),
+        ]
+        result = await calc.unused_indexes(max_scans=50)
+        assert "ix_null" in result
+        assert "0 times" in result
+
+    @pytest.mark.asyncio
     async def test_reports_non_primary_unused(self, calc: IndexHealthCalc, mock_sql_driver: AsyncMock) -> None:
         """Scenario: non-primary index with low scans; report lists index name, table, and size (e.g. 2.0MB)."""
         mock_sql_driver.execute.return_value = [

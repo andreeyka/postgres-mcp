@@ -1,16 +1,66 @@
+"""Проверки состояния индексов: недействительные, дубли, bloat, неиспользуемые."""
+
 from typing import Any
 
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
 
 
-class IndexHealthCalc:
+QUERY_ALL_INDEXES = """
+    SELECT
+        schemaname AS schema,
+        t.relname AS table,
+        ix.relname AS name,
+        regexp_replace(pg_get_indexdef(i.indexrelid), '^[^\\(]*\\((.*)\\)$', '\\1') AS columns,
+        regexp_replace(pg_get_indexdef(i.indexrelid), '.* USING ([^ ]*) \\(.*', '\\1') AS using,
+        indisunique AS unique,
+        indisprimary AS primary,
+        indisvalid AS valid,
+        indexprs::text,
+        indpred::text,
+        pg_get_indexdef(i.indexrelid) AS definition
+    FROM
+        pg_index i
+    INNER JOIN
+        pg_class t ON t.oid = i.indrelid
+    INNER JOIN
+        pg_class ix ON ix.oid = i.indexrelid
+    LEFT JOIN
+        pg_stat_user_indexes ui ON ui.indexrelid = i.indexrelid
+    WHERE
+        schemaname IS NOT NULL
+    ORDER BY
+        1, 2
+"""
+
+QUERY_UNUSED_INDEXES = """
+    SELECT
+        schemaname AS schema,
+        relname AS table,
+        indexrelname AS index,
+        pg_relation_size(i.indexrelid) AS size_bytes,
+        idx_scan as index_scans,
+        pg_get_indexdef(i.indexrelid) AS definition,
+        indisprimary AS primary
+    FROM
+        pg_stat_user_indexes ui
+    INNER JOIN
+        pg_index i ON ui.indexrelid = i.indexrelid
+    WHERE
+        NOT indisunique
+        AND (idx_scan IS NULL OR idx_scan <= {})
+    ORDER BY
+        pg_relation_size(i.indexrelid) DESC,
+        relname ASC
+"""
+
+
+class IndexHealthCalc(BaseHealthCalc):
     """Калькулятор для проверок состояния индексов базы данных."""
 
     _cached_indexes: list[dict[str, Any]] | None
 
-    def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
-        self.sql_driver = sql_driver
+    def __init__(self, sql_driver: HealthSqlDriver) -> None:
+        super().__init__(sql_driver)
         self._cached_indexes = None
 
     async def invalid_index_check(self) -> str:
@@ -20,7 +70,6 @@ class IndexHealthCalc:
             Строка с описанием найденных недействительных индексов.
         """
         indexes = await self._indexes()
-        # Check for invalid indexes being created
         invalid_indexes = [idx for idx in indexes if not idx["valid"]]
         if not invalid_indexes:
             return "No invalid indexes found."
@@ -42,43 +91,21 @@ class IndexHealthCalc:
         indexes_by_table: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for idx in indexes:
             key = (idx["schema"], idx["table"])
-            if key not in indexes_by_table:
-                indexes_by_table[key] = []
-            indexes_by_table[key].append(idx)
+            indexes_by_table.setdefault(key, []).append(idx)
 
         # Check each valid non-primary/unique index for duplicates
         for index in [i for i in indexes if i["valid"] and not i["primary"] and not i["unique"]]:
             table_indexes = indexes_by_table[(index["schema"], index["table"])]
-
-            # Find covering indexes
-            for covering_idx in table_indexes:
-                if (
-                    covering_idx["valid"]
-                    and covering_idx["name"] != index["name"]
-                    and self._index_covers(covering_idx["columns"], index["columns"])
-                    and covering_idx["using"] == index["using"]
-                    and covering_idx["indexprs"] == index["indexprs"]
-                    and covering_idx["indpred"] == index["indpred"]
-                    and (
-                        covering_idx["columns"] != index["columns"]
-                        or index["name"] > covering_idx["name"]
-                        or covering_idx["primary"]
-                        or covering_idx["unique"]
-                    )
-                ):
-                    dup_indexes.append({"unneeded_index": index, "covering_index": covering_idx})
-                    break
+            covering = self._find_covering_index(index, table_indexes)
+            if covering is not None:
+                dup_indexes.append({"unneeded_index": index, "covering_index": covering})
 
         if not dup_indexes:
             return "No duplicate indexes found."
 
-        # Sort by table and columns and format the output
         sorted_dups = sorted(
             dup_indexes,
-            key=lambda x: (
-                x["unneeded_index"]["table"],
-                x["unneeded_index"]["columns"],
-            ),
+            key=lambda x: (x["unneeded_index"]["table"], x["unneeded_index"]["columns"]),
         )
 
         result = ["Duplicate indexes found:"]
@@ -90,6 +117,32 @@ class IndexHealthCalc:
 
         return "\n".join(result)
 
+    def _find_covering_index(
+        self,
+        index: dict[str, Any],
+        table_indexes: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Найти индекс той же таблицы, который делает ``index`` избыточным (покрывает его)."""
+        for covering_idx in table_indexes:
+            same_shape = (
+                covering_idx["valid"]
+                and covering_idx["name"] != index["name"]
+                and self._index_covers(covering_idx["columns"], index["columns"])
+                and covering_idx["using"] == index["using"]
+                and covering_idx["indexprs"] == index["indexprs"]
+                and covering_idx["indpred"] == index["indpred"]
+            )
+            # Tie-break so only one of a pair of identical indexes is reported as redundant.
+            wins_tiebreak = (
+                covering_idx["columns"] != index["columns"]
+                or index["name"] > covering_idx["name"]
+                or covering_idx["primary"]
+                or covering_idx["unique"]
+            )
+            if same_shape and wins_tiebreak:
+                return covering_idx
+        return None
+
     async def index_bloat(self, min_size: int = 104857600) -> str:
         """Проверка индексов с раздуванием, превышающих размер min_size байт.
 
@@ -99,7 +152,7 @@ class IndexHealthCalc:
         Returns:
             Строка с описанием найденных раздувшихся индексов.
         """
-        bloated_indexes = await self.sql_driver.execute(
+        bloated_indexes = await self._rows(
             """
             WITH btree_index_atts AS (
                 SELECT
@@ -232,16 +285,13 @@ class IndexHealthCalc:
                 index_name
         """,  # noqa: E501
             params=[min_size],
-            readonly=True,
         )
 
         if not bloated_indexes:
             return "No bloated indexes found."
 
         result = ["Bloated indexes found:"]
-        # Convert RowResults to dicts first
-        bloated_indexes_dicts = [dict(idx.cells) for idx in bloated_indexes]
-        for idx in bloated_indexes_dicts:
+        for idx in bloated_indexes:
             bloat_mb = int(idx["bloat_bytes"]) / (1024 * 1024)
             total_mb = int(idx["index_bytes"]) / (1024 * 1024)
             result.append(
@@ -252,85 +302,32 @@ class IndexHealthCalc:
         return "\n".join(result)
 
     async def _indexes(self) -> list[dict[str, Any]]:
-        """Получение всех индексов из базы данных.
-
-        Returns:
-            Список словарей индексов с метаданными.
-        """
+        """Получение всех индексов из базы данных (с пер-инстансным кэшем)."""
         if self._cached_indexes:
             return self._cached_indexes
 
-        # Get index information
-        results = await self.sql_driver.execute(
-            """
-            SELECT
-                schemaname AS schema,
-                t.relname AS table,
-                ix.relname AS name,
-                regexp_replace(pg_get_indexdef(i.indexrelid), '^[^\\(]*\\((.*)\\)$', '\\1') AS columns,
-                regexp_replace(pg_get_indexdef(i.indexrelid), '.* USING ([^ ]*) \\(.*', '\\1') AS using,
-                indisunique AS unique,
-                indisprimary AS primary,
-                indisvalid AS valid,
-                indexprs::text,
-                indpred::text,
-                pg_get_indexdef(i.indexrelid) AS definition
-            FROM
-                pg_index i
-            INNER JOIN
-                pg_class t ON t.oid = i.indrelid
-            INNER JOIN
-                pg_class ix ON ix.oid = i.indexrelid
-            LEFT JOIN
-                pg_stat_user_indexes ui ON ui.indexrelid = i.indexrelid
-            WHERE
-                schemaname IS NOT NULL
-            ORDER BY
-                1, 2
-        """,
-            params=None,
-            readonly=True,
-        )
-
-        if results is None:
-            return []
-
-        # Convert RowResults to dicts
-        indexes = [dict(idx.cells) for idx in results]
+        indexes = await self._rows(QUERY_ALL_INDEXES)
 
         # Process columns
         for idx in indexes:
             cols = idx["columns"]
-            # Handle None, bytes, or string types
             if cols is None:
                 idx["columns"] = []
                 continue
 
-            # Convert bytes to string if needed
             if isinstance(cols, bytes):
                 cols = cols.decode("utf-8")
-
-            # Ensure it's a string
             if not isinstance(cols, str):
                 cols = str(cols)
 
             cols = cols.replace(") WHERE (", " WHERE ").split(", ")
-            # Unquote column names
             idx["columns"] = [col.strip('"') for col in cols]
 
         self._cached_indexes = indexes
         return indexes
 
     def _index_covers(self, indexed_columns: list[str], columns: list[str]) -> bool:
-        """Проверка, покрывают ли indexed_columns столбцы путем сравнения их префиксов.
-
-        Args:
-            indexed_columns: Столбцы потенциально покрывающего индекса
-            columns: Столбцы, проверяемые на покрытие
-
-        Returns:
-            True если indexed_columns покрывают columns, False иначе
-        """
+        """True если ``indexed_columns`` покрывают ``columns`` по префиксу."""
         return indexed_columns[: len(columns)] == columns
 
     async def unused_indexes(self, max_scans: int = 50) -> str:
@@ -342,44 +339,20 @@ class IndexHealthCalc:
         Returns:
             Строка с описанием найденных неиспользуемых индексов.
         """
-        unused = await self.sql_driver.execute(
-            """
-            SELECT
-                schemaname AS schema,
-                relname AS table,
-                indexrelname AS index,
-                pg_relation_size(i.indexrelid) AS size_bytes,
-                idx_scan as index_scans,
-                pg_get_indexdef(i.indexrelid) AS definition,
-                indisprimary AS primary
-            FROM
-                pg_stat_user_indexes ui
-            INNER JOIN
-                pg_index i ON ui.indexrelid = i.indexrelid
-            WHERE
-                NOT indisunique
-                AND idx_scan <= {}
-            ORDER BY
-                pg_relation_size(i.indexrelid) DESC,
-                relname ASC
-        """,
-            params=[max_scans],
-            readonly=True,
-        )
+        indexes = await self._rows(QUERY_UNUSED_INDEXES, params=[max_scans])
 
-        if not unused:
+        if not indexes:
             return "No unused indexes found."
-
-        indexes = [dict(idx.cells) for idx in unused]
 
         result = ["Rarely used indexes found:"]
         for idx in indexes:
             if idx["primary"]:
                 continue
             size_mb = int(idx["size_bytes"]) / (1024 * 1024)
+            scans = idx["index_scans"] if idx["index_scans"] is not None else 0
             result.append(
                 f"Index '{idx['index']}' on table '{idx['table']}' has only been scanned "
-                f"{idx['index_scans']} times and uses {size_mb:.1f}MB of space"
+                f"{scans} times and uses {size_mb:.1f}MB of space"
             )
 
         return "\n".join(result)

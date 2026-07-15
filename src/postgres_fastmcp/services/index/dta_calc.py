@@ -594,12 +594,14 @@ class DatabaseTuningAdvisor(IndexTuningBase):
             for column in candidate.columns:
                 table_columns.add((candidate.table, column))
 
-        # Create a list of table names for the query
-        tables_array = ",".join(f"'{table}'" for table, _ in table_columns)
-        columns_array = ",".join(f"'{col}'" for _, col in table_columns)
+        # Parameterized lists of table / column names (names come from parsed user queries,
+        # so they must never be string-interpolated into the SQL).
+        pairs = list(table_columns)
+        tables = [table for table, _ in pairs]
+        columns = [col for _, col in pairs]
 
         # Query to get column types and their length limits from catalog
-        type_query = f"""
+        type_query = """
             SELECT
                 c.table_name,
                 c.column_name,
@@ -610,7 +612,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
                     WHEN c.data_type = 'text' THEN true
                     WHEN (c.data_type = 'character varying' OR c.data_type = 'varchar' OR
                          c.data_type = 'character' OR c.data_type = 'char') AND
-                         (c.character_maximum_length IS NULL OR c.character_maximum_length > {max_text_length})
+                         (c.character_maximum_length IS NULL OR c.character_maximum_length > {})
                     THEN true
                     ELSE false
                 END as potential_long_text
@@ -618,11 +620,13 @@ class DatabaseTuningAdvisor(IndexTuningBase):
             LEFT JOIN pg_stats ON
                 pg_stats.tablename = c.table_name AND
                 pg_stats.attname = c.column_name
-            WHERE c.table_name IN ({tables_array})
-            AND c.column_name IN ({columns_array})
-        """  # noqa: S608
+            WHERE c.table_name = ANY({})
+            AND c.column_name = ANY({})
+        """
 
-        result = await self.sql_driver.execute(type_query, params=None, readonly=True)
+        result = await self.sql_driver.execute(
+            type_query, params=[max_text_length, tables, columns], readonly=True
+        )
 
         logger.debug("Column types and length limits: %s", result)
 

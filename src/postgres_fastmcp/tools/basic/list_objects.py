@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
+from postgres_fastmcp.app_context import get_db
 from postgres_fastmcp.enums import ObjectType
 from postgres_fastmcp.services.objects.service import ObjectsService
 
@@ -19,6 +20,6 @@ async def list_objects(
     ctx: Context = CurrentContext(),
 ) -> list[dict[str, Any]]:
     """Получить список объектов указанного типа в схеме."""
-    db = ctx.lifespan_context["db"]
+    db = get_db(ctx)
     service = ObjectsService(db=db)
     return await service.list_objects(schema_name=schema_name, object_type=object_type)

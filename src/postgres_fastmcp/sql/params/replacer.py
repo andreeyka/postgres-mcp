@@ -21,7 +21,7 @@ from postgres_fastmcp.sql.params.strategies import (
 
 
 if TYPE_CHECKING:
-    from postgres_fastmcp.services.protocols.executor import QueryExecutorPort, QueryTemplatePort
+    from postgres_fastmcp.sql.ports import QueryExecutorPort, QueryTemplatePort
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ ORDER BY table_name, ordinal_position
 
 
 class SqlParamReplacer:
-    """Заменяет параметры $N с использованием статистики столбцов и контекста. Реализует ParamReplacerPort."""
+    """Заменяет параметры $N с использованием статистики столбцов и контекста запроса."""
 
     def __init__(
         self,
@@ -189,8 +189,9 @@ class SqlParamReplacer:
                     if stats:
                         lower_bound = get_bound_values(stats, is_lower=True)
                         upper_bound = get_bound_values(stats, is_lower=False)
-                modified_query = re.sub(r"\$" + param1, str(lower_bound), modified_query)
-                modified_query = re.sub(r"\$" + param2, str(upper_bound), modified_query)
+                # (?!\d) prevents $1 from also matching the $1 inside $10, $11, ... (data corruption).
+                modified_query = re.sub(r"\$" + param1 + r"(?!\d)", str(lower_bound), modified_query)
+                modified_query = re.sub(r"\$" + param2 + r"(?!\d)", str(upper_bound), modified_query)
 
             param_matches = list(re.finditer(r"\$\d+", modified_query))
             if not param_matches:

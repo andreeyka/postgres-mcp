@@ -1,7 +1,8 @@
+"""Проверка состояния репликации: реплика/праймари, лаг, активность, слоты."""
+
 from dataclasses import dataclass
 
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
 
 
 @dataclass
@@ -26,7 +27,7 @@ class ReplicationMetrics:
     Attributes:
         is_replica: Является ли эта база данных репликой.
         replication_lag_seconds: Задержка репликации в секундах, None если недоступно.
-        is_replicating: Активна ли репликация в данный момент.
+        is_replicating: Активна ли репликация (реплика получает WAL / у праймари есть standby).
         replication_slots: Список репликационных слотов.
     """
 
@@ -36,15 +37,15 @@ class ReplicationMetrics:
     replication_slots: list[ReplicationSlot]
 
 
-class ReplicationCalc:
+class ReplicationCalc(BaseHealthCalc):
     """Калькулятор для проверок состояния репликации базы данных."""
 
     # Константы версий PostgreSQL (формат: major*10000 + minor*100 + patch)
     MIN_VERSION_REPLICATION_SLOTS = 90400  # PostgreSQL 9.4.0
     MIN_VERSION_WAL_FUNCTIONS = 100000  # PostgreSQL 10.0.0
 
-    def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
-        self.sql_driver = sql_driver
+    def __init__(self, sql_driver: HealthSqlDriver) -> None:
+        super().__init__(sql_driver)
         self._server_version: int | None = None
         self._feature_support: dict[str, bool] = {}
 
@@ -59,13 +60,11 @@ class ReplicationCalc:
 
         if metrics.is_replica:
             result.append("This is a replica database.")
-            # Check replication status
             if not metrics.is_replicating:
                 result.append("WARNING: Replica is not actively replicating from primary!")
             else:
                 result.append("Replica is actively replicating from primary.")
 
-            # Check replication lag
             if metrics.replication_lag_seconds is not None:
                 if metrics.replication_lag_seconds == 0:
                     result.append("No replication lag detected.")
@@ -78,7 +77,6 @@ class ReplicationCalc:
             else:
                 result.append("No active replicas connected.")
 
-        # Check replication slots for both primary and replica
         if metrics.replication_slots:
             active_slots = [s for s in metrics.replication_slots if s.active]
             inactive_slots = [s for s in metrics.replication_slots if not s.active]
@@ -98,36 +96,31 @@ class ReplicationCalc:
     async def _get_replication_metrics(self) -> ReplicationMetrics:
         """Получение комплексной метрики репликации.
 
-        Returns:
-            Объект ReplicationMetrics со всей информацией о репликации.
+        Смысл ``is_replicating`` зависит от роли узла: для реплики это «получаем ли WAL
+        от праймари» (``pg_stat_wal_receiver``), для праймари — «есть ли подключённые
+        standby» (``pg_stat_replication``). Раньше и там и там использовался
+        ``pg_stat_replication``, из-за чего здоровая реплика ложно помечалась как
+        «не реплицирующая».
         """
+        is_replica = await self._is_replica()
+        is_replicating = await self._is_receiving_wal() if is_replica else await self._is_replicating()
         return ReplicationMetrics(
-            is_replica=await self._is_replica(),
+            is_replica=is_replica,
             replication_lag_seconds=await self._get_replication_lag(),
-            is_replicating=await self._is_replicating(),
+            is_replicating=is_replicating,
             replication_slots=await self._get_replication_slots(),
         )
 
     async def _is_replica(self) -> bool:
-        """Проверка, является ли эта база данных репликой.
-
-        Returns:
-            True если база данных в режиме восстановления (реплика), False иначе.
-        """
-        result = await self.sql_driver.execute("SELECT pg_is_in_recovery()", params=None, readonly=True)
-        result_list = [dict(x.cells) for x in result] if result is not None else []
-        return bool(result_list[0]["pg_is_in_recovery"]) if result_list else False
+        """True если база данных в режиме восстановления (реплика)."""
+        rows = await self._rows("SELECT pg_is_in_recovery()")
+        return bool(rows[0]["pg_is_in_recovery"]) if rows else False
 
     async def _get_replication_lag(self) -> float | None:
-        """Получение задержки репликации в секундах.
-
-        Returns:
-            Задержка репликации в секундах, или None если недоступна или не является репликой.
-        """
+        """Получение задержки репликации в секундах (None если недоступна)."""
         if not self._feature_supported("replication_lag"):
             return None
 
-        # Use appropriate query based on PostgreSQL version (no string interpolation)
         version = await self._get_server_version()
         if version >= self.MIN_VERSION_WAL_FUNCTIONS:
             query = """
@@ -151,91 +144,64 @@ class ReplicationCalc:
             """
 
         try:
-            result = await self.sql_driver.execute(
-                query,
-                params=None,
-                readonly=True,
-            )
-            result_list = [dict(x.cells) for x in result] if result is not None else []
-            return float(result_list[0]["replication_lag"]) if result_list else None
+            rows = await self._rows(query)
+            return float(rows[0]["replication_lag"]) if rows else None
         except Exception:
             self._feature_support["replication_lag"] = False
             return None
 
     async def _get_replication_slots(self) -> list[ReplicationSlot]:
-        """Получение информации о репликационных слотах.
-
-        Returns:
-            Список объектов ReplicationSlot.
-        """
+        """Получение информации о репликационных слотах."""
         if await self._get_server_version() < self.MIN_VERSION_REPLICATION_SLOTS or not self._feature_supported(
             "replication_slots"
         ):
             return []
 
         try:
-            result = await self.sql_driver.execute(
-                """
-                SELECT
-                    slot_name,
-                    database,
-                    active
-                FROM pg_replication_slots
-            """,
-                params=None,
-                readonly=True,
-            )
-            if result is None:
-                return []
-            result_list = [dict(x.cells) for x in result]
+            rows = await self._rows("SELECT slot_name, database, active FROM pg_replication_slots")
             return [
                 ReplicationSlot(
                     slot_name=row["slot_name"],
                     database=row["database"],
                     active=row["active"],
                 )
-                for row in result_list
+                for row in rows
             ]
         except Exception:
             self._feature_support["replication_slots"] = False
             return []
 
     async def _is_replicating(self) -> bool:
-        """Проверка активности репликации.
-
-        Returns:
-            True если репликация активна, False иначе.
-        """
+        """True если у праймари есть подключённые standby (по pg_stat_replication)."""
         if not self._feature_supported("replicating"):
             return False
 
         try:
-            result = await self.sql_driver.execute("SELECT state FROM pg_stat_replication", params=None, readonly=True)
-            result_list = [dict(x.cells) for x in result] if result is not None else []
-            return bool(result_list and len(result_list) > 0)
+            rows = await self._rows("SELECT state FROM pg_stat_replication")
+            return bool(rows)
         except Exception:
             self._feature_support["replicating"] = False
             return False
 
-    async def _get_server_version(self) -> int:
-        """Получение версии сервера PostgreSQL в виде числа.
+    async def _is_receiving_wal(self) -> bool:
+        """True если реплика получает WAL от праймари (по pg_stat_wal_receiver, PG 9.6+)."""
+        if not self._feature_supported("wal_receiver"):
+            return False
 
-        Returns:
-            Номер версии сервера (например, 100000 для версии 10.0).
-        """
+        try:
+            rows = await self._rows("SELECT status FROM pg_stat_wal_receiver")
+            return bool(rows)
+        except Exception:
+            self._feature_support["wal_receiver"] = False
+            return False
+
+    async def _get_server_version(self) -> int:
+        """Получение версии сервера PostgreSQL в виде числа (например, 100000 для 10.0)."""
         if self._server_version is None:
-            result = await self.sql_driver.execute("SHOW server_version_num", params=None, readonly=True)
-            result_list = [dict(x.cells) for x in result] if result is not None else []
-            self._server_version = int(result_list[0]["server_version_num"]) if result_list else 0
+            rows = await self._rows("SHOW server_version_num")
+            self._server_version = int(rows[0]["server_version_num"]) if rows else 0
         return self._server_version
 
     def _feature_supported(self, feature: str) -> bool:
-        """Проверка поддержки функции и кэширование результата.
-
-        Args:
-            feature: Имя функции для проверки.
-
-        Returns:
-            True если функция поддерживается, False иначе.
-        """
+        """Проверка поддержки функции и кэширование результата."""
         return self._feature_support.get(feature, True)

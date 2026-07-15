@@ -36,7 +36,6 @@ from pglast.ast import (
     JoinExpr,
     MinMaxExpr,
     NamedArgExpr,
-    NotifyStmt,
     NullTest,
     ParamRef,
     PrepareStmt,
@@ -63,7 +62,6 @@ from pglast.ast import (
     TypeCast,
     TypeName,
     UpdateStmt,
-    VacuumStmt,
     VariableShowStmt,
     WindowClause,
     WindowDef,
@@ -77,7 +75,6 @@ ALLOWED_STMT_TYPES: set[type] = {
     ExplainStmt,
     CreateExtensionStmt,
     VariableShowStmt,
-    VacuumStmt,
     PrepareStmt,
     DeallocateStmt,
     DeclareCursorStmt,
@@ -140,7 +137,10 @@ ALLOWED_NODE_TYPES: set[type] = ALLOWED_STMT_TYPES | {
     CollateClause,
     TargetEntry,
     ScalarArrayOpExpr,
-    NotifyStmt,
 }
 
 DML_STMT_TYPES: set[type] = {InsertStmt, UpdateStmt, DeleteStmt}
+
+# Note: VACUUM/ANALYZE (VacuumStmt) are intentionally NOT allowed in any mode — they write
+# to disk and cannot run inside the executor's wrapped transaction block. They are rejected
+# with StatementTypeNotAllowedError rather than failing later at execution time.

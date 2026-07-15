@@ -1,9 +1,9 @@
-"""Доступность расширений и статус hypopg. Реализует адаптер ExtensionInspectorPort."""
+"""Доступность расширений и статус hypopg (адаптер над исполнителем SQL)."""
 
 import logging
 from typing import Any, Literal, cast
 
-from postgres_fastmcp.services.protocols.extensions import ExtensionStatus
+from postgres_fastmcp.sql.extensions.status import ExtensionStatus
 from postgres_fastmcp.sql.extensions.version import get_postgres_version
 
 
@@ -21,7 +21,7 @@ CATALOG_ERROR_MESSAGE = (
 
 
 class ExtensionInspectorAdapter:
-    """Адаптер, реализующий ExtensionInspectorPort с использованием исполнителя и идентификатора подключения."""
+    """Адаптер проверки расширений и версии PostgreSQL поверх исполнителя SQL и идентификатора подключения."""
 
     def __init__(
         self,
