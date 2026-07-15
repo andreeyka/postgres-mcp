@@ -26,6 +26,7 @@ def mock_db_access(mock_executor: AsyncMock) -> MagicMock:
     db.connection_id = "test://localhost:5432/testdb"
     db.access_mode = AccessMode.FULL
     db.write_mode = False
+    db.table_prefix = None
     db.config = MagicMock()
     db.config.table_prefix = None
     return db

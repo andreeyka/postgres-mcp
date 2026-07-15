@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
+from postgres_fastmcp.app_context import get_db
 from postgres_fastmcp.enums import TopQueriesSortBy
 from postgres_fastmcp.services.top_queries.service import TopQueriesService
 
@@ -22,6 +23,6 @@ async def get_top_queries(
     ctx: Context = CurrentContext(),
 ) -> str:
     """Топ запросов из pg_stat_statements по выбранному критерию."""
-    db = ctx.lifespan_context["db"]
+    db = get_db(ctx)
     service = TopQueriesService(db=db)
     return await service.get_top_queries(sort_by=sort_by, limit=limit)

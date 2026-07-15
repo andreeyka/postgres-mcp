@@ -21,7 +21,7 @@ from postgres_fastmcp.sql.params.strategies import (
 
 
 if TYPE_CHECKING:
-    from postgres_fastmcp.services.protocols.executor import QueryExecutorPort, QueryTemplatePort
+    from postgres_fastmcp.sql.ports import QueryExecutorPort, QueryTemplatePort
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ ORDER BY table_name, ordinal_position
 
 
 class SqlParamReplacer:
-    """Заменяет параметры $N с использованием статистики столбцов и контекста. Реализует ParamReplacerPort."""
+    """Заменяет параметры $N с использованием статистики столбцов и контекста запроса."""
 
     def __init__(
         self,

@@ -162,13 +162,7 @@ ignore = [
     "ARG005",  # Unused lambda argument - acceptable for test callbacks
     "ARG001",  # Unused function argument - acceptable for mocks and fixtures
 ]
-# Tool and explain layers: raise in place, messages in English (AGENTS.md)
-"src/postgres_fastmcp/explain/*.py" = ["TRY003", "EM101", "EM102", "TRY301", "RSE102"]
-"src/postgres_fastmcp/services/explain_service.py" = ["RSE102"]
-"src/postgres_fastmcp/services/index_analysis_service.py" = ["RSE102"]
-"src/postgres_fastmcp/services/top_queries_service.py" = ["RSE102"]
-"src/postgres_fastmcp/services/sql_execution_service.py" = ["TRY003", "EM101"]
-"src/postgres_fastmcp/services/objects_service.py" = ["SLF001"]
+# Facade layers touch driver internals (SLF001); index/top_queries raise in place (RSE102)
 "src/postgres_fastmcp/services/schema/service.py" = ["SLF001"]
 "src/postgres_fastmcp/services/objects/*.py" = ["SLF001"]
 "src/postgres_fastmcp/services/index/service.py" = ["RSE102"]

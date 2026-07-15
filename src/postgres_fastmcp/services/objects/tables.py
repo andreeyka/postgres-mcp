@@ -58,8 +58,8 @@ class TablesService:
             if rows
             else []
         )
-        if self.db.access_mode == AccessMode.BASIC and self.db.config.table_prefix:
-            prefix = self.db.config.table_prefix.lower()
+        if self.db.access_mode == AccessMode.BASIC and self.db.table_prefix:
+            prefix = self.db.table_prefix.lower()
             objects = [o for o in objects if o["name"].lower().startswith(prefix)]
         return objects
 

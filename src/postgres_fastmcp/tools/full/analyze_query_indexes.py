@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
+from postgres_fastmcp.app_context import get_db
 from postgres_fastmcp.enums import AnalysisMethod
 from postgres_fastmcp.services.index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.services.index.service import IndexAnalysisService
@@ -30,7 +31,7 @@ async def analyze_query_indexes(
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
     """Рекомендовать индексы под список запросов."""
-    db = ctx.lifespan_context["db"]
+    db = get_db(ctx)
     service = IndexAnalysisService(db=db)
     return await service.analyze_query_indexes(
         method=method,

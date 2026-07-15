@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
+from postgres_fastmcp.app_context import get_db
 from postgres_fastmcp.services.health.service import HealthService
 from postgres_fastmcp.tools.constants import HEALTH_TYPE_VALUES
 
@@ -21,6 +22,6 @@ async def analyze_db_health(
     ctx: Context = CurrentContext(),
 ) -> str:
     """Запустить набор health-проверок и вернуть отчёт."""
-    db = ctx.lifespan_context["db"]
+    db = get_db(ctx)
     service = HealthService(db=db)
     return await service.analyze_db_health(health_type=health_type)

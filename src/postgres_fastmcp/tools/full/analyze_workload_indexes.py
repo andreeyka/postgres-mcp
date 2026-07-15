@@ -6,6 +6,7 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
+from postgres_fastmcp.app_context import get_db
 from postgres_fastmcp.enums import AnalysisMethod
 from postgres_fastmcp.services.index.service import IndexAnalysisService
 
@@ -22,7 +23,7 @@ async def analyze_workload_indexes(
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
     """Рекомендовать индексы по агрегированной нагрузке БД."""
-    db = ctx.lifespan_context["db"]
+    db = get_db(ctx)
     service = IndexAnalysisService(db=db)
     return await service.analyze_workload_indexes(
         method=method,

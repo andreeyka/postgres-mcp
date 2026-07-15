@@ -4,13 +4,14 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
+from postgres_fastmcp.app_context import LifespanContext
 from postgres_fastmcp.config import Settings
 from postgres_fastmcp.services.db_access_service import DbAccessService
 
 
 def build_lifespan(
     settings: Settings,
-) -> Callable[[Any], AbstractAsyncContextManager[dict[str, Any]]]:
+) -> Callable[[Any], AbstractAsyncContextManager[LifespanContext]]:
     """Собрать async context manager, пригодный для FastMCP(lifespan=...).
 
     Args:
@@ -23,10 +24,11 @@ def build_lifespan(
     """
 
     @asynccontextmanager
-    async def lifespan(server: Any) -> AsyncIterator[dict[str, Any]]:  # noqa: ARG001, ANN401
+    async def lifespan(server: Any) -> AsyncIterator[LifespanContext]:  # noqa: ARG001, ANN401
         db = DbAccessService(settings.database)
+        context: LifespanContext = {"db": db, "settings": settings}
         try:
-            yield {"db": db, "settings": settings}
+            yield context
         finally:
             await db.close()
 
