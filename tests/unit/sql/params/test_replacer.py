@@ -133,6 +133,17 @@ class TestSqlParamReplacerReplaceParametersBetween:
         result = await replacer.replace_parameters(query)
         assert "10" in result and "100" in result
 
+    async def test_between_single_digit_param_does_not_corrupt_two_digit_param(self) -> None:
+        """BETWEEN $1 substitution must not also rewrite the $1 inside $15 (data-corruption regression)."""
+        executor = _make_executor()  # execute returns None -> default bounds 10/100, no column stats
+        template = _make_template()
+        replacer = SqlParamReplacer(executor, template)
+        query = "SELECT * FROM t WHERE x BETWEEN $1 AND $2 AND id = $15"
+        result = await replacer.replace_parameters(query)
+        # Without the (?!\d) guard, $15 becomes "10" + "5" = "105"; with it, $15 is replaced independently.
+        assert "105" not in result
+        assert "$" not in result
+
     @patch("postgres_fastmcp.sql.params.replacer.get_table_aliases")
     @patch("postgres_fastmcp.sql.params.replacer.extract_columns")
     async def test_between_with_qualified_column_ref_resolves_table_via_alias(

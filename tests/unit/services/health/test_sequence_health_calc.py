@@ -8,7 +8,7 @@ class TestSequenceMaxValueForType:
     """_max_value_for_type must use the correct ceiling per integer width."""
 
     def test_smallint(self) -> None:
-        """smallint sequences top out at 32767, not the bigint ceiling."""
+        """Smallint sequences top out at 32767, not the bigint ceiling."""
         assert SequenceHealthCalc._max_value_for_type("smallint") == 32767
 
     def test_integer(self) -> None:

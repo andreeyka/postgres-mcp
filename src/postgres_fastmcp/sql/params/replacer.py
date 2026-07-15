@@ -189,8 +189,9 @@ class SqlParamReplacer:
                     if stats:
                         lower_bound = get_bound_values(stats, is_lower=True)
                         upper_bound = get_bound_values(stats, is_lower=False)
-                modified_query = re.sub(r"\$" + param1, str(lower_bound), modified_query)
-                modified_query = re.sub(r"\$" + param2, str(upper_bound), modified_query)
+                # (?!\d) prevents $1 from also matching the $1 inside $10, $11, ... (data corruption).
+                modified_query = re.sub(r"\$" + param1 + r"(?!\d)", str(lower_bound), modified_query)
+                modified_query = re.sub(r"\$" + param2 + r"(?!\d)", str(upper_bound), modified_query)
 
             param_matches = list(re.finditer(r"\$\d+", modified_query))
             if not param_matches:

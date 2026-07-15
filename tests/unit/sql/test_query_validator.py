@@ -45,6 +45,18 @@ class TestQueryValidatorReadOnly:
         with pytest.raises((StatementTypeNotAllowedError, DdlNotAllowedError)):
             v.validate("CREATE TABLE t (id int)")
 
+    def test_blocks_vacuum(self) -> None:
+        """VACUUM writes to disk and must be rejected in read-only mode."""
+        v = QueryValidator(read_only=True)
+        with pytest.raises(StatementTypeNotAllowedError):
+            v.validate("VACUUM users")
+
+    def test_blocks_analyze(self) -> None:
+        """ANALYZE (a VacuumStmt in the grammar) writes statistics and is rejected in read-only mode."""
+        v = QueryValidator(read_only=True)
+        with pytest.raises(StatementTypeNotAllowedError):
+            v.validate("ANALYZE users")
+
     def test_parse_error_raises_sql_parse_error(self) -> None:
         """Invalid SQL raises SqlParseError."""
         v = QueryValidator(read_only=True)
@@ -136,3 +148,9 @@ class TestQueryValidatorDmlMode:
         """With read_only=False, DELETE is allowed."""
         v = QueryValidator(read_only=False)
         v.validate("DELETE FROM t WHERE id = 1")
+
+    def test_vacuum_rejected_even_in_write_mode(self) -> None:
+        """VACUUM cannot run in the executor's wrapped transaction, so it is rejected in every mode."""
+        v = QueryValidator(read_only=False)
+        with pytest.raises(StatementTypeNotAllowedError):
+            v.validate("VACUUM users")
