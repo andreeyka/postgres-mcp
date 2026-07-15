@@ -47,7 +47,7 @@ QUERY_UNUSED_INDEXES = """
         pg_index i ON ui.indexrelid = i.indexrelid
     WHERE
         NOT indisunique
-        AND idx_scan <= {}
+        AND (idx_scan IS NULL OR idx_scan <= {})
     ORDER BY
         pg_relation_size(i.indexrelid) DESC,
         relname ASC
@@ -349,9 +349,10 @@ class IndexHealthCalc(BaseHealthCalc):
             if idx["primary"]:
                 continue
             size_mb = int(idx["size_bytes"]) / (1024 * 1024)
+            scans = idx["index_scans"] if idx["index_scans"] is not None else 0
             result.append(
                 f"Index '{idx['index']}' on table '{idx['table']}' has only been scanned "
-                f"{idx['index_scans']} times and uses {size_mb:.1f}MB of space"
+                f"{scans} times and uses {size_mb:.1f}MB of space"
             )
 
         return "\n".join(result)

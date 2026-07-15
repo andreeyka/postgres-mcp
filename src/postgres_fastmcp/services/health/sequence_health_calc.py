@@ -1,6 +1,7 @@
 """Проверка последовательностей, приближающихся к максимальному значению своего типа."""
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from psycopg.sql import Identifier
 
@@ -145,10 +146,17 @@ class SequenceHealthCalc(BaseHealthCalc):
 
         return sequence_metrics
 
-    @staticmethod
-    def _max_value_for_type(column_type: str) -> int:
-        """Максимальное значение последовательности для типа столбца."""
-        return 2147483647 if column_type == "integer" else 9223372036854775807
+    # Максимум значения последовательности по типу столбца; иначе — потолок bigint.
+    _MAX_VALUE_BY_TYPE: ClassVar[dict[str, int]] = {
+        "smallint": 32767,
+        "integer": 2147483647,
+        "bigint": 9223372036854775807,
+    }
+
+    @classmethod
+    def _max_value_for_type(cls, column_type: str) -> int:
+        """Максимальное значение последовательности для типа столбца (smallint/integer/bigint)."""
+        return cls._MAX_VALUE_BY_TYPE.get(column_type, 9223372036854775807)
 
     def _parse_sequence_name(self, default_value: str) -> tuple[str, str]:
         """Разбор имени схемы и последовательности из выражения значения по умолчанию.

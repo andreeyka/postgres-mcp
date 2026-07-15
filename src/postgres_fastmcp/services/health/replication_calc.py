@@ -94,11 +94,20 @@ class ReplicationCalc(BaseHealthCalc):
         return "\n".join(result)
 
     async def _get_replication_metrics(self) -> ReplicationMetrics:
-        """Получение комплексной метрики репликации."""
+        """Получение комплексной метрики репликации.
+
+        Смысл ``is_replicating`` зависит от роли узла: для реплики это «получаем ли WAL
+        от праймари» (``pg_stat_wal_receiver``), для праймари — «есть ли подключённые
+        standby» (``pg_stat_replication``). Раньше и там и там использовался
+        ``pg_stat_replication``, из-за чего здоровая реплика ложно помечалась как
+        «не реплицирующая».
+        """
+        is_replica = await self._is_replica()
+        is_replicating = await self._is_receiving_wal() if is_replica else await self._is_replicating()
         return ReplicationMetrics(
-            is_replica=await self._is_replica(),
+            is_replica=is_replica,
             replication_lag_seconds=await self._get_replication_lag(),
-            is_replicating=await self._is_replicating(),
+            is_replicating=is_replicating,
             replication_slots=await self._get_replication_slots(),
         )
 
@@ -172,6 +181,18 @@ class ReplicationCalc(BaseHealthCalc):
             return bool(rows)
         except Exception:
             self._feature_support["replicating"] = False
+            return False
+
+    async def _is_receiving_wal(self) -> bool:
+        """True если реплика получает WAL от праймари (по pg_stat_wal_receiver, PG 9.6+)."""
+        if not self._feature_supported("wal_receiver"):
+            return False
+
+        try:
+            rows = await self._rows("SELECT status FROM pg_stat_wal_receiver")
+            return bool(rows)
+        except Exception:
+            self._feature_support["wal_receiver"] = False
             return False
 
     async def _get_server_version(self) -> int:
