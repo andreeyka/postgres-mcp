@@ -1,9 +1,40 @@
+"""Проверка последовательностей, приближающихся к максимальному значению своего типа."""
+
 from dataclasses import dataclass
 
 from psycopg.sql import Identifier
 
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+
+
+QUERY_SEQUENCE_DEFAULTS = """
+    SELECT
+        n.nspname AS table_schema,
+        c.relname AS table,
+        attname AS column,
+        format_type(a.atttypid, a.atttypmod) AS column_type,
+        pg_get_expr(d.adbin, d.adrelid) AS default_value
+    FROM
+        pg_catalog.pg_attribute a
+    INNER JOIN
+        pg_catalog.pg_class c ON c.oid = a.attrelid
+    INNER JOIN
+        pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    INNER JOIN
+        pg_catalog.pg_attrdef d ON (a.attrelid, a.attnum) = (d.adrelid, d.adnum)
+    WHERE
+        NOT a.attisdropped
+        AND a.attnum > 0
+        AND pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval%'
+        AND n.nspname NOT LIKE 'pg\\_temp\\_%'
+"""
+
+QUERY_SEQUENCE_ATTRS = """
+    SELECT
+        has_sequence_privilege({}, 'SELECT') AS readable,
+        last_value
+    FROM {}
+"""
 
 
 @dataclass
@@ -15,7 +46,7 @@ class SequenceMetrics:
         table: Имя таблицы использующей последовательность.
         column: Имя столбца использующего последовательность.
         sequence: Имя последовательности.
-        column_type: Тип столбца (integer или bigint).
+        column_type: Тип столбца (smallint, integer или bigint).
         last_value: Последнее значение используемое последовательностью.
         max_value: Максимальное значение для типа последовательности.
         is_healthy: Допустим ли уровень использования последовательности.
@@ -34,26 +65,21 @@ class SequenceMetrics:
 
     @property
     def percent_used(self) -> float:
-        """Вычислить какой процент от последовательности использован.
-
-        Returns:
-            Процент использованных значений последовательности (0-100).
-        """
+        """Процент использованных значений последовательности (0-100)."""
         return (self.last_value / self.max_value) * 100 if self.max_value else 0
 
 
-class SequenceHealthCalc:
+class SequenceHealthCalc(BaseHealthCalc):
     """Калькулятор для проверок состояния последовательностей базы данных."""
 
-    def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor, threshold: float = 0.9) -> None:
+    def __init__(self, sql_driver: HealthSqlDriver, threshold: float = 0.9) -> None:
         """Инициализация калькулятора состояния последовательностей.
 
         Args:
-            sql_driver: SQL драйвер для доступа к базе данных
-            threshold: Процент (в виде десятичной дроби) использования последовательности,
-                который вызывает предупреждение
+            sql_driver: SQL драйвер для доступа к базе данных.
+            threshold: Доля использования последовательности, вызывающая предупреждение.
         """
-        self.sql_driver = sql_driver
+        super().__init__(sql_driver)
         self.threshold = threshold
 
     async def sequence_danger_check(self) -> str:
@@ -66,8 +92,6 @@ class SequenceHealthCalc:
 
         if not metrics:
             return "No sequences found in the database."
-
-        # Сортировка по оставшимся значениям по возрастанию для показа наиболее критичных первыми
 
         unhealthy = [m for m in metrics if not m.is_healthy]
         if not unhealthy:
@@ -84,72 +108,27 @@ class SequenceHealthCalc:
         return "\n".join(result)
 
     async def _get_sequence_metrics(self) -> list[SequenceMetrics]:
-        """Получение метрик для последовательностей в базе данных.
-
-        Returns:
-            Список SequenceMetrics для всех последовательностей в базе данных.
-        """
-        # First get all sequences used as default values
-        sequences = await self.sql_driver.execute(
-            """
-            SELECT
-                n.nspname AS table_schema,
-                c.relname AS table,
-                attname AS column,
-                format_type(a.atttypid, a.atttypmod) AS column_type,
-                pg_get_expr(d.adbin, d.adrelid) AS default_value
-            FROM
-                pg_catalog.pg_attribute a
-            INNER JOIN
-                pg_catalog.pg_class c ON c.oid = a.attrelid
-            INNER JOIN
-                pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            INNER JOIN
-                pg_catalog.pg_attrdef d ON (a.attrelid, a.attnum) = (d.adrelid, d.adnum)
-            WHERE
-                NOT a.attisdropped
-                AND a.attnum > 0
-                AND pg_get_expr(d.adbin, d.adrelid) LIKE 'nextval%'
-                AND n.nspname NOT LIKE 'pg\\_temp\\_%'
-        """,
-            params=None,
-            readonly=True,
-        )
-
-        if not sequences:
+        """Получение метрик для последовательностей в базе данных."""
+        defaults = await self._rows(QUERY_SEQUENCE_DEFAULTS)
+        if not defaults:
             return []
 
-        result_list = [dict(x.cells) for x in sequences]
-
-        # Process each sequence
         sequence_metrics = []
-        for seq in result_list:
-            # Parse the sequence name from default value
+        for seq in defaults:
             schema, sequence = self._parse_sequence_name(seq["default_value"])
             if not sequence:
                 continue
 
-            # Determine max value based on column type
-            max_value = 2147483647 if seq["column_type"] == "integer" else 9223372036854775807
+            max_value = self._max_value_for_type(seq["column_type"])
 
-            # Get sequence attributes
-            attrs = await self.sql_driver.execute(
-                """
-                SELECT
-                    has_sequence_privilege({}, 'SELECT') AS readable,
-                    last_value
-                FROM {}
-                """,
+            attrs = await self._rows(
+                QUERY_SEQUENCE_ATTRS,
                 params=[Identifier(schema, sequence), Identifier(schema, sequence)],
-                readonly=True,
             )
-
             if not attrs:
                 continue
 
-            result_list = [dict(x.cells) for x in attrs]
-
-            attr = result_list[0]
+            attr = attrs[0]
             sequence_metrics.append(
                 SequenceMetrics(
                     schema=schema,
@@ -166,6 +145,11 @@ class SequenceHealthCalc:
 
         return sequence_metrics
 
+    @staticmethod
+    def _max_value_for_type(column_type: str) -> int:
+        """Максимальное значение последовательности для типа столбца."""
+        return 2147483647 if column_type == "integer" else 9223372036854775807
+
     def _parse_sequence_name(self, default_value: str) -> tuple[str, str]:
         """Разбор имени схемы и последовательности из выражения значения по умолчанию.
 
@@ -178,12 +162,9 @@ class SequenceHealthCalc:
         # Handle both formats:
         # nextval('id_seq'::regclass)
         # nextval(('id_seq'::text)::regclass)
-
-        # Remove nextval and cast parts
         clean_value = default_value.replace("nextval('", "").replace("'::regclass)", "")
         clean_value = clean_value.replace("('", "").replace("'::text)", "")
 
-        # Split into schema and sequence
         parts = clean_value.split(".")
         if len(parts) == 1:
             return "public", parts[0]  # Default to public schema
