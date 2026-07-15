@@ -18,7 +18,7 @@ class TableAliasVisitor(Visitor):
         self.aliases: dict[str, str] = {}
         self.tables: set[str] = set()
 
-    def __call__(self, node: Node) -> tuple[dict[str, str], set[str]]:
+    def __call__(self, node: Node | tuple[Any, ...]) -> tuple[dict[str, str], set[str]]:
         """Обход узла AST и возврат собранных алиасов и имён таблиц.
 
         Args:
@@ -27,7 +27,7 @@ class TableAliasVisitor(Visitor):
         Returns:
             Кортеж (алиасы: имя_алиаса -> имя_таблицы, множество имён таблиц).
         """
-        super().__call__(node)  # type: ignore[no-untyped-call]
+        super().__call__(node)
         return self.aliases, self.tables
 
     def visit_RangeVar(self, _ancestors: list[Node], node: Node) -> None:  # noqa: N802
@@ -54,13 +54,13 @@ class ColumnCollector(Visitor):
         super().__init__()
         self.context_stack: list[tuple[set[str], dict[str, str]]] = []
         self.columns: dict[str, set[str]] = {}
-        self.target_list: list[Any] | None = None
+        self.target_list: tuple[Any, ...] | None = None
         self.inside_select = False
         self.column_aliases: dict[str, dict[str, Any]] = {}
         self.current_query_level = 0
         self.column_cache: dict[str, set[str]] = column_cache or {}
 
-    def __call__(self, node: Node) -> dict[str, set[str]]:
+    def __call__(self, node: Node | tuple[Any, ...]) -> dict[str, set[str]]:
         """Обход узла AST и возврат собранных столбцов по контексту.
 
         Args:
@@ -69,7 +69,7 @@ class ColumnCollector(Visitor):
         Returns:
             Словарь: ключ контекста -> множество имён столбцов.
         """
-        super().__call__(node)  # type: ignore[no-untyped-call]
+        super().__call__(node)
         return self.columns
 
     def _column_exists(self, table: str, column: str) -> bool:
@@ -146,7 +146,7 @@ class ColumnCollector(Visitor):
 
     def _process_sort_item(self, sort_item: SortBy) -> None:
         """Обработка элемента ORDER BY: раскрытие алиаса или обход узла сортировки."""
-        if not hasattr(sort_item, "node"):
+        if not hasattr(sort_item, "node") or sort_item.node is None:
             return
         if isinstance(sort_item.node, ColumnRef) and hasattr(sort_item.node, "fields") and sort_item.node.fields:
             fields = [f.sval for f in sort_item.node.fields if hasattr(f, "sval")]
