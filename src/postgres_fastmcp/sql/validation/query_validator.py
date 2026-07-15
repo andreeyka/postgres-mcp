@@ -153,9 +153,9 @@ class QueryValidator:
                     raise ExplainAnalyzeNotSupportedError
 
         if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
-            raise CreateExtensionNotSupportedError(node.extname)
+            raise CreateExtensionNotSupportedError(node.extname or "")
 
-        for attr_name in node.__slots__:
+        for attr_name in getattr(node, "__slots__", ()):
             if attr_name.startswith("_"):
                 continue
             try:
