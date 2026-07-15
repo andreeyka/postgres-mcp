@@ -282,7 +282,7 @@ class IndexTuningBase(ABC):
         # Add trace accumulator
         self._dta_traces: list[str] = []
 
-    async def analyze_workload(  # noqa: PLR0913
+    async def analyze_workload(  # noqa: PLR0913, C901
         self,
         workload: list[dict[str, Any]] | None = None,
         sql_file: str | None = None,
@@ -327,11 +327,13 @@ class IndexTuningBase(ABC):
             budget_mb=max_index_size_mb,
         )
 
+        prechecks_passed = False
         try:
             # Run pre-checks
             precheck_result = await self._run_prechecks(session)
             if precheck_result:
                 return precheck_result
+            prechecks_passed = True
 
             # First try to use explicit workload if provided
             if workload:
@@ -387,15 +389,24 @@ class IndexTuningBase(ABC):
                 )
                 session.recommendations = await self._format_recommendations(query_weights, recommendations)
 
-                # Reset HypoPG only once at the end
-                await self.sql_driver.execute("SELECT hypopg_reset();", params=None, readonly=True)
-
         except Exception as e:
             logger.exception("Error in workload analysis")
             session.error = f"Error in workload analysis: {e}"
+        finally:
+            # Always drop the hypothetical indexes created during analysis, even on error,
+            # so they do not leak into the connection's session state.
+            if prechecks_passed:
+                await self._reset_hypopg_quietly()
 
         session.dta_traces = self._dta_traces
         return session
+
+    async def _reset_hypopg_quietly(self) -> None:
+        """Сбросить гипотетические индексы hypopg, подавляя ошибки (расширение может быть недоступно)."""
+        try:
+            await self.sql_driver.execute("SELECT hypopg_reset();", params=None, readonly=True)
+        except Exception:
+            logger.debug("hypopg_reset failed (extension may be unavailable)", exc_info=True)
 
     async def _run_prechecks(self, session: IndexTuningResult) -> IndexTuningResult | None:
         """Выполнить предварительные проверки перед анализом.
