@@ -1,6 +1,7 @@
 # ruff: noqa: TRY301
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from postgres_fastmcp.common.errors import (
@@ -17,7 +18,6 @@ from postgres_fastmcp.common.errors import (
     IndexDefinitionNotDictError,
     MissingKeyInIndexDefinitionError,
 )
-from postgres_fastmcp.services.index.dta_calc import DatabaseTuningAdvisor
 from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
 from postgres_fastmcp.sql.models.index_definition import IndexDefinition
@@ -220,7 +220,7 @@ class ExplainPlanTool:
         indexes: frozenset[IndexDefinition],
         *,
         use_generic_plan: bool = False,
-        dta: DatabaseTuningAdvisor | None = None,
+        trace: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Сформировать план объяснения для запроса с указанным набором индексов.
 
@@ -228,7 +228,7 @@ class ExplainPlanTool:
             query_text: SQL-запрос для объяснения.
             indexes: Frozenset объектов IndexDefinition — индексы для включения.
             use_generic_plan: Использовать опцию GENERIC_PLAN (по умолчанию False).
-            dta: Опциональный экземпляр DatabaseTuningAdvisor для трассировки (по умолчанию None).
+            trace: Опциональный колбэк для трассировки (например, dta_trace советника индексов).
 
         Returns:
             План объяснения в виде словаря.
@@ -258,11 +258,11 @@ class ExplainPlanTool:
                 if isinstance(plan_data, list) and len(plan_data) > 0:
                     plan_dict: dict[str, Any] = plan_data[0]
                     return plan_dict
-                if dta:
-                    dta.dta_trace(f"      - plan_data is an empty list with plan_data type: {type(plan_data)}")
+                if trace:
+                    trace(f"      - plan_data is an empty list with plan_data type: {type(plan_data)}")
 
-            if dta:
-                dta.dta_trace("      - returning empty plan")
+            if trace:
+                trace("      - returning empty plan")
             # Return empty plan if no result
             return {"Plan": {"Total Cost": float("inf")}}
 

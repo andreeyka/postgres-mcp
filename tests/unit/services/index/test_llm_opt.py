@@ -299,7 +299,7 @@ class TestLLMOptimizerToolGenerateRecommendations:
             ),
             patch.object(tool, "_get_table_size", new_callable=AsyncMock, return_value=100.0),
             patch(
-                "postgres_fastmcp.services.explain.explain_plan.ExplainPlanTool",
+                "postgres_fastmcp.services.index.llm_opt.ExplainPlanTool",
                 return_value=MagicMock(
                     explain=AsyncMock(return_value=MagicMock(value='{"Plan": {"Node Type": "Seq Scan", "Plans": []}}'))
                 ),

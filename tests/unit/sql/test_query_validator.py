@@ -108,6 +108,23 @@ class TestQueryValidatorFunctions:
             v.validate("SELECT pg_sleep(1)")
         assert "not allowed" in str(exc_info.value).lower() or "pg_sleep" in str(exc_info.value)
 
+    def test_blocks_disallowed_table_function(self) -> None:
+        """Disallowed function in FROM (RangeFunction) is caught by the pglast traversal."""
+        v = QueryValidator(read_only=True)
+        with pytest.raises(FunctionNotAllowedError):
+            v.validate("SELECT * FROM pg_sleep(1)")
+
+    def test_blocks_disallowed_function_inside_values(self) -> None:
+        """Disallowed function inside a VALUES list (nested tuple) is caught."""
+        v = QueryValidator(read_only=True)
+        with pytest.raises(FunctionNotAllowedError):
+            v.validate("SELECT * FROM (VALUES (pg_sleep(1))) AS v(x)")
+
+    def test_allows_values_list(self) -> None:
+        """Plain VALUES lists with constants pass validation."""
+        v = QueryValidator(read_only=True)
+        v.validate("SELECT * FROM (VALUES (1), (2)) AS v(x)")
+
 
 class TestQueryValidatorExplainAnalyze:
     """EXPLAIN ANALYZE is blocked by default, allowed when allow_explain_analyze=True."""
