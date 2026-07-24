@@ -1,6 +1,7 @@
 """Сервис доступа к базе данных: пул, исполнитель и безопасная обертка."""
 
-from postgres_fastmcp.app.config.database import DatabaseConfig
+from typing import Protocol
+
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.ports import SqlDriverPort
@@ -17,10 +18,31 @@ ERROR_DB_URL_NOT_SET = "URL подключения к базе данных не
 LOG_UNRESTRICTED = "Используется SqlExecutor без ограничений (write_mode=True)"
 
 
+class DatabaseConfigPort(Protocol):
+    """Поля конфигурации БД, нужные сервису доступа.
+
+    Структурно реализуется ``app.config.database.DatabaseConfig`` — сам домен
+    при этом не зависит от слоя приложения.
+    """
+
+    pool_min_size: int
+    pool_max_size: int
+    write_mode: bool
+    access_mode: AccessMode
+    safe_sql_timeout: int
+    table_prefix: str | None
+    query_tag: str | None
+
+    @property
+    def database_uri(self) -> str | None:
+        """Строка подключения к БД (None, если не задана)."""
+        ...
+
+
 class DbAccessService:
     """Сервис доступа к базе данных: пул и исполнитель (обычный или безопасный)."""
 
-    def __init__(self, config: DatabaseConfig) -> None:
+    def __init__(self, config: DatabaseConfigPort) -> None:
         """Инициализация с конфигурацией базы данных.
 
         Args:
@@ -63,7 +85,7 @@ class DbAccessService:
             logger.debug(LOG_UNRESTRICTED)
             self._executor = base
         else:
-            query_tag = getattr(self.config, "query_tag", None) or "postgres_fastmcp"
+            query_tag = self.config.query_tag or "postgres_fastmcp"
             safe_config = SafeSqlConfig(
                 timeout=self.config.safe_sql_timeout,
                 allowed_schema=self._allowed_schema(),
