@@ -13,6 +13,7 @@ from pglast import parse_sql
 from pglast.ast import Node, SelectStmt
 
 from postgres_fastmcp.common.utils import calculate_improvement_multiple
+from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool
 from postgres_fastmcp.sql.ast.visitors import TableAliasVisitor
 from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
@@ -508,14 +509,9 @@ class IndexTuningBase(ABC):
         if existing_plan:
             return existing_plan
 
-        # Lazy import to avoid circular dependency (explain -> index -> explain)
-        from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool  # noqa: PLC0415
-
-        # Generate the plan using the static method
         explain_plan_tool = ExplainPlanTool(self.sql_driver, connection_id=self._connection_id)
-        # Pass None for dta since IndexTuningBase is not necessarily DatabaseTuningAdvisor
         plan = await explain_plan_tool.generate_explain_plan_with_hypothetical_indexes(
-            query_text, indexes, use_generic_plan=False, dta=None
+            query_text, indexes, use_generic_plan=False
         )
 
         # Cache the result
