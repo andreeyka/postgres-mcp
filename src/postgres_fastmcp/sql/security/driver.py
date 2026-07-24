@@ -7,7 +7,7 @@ from typing import Any, cast
 from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.common.errors import QueryTimeoutError
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 from postgres_fastmcp.sql.security.config import SafeSqlConfig
 from postgres_fastmcp.sql.validation.query_validator import QueryValidator
 

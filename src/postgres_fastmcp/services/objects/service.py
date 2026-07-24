@@ -4,6 +4,7 @@ from postgres_fastmcp.common.errors import SchemaAccessError, UnsupportedObjectT
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
+from postgres_fastmcp.sql.catalog import QUERY_LIST_SCHEMAS
 
 from .extensions import ExtensionsService
 from .sequences import SequencesService
@@ -11,7 +12,7 @@ from .tables import TablesService
 
 
 class ObjectsService:
-    """Фасад: маршрутизирует вызовы list_objects и get_object_details в отдельные сервисы."""
+    """Фасад каталога БД: схемы, объекты и их детали (делегирует профильным сервисам)."""
 
     def __init__(self, db: DbAccessService) -> None:
         """Инициализация сервиса с подключением к базе данных."""
@@ -37,6 +38,26 @@ class ObjectsService:
                 raise SchemaAccessError(schema_name)
             return "public"
         return schema_name
+
+    async def list_schemas(self) -> list[dict[str, Any]]:
+        """Список всех схем базы данных.
+
+        В режиме BASIC возвращает только схему public (без обращения к БД).
+
+        Returns:
+            Список словарей с информацией о схемах (schema_name, schema_owner и т.д.).
+        """
+        if self.db.access_mode == AccessMode.BASIC:
+            return [
+                {
+                    "schema_name": "public",
+                    "schema_owner": "postgres",
+                    "schema_type": "User Schema",
+                }
+            ]
+
+        rows = await self.db.sql_driver.execute(QUERY_LIST_SCHEMAS, params=None, readonly=True)
+        return [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
 
     async def list_objects(
         self,

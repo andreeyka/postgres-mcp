@@ -5,7 +5,7 @@ from typing import Any, cast
 from postgres_fastmcp.common.utils import decode_bytes_to_utf8
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
-from postgres_fastmcp.sql.catalog.queries import QUERY_GET_SEQUENCE_DETAILS, QUERY_LIST_SEQUENCES
+from postgres_fastmcp.sql.catalog import QUERY_GET_SEQUENCE_DETAILS, QUERY_LIST_SEQUENCES
 
 
 class SequencesService:

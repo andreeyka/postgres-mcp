@@ -4,8 +4,8 @@ import logging
 
 from psycopg_pool import AsyncConnectionPool
 
+from postgres_fastmcp.common.errors import ConnectionFailedError
 from postgres_fastmcp.common.utils import obfuscate_password
-from postgres_fastmcp.sql.driver.errors import ConnectionFailedError
 
 
 logger = logging.getLogger(__name__)

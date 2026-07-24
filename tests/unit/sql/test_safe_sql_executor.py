@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from postgres_fastmcp.common.errors import QueryTimeoutError, SchemaNotAllowedError
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 from postgres_fastmcp.sql.security.config import SafeSqlConfig
 from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 from postgres_fastmcp.sql.validation.query_validator import QueryValidator

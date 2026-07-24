@@ -67,5 +67,3 @@ def create_server(
         mcp.disable(tags={ToolTag.FULL.value})
 
     return mcp
-
-

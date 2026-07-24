@@ -623,9 +623,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
             AND c.column_name = ANY({})
         """
 
-        result = await self.sql_driver.execute(
-            type_query, params=[max_text_length, tables, columns], readonly=True
-        )
+        result = await self.sql_driver.execute(type_query, params=[max_text_length, tables, columns], readonly=True)
 
         logger.debug("Column types and length limits: %s", result)
 

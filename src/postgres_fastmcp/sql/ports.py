@@ -7,7 +7,7 @@
 
 from typing import Any, Protocol
 
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 
 
 class QueryExecutorPort(Protocol):

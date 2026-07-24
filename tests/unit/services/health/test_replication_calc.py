@@ -184,7 +184,7 @@ class TestReplicationCalcReplicatingSource:
     @pytest.mark.asyncio
     async def test_is_receiving_wal_queries_wal_receiver(self) -> None:
         """_is_receiving_wal issues a query against pg_stat_wal_receiver."""
-        from postgres_fastmcp.sql.models.row_result import RowResult
+        from postgres_fastmcp.sql.models import RowResult
 
         driver = AsyncMock()
         driver.execute = AsyncMock(return_value=[RowResult(cells={"status": "streaming"})])
@@ -212,7 +212,7 @@ class TestReplicationCalcIsReplica:
     @pytest.mark.asyncio
     async def test_true_when_in_recovery(self) -> None:
         """Scenario: pg_is_in_recovery returns true; _is_replica returns True."""
-        from postgres_fastmcp.sql.models.row_result import RowResult
+        from postgres_fastmcp.sql.models import RowResult
 
         mock_driver = AsyncMock()
         mock_driver.execute = AsyncMock(return_value=[RowResult(cells={"pg_is_in_recovery": True})])
@@ -223,7 +223,7 @@ class TestReplicationCalcIsReplica:
     @pytest.mark.asyncio
     async def test_false_when_not_in_recovery(self) -> None:
         """Scenario: pg_is_in_recovery returns false; _is_replica returns False."""
-        from postgres_fastmcp.sql.models.row_result import RowResult
+        from postgres_fastmcp.sql.models import RowResult
 
         mock_driver = AsyncMock()
         mock_driver.execute = AsyncMock(return_value=[RowResult(cells={"pg_is_in_recovery": False})])

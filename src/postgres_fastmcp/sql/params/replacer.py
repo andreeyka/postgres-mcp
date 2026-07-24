@@ -10,7 +10,7 @@ from postgres_fastmcp.sql.ast.extraction import (
     extract_tables_from_query,
     get_table_aliases,
 )
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 from postgres_fastmcp.sql.params.strategies import (
     context_replace,
     get_bound_values,

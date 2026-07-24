@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 from postgres_fastmcp.sql.params.replacer import REPLACE_PARAMETERS_ERROR, SqlParamReplacer
 
 

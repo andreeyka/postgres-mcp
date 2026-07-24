@@ -8,7 +8,6 @@ from postgres_fastmcp.config.database import DatabaseConfig
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.services.objects.service import ObjectsService
-from postgres_fastmcp.services.schema.service import SchemaService
 from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 
 
@@ -178,8 +177,7 @@ async def test_list_schemas_returns_only_public_in_user_mode(
     db_service_user_prefix: DbAccessService,
 ) -> None:
     """list_schemas returns only public schema in user mode."""
-    schema_service = SchemaService(db_service_user_prefix)
-    schemas = await schema_service.list_schemas()
+    schemas = await ObjectsService(db_service_user_prefix).list_schemas()
     assert isinstance(schemas, list)
     assert len(schemas) == 1
     assert schemas[0]["schema_name"] == "public"

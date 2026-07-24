@@ -1,14 +1,14 @@
 # mypy: ignore-errors
-"""Unit tests for SqlExecutionService."""
+"""Unit tests for services.querying.execute_sql."""
 
 from unittest.mock import MagicMock
 
-from postgres_fastmcp.services.sql_execution.service import SUCCESS_NO_ROWS, SqlExecutionService
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.services.querying import SUCCESS_NO_ROWS, execute_sql
+from postgres_fastmcp.sql.models import RowResult
 
 
-class TestSqlExecutionService:
-    """Tests for SqlExecutionService.execute_sql."""
+class TestExecuteSql:
+    """Tests for querying.execute_sql."""
 
     async def test_execute_sql_success_returns_decoded_rows(
         self,
@@ -21,8 +21,7 @@ class TestSqlExecutionService:
             RowResult(cells={"id": 1, "name": "a"}),
             RowResult(cells={"id": 2, "name": "b"}),
         ]
-        service = SqlExecutionService(db=mock_db_access)
-        result = await service.execute_sql("SELECT 1")
+        result = await execute_sql(mock_db_access, "SELECT 1")
         assert len(result) == 2
         assert result[0]["id"] == 1 and result[0]["name"] == "a"
         assert result[1]["id"] == 2 and result[1]["name"] == "b"
@@ -37,8 +36,7 @@ class TestSqlExecutionService:
         """When write_mode is enabled the driver is called with readonly=False so writes persist."""
         mock_db_access.write_mode = True
         mock_executor.execute.return_value = None
-        service = SqlExecutionService(db=mock_db_access)
-        await service.execute_sql("INSERT INTO t (id) VALUES (1)")
+        await execute_sql(mock_db_access, "INSERT INTO t (id) VALUES (1)")
         mock_executor.execute.assert_called_once()
         assert mock_executor.execute.call_args[1].get("readonly") is False
 
@@ -49,8 +47,7 @@ class TestSqlExecutionService:
     ) -> None:
         """When driver returns empty rows, service returns empty list."""
         mock_executor.execute.return_value = []
-        service = SqlExecutionService(db=mock_db_access)
-        result = await service.execute_sql("SELECT 0")
+        result = await execute_sql(mock_db_access, "SELECT 0")
         assert result == []
         mock_executor.execute.assert_called_once()
 
@@ -62,8 +59,7 @@ class TestSqlExecutionService:
         """When driver returns None (e.g. DDL/DML without RETURNING), service reports success, not error."""
         mock_db_access.write_mode = True
         mock_executor.execute.return_value = None
-        service = SqlExecutionService(db=mock_db_access)
-        result = await service.execute_sql("CREATE TABLE t (id int)")
+        result = await execute_sql(mock_db_access, "CREATE TABLE t (id int)")
         assert result == [{"status": "success", "message": SUCCESS_NO_ROWS}]
 
     async def test_execute_sql_bytes_decoded(
@@ -75,7 +71,6 @@ class TestSqlExecutionService:
         mock_executor.execute.return_value = [
             RowResult(cells={"name": b"hello", "num": 42}),
         ]
-        service = SqlExecutionService(db=mock_db_access)
-        result = await service.execute_sql("SELECT 'hello'")
+        result = await execute_sql(mock_db_access, "SELECT 'hello'")
         assert result[0]["name"] == "hello"
         assert result[0]["num"] == 42

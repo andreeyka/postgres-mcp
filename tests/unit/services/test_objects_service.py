@@ -1,5 +1,5 @@
 # mypy: ignore-errors
-"""Unit tests for ObjectsService (facade: list_objects, get_object_details)."""
+"""Unit tests for ObjectsService (facade: list_schemas, list_objects, get_object_details)."""
 
 from unittest.mock import MagicMock
 
@@ -8,7 +8,7 @@ import pytest
 from postgres_fastmcp.common.errors import SchemaAccessError, UnsupportedObjectTypeError
 from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.services.objects.service import ObjectsService
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 
 
 class TestObjectsServiceListObjects:
@@ -172,3 +172,56 @@ class TestObjectsServiceGetObjectDetails:
         service = ObjectsService(db=mock_db_access)
         with pytest.raises(SchemaAccessError):
             await service.get_object_details("other", "t", "table")
+
+
+class TestObjectsServiceListSchemas:
+    """Tests for ObjectsService.list_schemas."""
+
+    async def test_list_schemas_basic_access_mode_returns_public_only(
+        self,
+        mock_db_access: MagicMock,
+    ) -> None:
+        """access_mode=basic returns hardcoded public schema without calling DB."""
+        mock_db_access.access_mode = AccessMode.BASIC
+        service = ObjectsService(db=mock_db_access)
+        result = await service.list_schemas()
+        assert result == [
+            {
+                "schema_name": "public",
+                "schema_owner": "postgres",
+                "schema_type": "User Schema",
+            },
+        ]
+        mock_db_access.sql_driver.execute.assert_not_called()
+
+    async def test_list_schemas_full_access_mode_returns_decoded_catalog_rows(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """access_mode=full returns list of dicts from the catalog; driver called once with readonly."""
+        mock_executor.execute.return_value = [
+            RowResult(cells={"schema_name": "public", "schema_owner": "postgres", "schema_type": "User Schema"}),
+            RowResult(cells={"schema_name": "ext", "schema_owner": "postgres", "schema_type": "User Schema"}),
+        ]
+        service = ObjectsService(db=mock_db_access)
+        result = await service.list_schemas()
+        assert len(result) == 2
+        assert result[0]["schema_name"] == "public"
+        assert result[0]["schema_owner"] == "postgres"
+        assert result[1]["schema_name"] == "ext"
+        mock_executor.execute.assert_called_once()
+        call_kw = mock_executor.execute.call_args[1]
+        assert call_kw.get("readonly") is True
+
+    async def test_list_schemas_full_access_mode_empty_result(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """access_mode=full when catalog returns no rows returns empty list."""
+        mock_executor.execute.return_value = []
+        service = ObjectsService(db=mock_db_access)
+        result = await service.list_schemas()
+        assert result == []
+        mock_executor.execute.assert_called_once()

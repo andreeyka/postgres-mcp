@@ -10,7 +10,7 @@ from postgres_fastmcp.common.errors import (
 )
 from postgres_fastmcp.services.db_access_service import DbAccessService
 from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool
-from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
+from postgres_fastmcp.sql.extensions import ExtensionInspectorAdapter
 
 
 class ExplainService:
@@ -90,9 +90,7 @@ class ExplainService:
             result = await tool.explain(sql)
             return result.to_text()
 
-        ext_inspector = ExtensionInspectorAdapter(
-            self.db.sql_driver, self.db.sql_driver, self.db.connection_id
-        )
+        ext_inspector = ExtensionInspectorAdapter(self.db.sql_driver, self.db.sql_driver, self.db.connection_id)
         is_hypopg_installed, hypopg_message = await ext_inspector.check_hypopg_installation_status()
         if not is_hypopg_installed:
             raise HypopgNotInstalledError(hypopg_message)

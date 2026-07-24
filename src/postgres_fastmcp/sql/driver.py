@@ -8,8 +8,8 @@ from psycopg.rows import dict_row
 from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.common.errors import ConnectionNotEstablishedError
-from postgres_fastmcp.sql.connection.pool import DbConnPool
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.connection import DbConnPool
+from postgres_fastmcp.sql.models import RowResult
 
 
 logger = logging.getLogger(__name__)

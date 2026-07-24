@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from postgres_fastmcp.common.errors import ConnectionNotEstablishedError
-from postgres_fastmcp.sql.connection.pool import DbConnPool
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.connection import DbConnPool
+from postgres_fastmcp.sql.driver import SqlExecutor
+from postgres_fastmcp.sql.models import RowResult
 
 
 class TestSqlExecutorRender:

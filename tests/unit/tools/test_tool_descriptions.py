@@ -77,7 +77,7 @@ def test_explain_query_description_present() -> None:
 
 
 def test_annotation_presets_have_expected_keys() -> None:
-    from postgres_fastmcp.tools.constants import DESTRUCTIVE, READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT
+    from postgres_fastmcp.tools.registry import DESTRUCTIVE, READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT
 
     required = {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
     for preset in (READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, DESTRUCTIVE):
@@ -85,7 +85,7 @@ def test_annotation_presets_have_expected_keys() -> None:
 
 
 def test_destructive_preset_marks_writes() -> None:
-    from postgres_fastmcp.tools.constants import DESTRUCTIVE
+    from postgres_fastmcp.tools.registry import DESTRUCTIVE
 
     assert DESTRUCTIVE["readOnlyHint"] is False
     assert DESTRUCTIVE["destructiveHint"] is True

@@ -457,3 +457,17 @@ class QueryTimeoutError(UserFacingError):
         )
         super().__init__(message)
         self.timeout_seconds = timeout_seconds
+
+
+class ConnectionFailedError(BaseApplicationError):
+    """Сбой подключения к базе данных или инициализации пула."""
+
+    def __init__(self, error_details: str | None) -> None:
+        """Инициализация с деталями ошибки подключения (например, обфусцированное сообщение).
+
+        Args:
+            error_details: Детали ошибки подключения (пароли обфусцированы).
+        """
+        message = f"Connection attempt failed: {error_details}"
+        super().__init__(message)
+        self.error_details = error_details

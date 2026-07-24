@@ -7,7 +7,7 @@ import humanize
 
 from postgres_fastmcp.common.utils import calculate_improvement_multiple
 from postgres_fastmcp.services.explain.artifacts import ExplainPlanArtifact
-from postgres_fastmcp.sql.models.index_definition import IndexDefinition
+from postgres_fastmcp.sql.models import IndexDefinition
 from postgres_fastmcp.sql.ports import SqlDriverPort
 
 from .index_opt_base import IndexTuningBase, IndexTuningResult

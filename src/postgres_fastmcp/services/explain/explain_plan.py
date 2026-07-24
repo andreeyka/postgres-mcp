@@ -17,8 +17,8 @@ from postgres_fastmcp.common.errors import (
     IndexDefinitionNotDictError,
     MissingKeyInIndexDefinitionError,
 )
-from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
-from postgres_fastmcp.sql.models.index_definition import IndexDefinition
+from postgres_fastmcp.sql.extensions import ExtensionInspectorAdapter
+from postgres_fastmcp.sql.models import IndexDefinition
 from postgres_fastmcp.sql.params.replacer import SqlParamReplacer
 from postgres_fastmcp.sql.ports import SqlDriverPort
 

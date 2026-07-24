@@ -7,8 +7,8 @@ import pytest
 
 from postgres_fastmcp.services.index.index_opt_base import IndexRecommendation
 from postgres_fastmcp.services.index.llm_opt import Index, LLMOptimizerTool, ScoredIndexes
-from postgres_fastmcp.sql.models.index_definition import IndexDefinition
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import IndexDefinition
+from postgres_fastmcp.sql.models import RowResult
 
 
 class TestIndexModel:

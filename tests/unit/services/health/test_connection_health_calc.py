@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from postgres_fastmcp.services.health.connection_health_calc import ConnectionHealthCalc
-from postgres_fastmcp.sql.models.row_result import RowResult
+from postgres_fastmcp.sql.models import RowResult
 
 
 class TestConnectionHealthCheck:

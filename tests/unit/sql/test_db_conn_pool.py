@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from postgres_fastmcp.sql.connection.pool import DbConnPool
-from postgres_fastmcp.sql.driver.errors import ConnectionFailedError
+from postgres_fastmcp.sql.connection import DbConnPool
+from postgres_fastmcp.common.errors import ConnectionFailedError
 
 
 def _make_mock_pool() -> MagicMock:
@@ -30,7 +30,7 @@ def _make_mock_pool() -> MagicMock:
 class TestDbConnPoolLifecycle:
     """pool_connect, close, is_valid."""
 
-    @patch("postgres_fastmcp.sql.connection.pool.AsyncConnectionPool")
+    @patch("postgres_fastmcp.sql.connection.AsyncConnectionPool")
     async def test_pool_connect_success_returns_pool(
         self,
         mock_pool_cls: MagicMock,
@@ -46,7 +46,7 @@ class TestDbConnPoolLifecycle:
         assert pool_mgr.last_error is None
         mock_pool.open.assert_called_once()
 
-    @patch("postgres_fastmcp.sql.connection.pool.AsyncConnectionPool")
+    @patch("postgres_fastmcp.sql.connection.AsyncConnectionPool")
     async def test_pool_connect_no_url_raises(
         self,
         mock_pool_cls: MagicMock,
@@ -58,7 +58,7 @@ class TestDbConnPoolLifecycle:
         assert "URL" in str(exc_info.value)
         mock_pool_cls.assert_not_called()
 
-    @patch("postgres_fastmcp.sql.connection.pool.AsyncConnectionPool")
+    @patch("postgres_fastmcp.sql.connection.AsyncConnectionPool")
     async def test_close_clears_pool_and_valid(
         self,
         mock_pool_cls: MagicMock,
@@ -74,7 +74,7 @@ class TestDbConnPoolLifecycle:
         assert pool_mgr.pool is None
         assert pool_mgr.is_valid is False
 
-    @patch("postgres_fastmcp.sql.connection.pool.AsyncConnectionPool")
+    @patch("postgres_fastmcp.sql.connection.AsyncConnectionPool")
     async def test_pool_connect_returns_cached_when_valid(
         self,
         mock_pool_cls: MagicMock,
@@ -112,7 +112,7 @@ class TestDbConnPoolMarkInvalid:
 class TestDbConnPoolConnectFailure:
     """pool_connect when connection fails."""
 
-    @patch("postgres_fastmcp.sql.connection.pool.AsyncConnectionPool")
+    @patch("postgres_fastmcp.sql.connection.AsyncConnectionPool")
     async def test_pool_connect_failure_raises_connection_failed_error(
         self,
         mock_pool_cls: MagicMock,

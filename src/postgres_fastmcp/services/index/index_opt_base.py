@@ -15,8 +15,8 @@ from pglast.ast import Node, SelectStmt
 from postgres_fastmcp.common.utils import calculate_improvement_multiple
 from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool
 from postgres_fastmcp.sql.ast.visitors import TableAliasVisitor
-from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
-from postgres_fastmcp.sql.models.index_definition import IndexDefinition
+from postgres_fastmcp.sql.extensions import ExtensionInspectorAdapter
+from postgres_fastmcp.sql.models import IndexDefinition
 from postgres_fastmcp.sql.params.replacer import SqlParamReplacer
 from postgres_fastmcp.sql.ports import SqlDriverPort
 

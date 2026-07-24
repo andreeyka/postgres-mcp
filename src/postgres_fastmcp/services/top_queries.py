@@ -1,7 +1,11 @@
+"""Домен топ-запросов: отчёты по pg_stat_statements (тул get_top_queries)."""
+
 import logging
 from typing import Literal
 
-from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
+from postgres_fastmcp.common.errors import InvalidSortCriteriaError
+from postgres_fastmcp.services.db_access_service import DbAccessService
+from postgres_fastmcp.sql.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.sql.ports import SqlDriverPort
 
 
@@ -218,3 +222,33 @@ class TopQueriesCalc:
         except Exception:
             logger.exception("Error getting resource-intensive queries")
             return "Error resource-intensive queries"
+
+
+async def get_top_queries(
+    db: DbAccessService,
+    sort_by: str = "resources",
+    limit: int = 10,
+) -> str:
+    """Получить список самых медленных или ресурсоемких запросов.
+
+    Args:
+        db: Сервис доступа к базе данных.
+        sort_by: Критерий сортировки (по умолчанию "resources").
+        limit: Максимальное количество запросов (по умолчанию 10).
+
+    Returns:
+        Строка с отчетом о самых медленных запросах.
+
+    Raises:
+        InvalidSortCriteriaError: Если указан недопустимый параметр sort_by.
+    """
+    calc = TopQueriesCalc(sql_driver=db.sql_driver, connection_id=db.connection_id)
+
+    if sort_by == "resources":
+        return await calc.get_top_resource_queries()
+    if sort_by in {"mean_time", "total_time"}:
+        return await calc.get_top_queries_by_time(
+            limit=limit,
+            sort_by="mean" if sort_by == "mean_time" else "total",
+        )
+    raise InvalidSortCriteriaError
