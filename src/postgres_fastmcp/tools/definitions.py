@@ -10,14 +10,14 @@ from fastmcp.dependencies import CurrentContext
 from fastmcp.server.context import Context
 from pydantic import Field
 
-from postgres_fastmcp.app_context import get_db
-from postgres_fastmcp.enums import AnalysisMethod, ObjectType, TopQueriesSortBy
-from postgres_fastmcp.services import querying, top_queries
-from postgres_fastmcp.services.explain.service import ExplainService
-from postgres_fastmcp.services.health.database_health import DatabaseHealthTool, HealthType
-from postgres_fastmcp.services.index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
-from postgres_fastmcp.services.index.service import IndexAnalysisService
-from postgres_fastmcp.services.objects.service import ObjectsService
+from postgres_fastmcp.app.context import get_db
+from postgres_fastmcp.domains import querying, top_queries
+from postgres_fastmcp.domains.catalog.service import CatalogService
+from postgres_fastmcp.domains.explain.service import ExplainService
+from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
+from postgres_fastmcp.domains.index_tuning.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
+from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
+from postgres_fastmcp.shared.enums import AnalysisMethod, ObjectType, TopQueriesSortBy
 
 
 HEALTH_TYPE_VALUES = ", ".join(sorted(ht.value for ht in HealthType))
@@ -58,7 +58,7 @@ async def list_objects(
     ctx: Context = CurrentContext(),
 ) -> list[dict[str, Any]]:
     """Получить список объектов указанного типа в схеме."""
-    service = ObjectsService(db=get_db(ctx))
+    service = CatalogService(db=get_db(ctx))
     return await service.list_objects(schema_name=schema_name, object_type=object_type)
 
 
@@ -72,13 +72,13 @@ async def get_object_details(
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
     """Детали объекта: колонки, констрейнты, индексы и пр."""
-    service = ObjectsService(db=get_db(ctx))
+    service = CatalogService(db=get_db(ctx))
     return await service.get_object_details(schema_name=schema_name, object_name=object_name, object_type=object_type)
 
 
 async def list_schemas(ctx: Context = CurrentContext()) -> list[dict[str, Any]]:
     """Список схем БД."""
-    service = ObjectsService(db=get_db(ctx))
+    service = CatalogService(db=get_db(ctx))
     return await service.list_schemas()
 
 
@@ -93,7 +93,7 @@ async def analyze_db_health(
     ctx: Context = CurrentContext(),
 ) -> str:
     """Запустить набор health-проверок и вернуть отчёт."""
-    health_tool = DatabaseHealthTool(get_db(ctx).sql_driver)
+    health_tool = DatabaseHealthAnalyzer(get_db(ctx).sql_driver)
     return await health_tool.health(health_type=health_type)
 
 

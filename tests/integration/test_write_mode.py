@@ -10,10 +10,10 @@ These tests drive the tool end-to-end to lock in the corrected behaviour.
 import pytest
 from fastmcp import Client
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode
-from postgres_fastmcp.server import create_server
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.app.server import create_server
 
 
 def _content(result: object) -> object:

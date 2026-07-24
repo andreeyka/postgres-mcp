@@ -902,8 +902,8 @@ class Processable(Protocol):
 
 - **Do not re-export** symbols from package `__init__.py` files. Keep `__init__.py` minimal (docstring only or package-specific definitions like `Settings` in `config`).
 - **Use full module paths** for imports: import from the concrete module where the symbol is defined, not from the package.
-  - Good: `from postgres_fastmcp.services.db_access import DbAccessService`, `from postgres_fastmcp.sql.sql_driver import SqlDriver`
-  - Bad: `from postgres_fastmcp.services import DbAccessService`, `from postgres_fastmcp.sql import SqlDriver`
+  - Good: `from postgres_fastmcp.domains.db_access import DbAccessService`, `from postgres_fastmcp.postgres.driver import SqlExecutor`
+  - Bad: `from postgres_fastmcp.domains import DbAccessService`, `from postgres_fastmcp.postgres import SqlExecutor`
 
 ## No `from __future__ import annotations`
 
@@ -923,7 +923,7 @@ Do **not** use `from __future__ import annotations` anywhere in the codebase.
 
   ```python
   async def _get_plan(self, query: str) -> str:
-      from postgres_fastmcp.explain import ExplainPlanTool  # noqa: PLC0415
+      from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder  # noqa: PLC0415
       ...
   ```
 
@@ -988,12 +988,17 @@ else:
 
 ## Layered Architecture
 
-- **Presentation** (`server/`): tool definitions, descriptions, constants
-- **Application** (`services/`): business logic and domain logic per feature (explain, index, health, top_queries, etc. live inside their service packages under `services/`)
-- **Infrastructure** (`sql/`): shared SQL driver, connection, validation, security
-- **Providers** (`providers/`): dependency injection providers
+- **App / composition root** (`app/`): config, server assembly, lifespan, entry point (`app/main.py`)
+- **Presentation** (`tools/`): MCP tool functions (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)
+- **Domains** (`domains/`): one package or module per feature — `catalog`, `querying`, `explain`, `health`, `index_tuning`, `top_queries`, plus `db_access` (executor wiring)
+- **Infrastructure** (`postgres/`): SQL driver, connection pool, safe execution and validation (`postgres/security/`), param substitution, AST utils. Domains type against `postgres/ports.py` protocols (`SqlDriverPort` / `QueryExecutorPort`), never against concrete executors
+- **Shared kernel** (`shared/`): errors, utils, enums, logger — importable from any layer
 
-No upward imports (e.g. `sql/` must not import from `services/`).
+Dependency rules:
+
+- No upward imports (`postgres/` must not import from `domains/`, `domains/` must not import from `tools/` or `app/`).
+- Domains must not import each other. The single allowed exception: `index_tuning` -> `explain` (index tuning consumes explain plans).
+- A module earns a separate file at roughly >100 lines of own logic or a distinct dependency set; a package needs >=3 substantive modules; a stateless one-method class should be a function.
 
 ## Library Documentation
 

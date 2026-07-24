@@ -64,7 +64,7 @@ async def test_explain_query_with_analyze_and_hypothetical(monkeypatch, db_mock,
 async def test_list_objects_returns_rows(monkeypatch, db_mock, make_ctx) -> None:
     fake_service = mock.AsyncMock()
     fake_service.list_objects.return_value = [{"name": "users"}]
-    monkeypatch.setattr(defs, "ObjectsService", lambda **kw: fake_service)
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
     result = await defs.list_objects(schema_name="public", object_type="table", ctx=make_ctx(db_mock))
 
@@ -76,7 +76,7 @@ async def test_list_objects_returns_rows(monkeypatch, db_mock, make_ctx) -> None
 async def test_get_object_details_returns_details(monkeypatch, db_mock, make_ctx) -> None:
     fake_service = mock.AsyncMock()
     fake_service.get_object_details.return_value = {"columns": []}
-    monkeypatch.setattr(defs, "ObjectsService", lambda **kw: fake_service)
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
     result = await defs.get_object_details(
         schema_name="public",
@@ -95,7 +95,7 @@ async def test_get_object_details_returns_details(monkeypatch, db_mock, make_ctx
 async def test_list_schemas_returns_rows(monkeypatch, db_mock, make_ctx) -> None:
     fake_service = mock.AsyncMock()
     fake_service.list_schemas.return_value = [{"name": "public"}]
-    monkeypatch.setattr(defs, "ObjectsService", lambda **kw: fake_service)
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
     result = await defs.list_schemas(ctx=make_ctx(db_mock))
 
@@ -107,7 +107,7 @@ async def test_list_schemas_returns_rows(monkeypatch, db_mock, make_ctx) -> None
 async def test_analyze_db_health_default(monkeypatch, db_mock, make_ctx) -> None:
     fake_tool = mock.AsyncMock()
     fake_tool.health.return_value = "OK"
-    monkeypatch.setattr(defs, "DatabaseHealthTool", lambda sql_driver: fake_tool)
+    monkeypatch.setattr(defs, "DatabaseHealthAnalyzer", lambda sql_driver: fake_tool)
 
     result = await defs.analyze_db_health(ctx=make_ctx(db_mock))
 
@@ -119,7 +119,7 @@ async def test_analyze_db_health_default(monkeypatch, db_mock, make_ctx) -> None
 async def test_analyze_db_health_custom_type(monkeypatch, db_mock, make_ctx) -> None:
     fake_tool = mock.AsyncMock()
     fake_tool.health.return_value = "INDEX_REPORT"
-    monkeypatch.setattr(defs, "DatabaseHealthTool", lambda sql_driver: fake_tool)
+    monkeypatch.setattr(defs, "DatabaseHealthAnalyzer", lambda sql_driver: fake_tool)
 
     result = await defs.analyze_db_health(health_type="index", ctx=make_ctx(db_mock))
 

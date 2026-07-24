@@ -5,8 +5,8 @@ import logging
 
 import pytest
 
-from postgres_fastmcp.services.db_access_service import DbAccessService
-from postgres_fastmcp.services.top_queries import PG_STAT_STATEMENTS, TopQueriesCalc, get_top_queries
+from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.top_queries import PG_STAT_STATEMENTS, TopQueriesCalc, get_top_queries
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
 @pytest.mark.asyncio
 async def test_extension_not_available(db_service_full: DbAccessService) -> None:
     """When pg_stat_statements is not installed, result contains installation instructions."""
-    from postgres_fastmcp.sql.extensions import ExtensionStatus
+    from postgres_fastmcp.postgres.extensions import ExtensionStatus
 
     calc = TopQueriesCalc(
         sql_driver=db_service_full.sql_driver,

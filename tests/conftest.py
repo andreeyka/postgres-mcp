@@ -7,7 +7,7 @@ from typing import Generator
 import pytest
 from dotenv import load_dotenv
 
-from postgres_fastmcp.sql.extensions import reset_postgres_version_cache
+from postgres_fastmcp.postgres.extensions import reset_postgres_version_cache
 
 
 try:

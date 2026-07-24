@@ -3,12 +3,12 @@
 
 import pytest
 
-from postgres_fastmcp.common.errors import SchemaNotAllowedError, TablePrefixAccessError
-from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode
-from postgres_fastmcp.services.db_access_service import DbAccessService
-from postgres_fastmcp.services.objects.service import ObjectsService
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.shared.errors import SchemaNotAllowedError, TablePrefixAccessError
+from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.catalog.service import CatalogService
+from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 
 
 async def setup_test_tables(driver: DbAccessService) -> None:
@@ -144,7 +144,7 @@ async def test_list_objects_filters_by_prefix(
     """list_objects returns only objects with prefix."""
     await setup_test_tables(db_service_full)
 
-    objects_service = ObjectsService(db_service_user_prefix)
+    objects_service = CatalogService(db_service_user_prefix)
     tables = await objects_service.list_objects(schema_name="public", object_type="table")
     assert isinstance(tables, list)
 
@@ -177,7 +177,7 @@ async def test_list_schemas_returns_only_public_in_user_mode(
     db_service_user_prefix: DbAccessService,
 ) -> None:
     """list_schemas returns only public schema in user mode."""
-    schemas = await ObjectsService(db_service_user_prefix).list_schemas()
+    schemas = await CatalogService(db_service_user_prefix).list_schemas()
     assert isinstance(schemas, list)
     assert len(schemas) == 1
     assert schemas[0]["schema_name"] == "public"

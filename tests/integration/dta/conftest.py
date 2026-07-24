@@ -6,7 +6,7 @@ from typing import AsyncGenerator
 
 import pytest
 
-from postgres_fastmcp.services.db_access_service import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessService
 
 
 logger = logging.getLogger(__name__)

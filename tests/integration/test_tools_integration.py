@@ -16,8 +16,8 @@ Covers all tools and main call variants:
 import pytest
 from fastmcp import Client
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.server import create_server
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.server import create_server
 
 
 def _tool_content(result: object) -> object:

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-from postgres_fastmcp.enums import AccessMode, ToolTag
+from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
     HEALTH_TYPE_VALUES,
     analyze_db_health,
@@ -33,7 +33,7 @@ from postgres_fastmcp.tools.definitions import (
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-    from postgres_fastmcp.config import Settings
+    from postgres_fastmcp.app.config import Settings
 
 
 try:

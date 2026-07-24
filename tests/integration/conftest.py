@@ -5,10 +5,10 @@ from typing import Generator
 
 import pytest
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.config.database import DatabaseConfig
-from postgres_fastmcp.enums import AccessMode
-from postgres_fastmcp.services.db_access_service import DbAccessService
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.domains.db_access import DbAccessService
 
 
 @pytest.fixture
