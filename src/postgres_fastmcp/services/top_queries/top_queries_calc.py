@@ -1,9 +1,8 @@
 import logging
 from typing import Literal
 
-from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,7 @@ class TopQueriesCalc:
 
     def __init__(
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         connection_id: str = "",
     ) -> None:
         """Initialize TopQueriesCalc.

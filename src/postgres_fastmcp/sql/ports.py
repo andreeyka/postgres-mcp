@@ -30,3 +30,12 @@ class QueryTemplatePort(Protocol):
     def render(self, query: str, params: list[Any]) -> str:
         """Рендер запроса с встроенными параметрами (например, psycopg {} плейсхолдеры)."""
         ...
+
+
+class SqlDriverPort(QueryExecutorPort, QueryTemplatePort, Protocol):
+    """Полный контракт SQL-драйвера: выполнение запросов и рендеринг параметров.
+
+    Единственный тип, которым сервисы (домены) должны типизировать драйвер —
+    конкретные реализации (``SqlExecutor``, ``SafeSqlExecutor``) остаются
+    деталью слоя ``sql``.
+    """

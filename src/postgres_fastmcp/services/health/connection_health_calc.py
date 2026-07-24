@@ -1,6 +1,7 @@
 """Проверка числа соединений и соединений idle-in-transaction в pg_stat_activity."""
 
-from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+from postgres_fastmcp.services.health.base import BaseHealthCalc
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 QUERY_TOTAL_CONNECTIONS = """
@@ -27,7 +28,7 @@ class ConnectionHealthCalc(BaseHealthCalc):
 
     def __init__(
         self,
-        sql_driver: HealthSqlDriver,
+        sql_driver: QueryExecutorPort,
         max_total_connections: int = 500,
         max_idle_connections: int = 100,
     ) -> None:

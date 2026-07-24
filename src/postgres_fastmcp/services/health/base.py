@@ -2,11 +2,7 @@
 
 from typing import Any
 
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
-
-
-HealthSqlDriver = SqlExecutor | SafeSqlExecutor
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 class BaseHealthCalc:
@@ -16,8 +12,8 @@ class BaseHealthCalc:
     который иначе дублируется в каждом калькуляторе.
     """
 
-    def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
-        """Инициализация с SQL-драйвером (обычным или безопасным)."""
+    def __init__(self, sql_driver: QueryExecutorPort) -> None:
+        """Инициализация с SQL-драйвером (любой реализацией QueryExecutorPort)."""
         self.sql_driver = sql_driver
 
     async def _rows(

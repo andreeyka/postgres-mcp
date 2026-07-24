@@ -12,8 +12,7 @@ from postgres_fastmcp.services.health.index_health_calc import IndexHealthCalc
 from postgres_fastmcp.services.health.replication_calc import ReplicationCalc
 from postgres_fastmcp.services.health.sequence_health_calc import SequenceHealthCalc
 from postgres_fastmcp.services.health.vacuum_health_calc import VacuumHealthCalc
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 ResponseType = list[types.TextContent | types.ImageContent | types.EmbeddedResource]
@@ -37,7 +36,7 @@ class HealthType(StrEnum):
 class DatabaseHealthTool:
     """Инструмент для анализа метрик состояния базы данных."""
 
-    def __init__(self, sql_driver: SqlExecutor | SafeSqlExecutor) -> None:
+    def __init__(self, sql_driver: QueryExecutorPort) -> None:
         """Инициализация инструмента проверки состояния базы данных.
 
         Args:

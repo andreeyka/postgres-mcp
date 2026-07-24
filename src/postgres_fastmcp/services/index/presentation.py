@@ -7,9 +7,8 @@ import humanize
 
 from postgres_fastmcp.common.utils import calculate_improvement_multiple
 from postgres_fastmcp.services.explain.artifacts import ExplainPlanArtifact
-from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.models.index_definition import IndexDefinition
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 from .index_opt_base import IndexTuningBase, IndexTuningResult
 
@@ -22,7 +21,7 @@ class TextPresentation:
 
     def __init__(
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         index_tuning: IndexTuningBase,
     ) -> None:
         """Инициализация представления.

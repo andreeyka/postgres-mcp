@@ -17,11 +17,10 @@ from postgres_fastmcp.common.errors import (
     IndexDefinitionNotDictError,
     MissingKeyInIndexDefinitionError,
 )
-from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
 from postgres_fastmcp.sql.models.index_definition import IndexDefinition
 from postgres_fastmcp.sql.params.replacer import SqlParamReplacer
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 from .artifacts import ExplainPlanArtifact
 
@@ -37,7 +36,7 @@ class ExplainPlanTool:
 
     def __init__(
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         connection_id: str = "",
     ) -> None:
         """Инициализация инструмента объяснения планов.

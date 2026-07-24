@@ -11,9 +11,8 @@ from pglast.ast import SelectStmt
 from pydantic import BaseModel, ValidationError
 
 from postgres_fastmcp.sql.ast.visitors import TableAliasVisitor
-from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.models.index_definition import IndexDefinition
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 from .index_opt_base import IndexRecommendation, IndexTuningBase
 
@@ -100,7 +99,7 @@ class LLMOptimizerTool(IndexTuningBase):
 
     def __init__(
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         ctx: Context,
         connection_id: str = "",
         max_no_progress_attempts: int = 5,

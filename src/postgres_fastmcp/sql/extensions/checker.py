@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 
 from postgres_fastmcp.sql.extensions.status import ExtensionStatus
 from postgres_fastmcp.sql.extensions.version import get_postgres_version
+from postgres_fastmcp.sql.ports import QueryExecutorPort, QueryTemplatePort
 
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,8 @@ class ExtensionInspectorAdapter:
 
     def __init__(
         self,
-        executor: Any,  # noqa: ANN401
-        template: Any,  # noqa: ANN401
+        executor: QueryExecutorPort,
+        template: QueryTemplatePort,
         connection_id: str,
     ) -> None:
         """Инициализация с исполнителем, шаблоном (для параметризованных запросов).

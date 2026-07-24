@@ -10,8 +10,7 @@ from pglast import parser
 from pglast.ast import ColumnRef, FuncCall, JoinExpr, Node, SelectStmt
 
 from postgres_fastmcp.sql.ast.visitors import ColumnCollector, TableAliasVisitor
-from postgres_fastmcp.sql.driver.base import SqlExecutor
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 from .index_opt_base import IndexRecommendation, IndexTuningBase, candidate_str, pp_list
 
@@ -28,7 +27,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
 
     def __init__(  # noqa: PLR0913
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         connection_id: str = "",
         budget_mb: int = -1,  # no limit by default
         max_runtime_seconds: int = 30,  # 30 seconds

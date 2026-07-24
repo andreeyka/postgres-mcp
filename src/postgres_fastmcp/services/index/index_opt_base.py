@@ -15,11 +15,10 @@ from pglast.ast import Node, SelectStmt
 from postgres_fastmcp.common.utils import calculate_improvement_multiple
 from postgres_fastmcp.services.explain.explain_plan import ExplainPlanTool
 from postgres_fastmcp.sql.ast.visitors import TableAliasVisitor
-from postgres_fastmcp.sql.driver.base import SqlExecutor
 from postgres_fastmcp.sql.extensions.checker import ExtensionInspectorAdapter
 from postgres_fastmcp.sql.models.index_definition import IndexDefinition
 from postgres_fastmcp.sql.params.replacer import SqlParamReplacer
-from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 
 
 logger = logging.getLogger(__name__)
@@ -259,7 +258,7 @@ class IndexTuningBase(ABC):
 
     def __init__(
         self,
-        sql_driver: SqlExecutor | SafeSqlExecutor,
+        sql_driver: SqlDriverPort,
         connection_id: str = "",
     ) -> None:
         """Инициализация IndexTuningBase.

@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 
-from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+from postgres_fastmcp.services.health.base import BaseHealthCalc
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 QUERY_TXID_WRAPAROUND = """
@@ -44,7 +45,7 @@ class VacuumHealthCalc(BaseHealthCalc):
 
     def __init__(
         self,
-        sql_driver: HealthSqlDriver,
+        sql_driver: QueryExecutorPort,
         threshold: int = 10000000,
         max_value: int = 2146483648,
     ) -> None:

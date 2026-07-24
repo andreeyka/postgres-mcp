@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+from postgres_fastmcp.services.health.base import BaseHealthCalc
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 QUERY_ALL_INDEXES = """
@@ -59,7 +60,7 @@ class IndexHealthCalc(BaseHealthCalc):
 
     _cached_indexes: list[dict[str, Any]] | None
 
-    def __init__(self, sql_driver: HealthSqlDriver) -> None:
+    def __init__(self, sql_driver: QueryExecutorPort) -> None:
         super().__init__(sql_driver)
         self._cached_indexes = None
 

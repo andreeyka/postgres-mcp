@@ -5,6 +5,7 @@ from postgres_fastmcp.enums import AccessMode
 from postgres_fastmcp.logger import get_logger
 from postgres_fastmcp.sql.connection.pool import DbConnPool
 from postgres_fastmcp.sql.driver.base import SqlExecutor
+from postgres_fastmcp.sql.ports import SqlDriverPort
 from postgres_fastmcp.sql.security.config import SafeSqlConfig
 from postgres_fastmcp.sql.security.driver import SafeSqlExecutor
 from postgres_fastmcp.sql.validation.query_validator import QueryValidator
@@ -34,7 +35,7 @@ class DbAccessService:
             min_size=config.pool_min_size,
             max_size=config.pool_max_size,
         )
-        self._executor: SqlExecutor | SafeSqlExecutor | None = None
+        self._executor: SqlDriverPort | None = None
 
     async def close(self) -> None:
         """Закрывает пул подключений к базе данных. Вызывать при завершении жизненного цикла сервиса."""
@@ -47,7 +48,7 @@ class DbAccessService:
                 logger.error("Ошибка при закрытии пула подключений к базе данных: %s", e)
 
     @property
-    def sql_driver(self) -> SqlExecutor | SafeSqlExecutor:
+    def sql_driver(self) -> SqlDriverPort:
         """Исполнитель для SQL (обычный или безопасный). Создается лениво, переиспользуется."""
         if self._executor is not None:
             return self._executor

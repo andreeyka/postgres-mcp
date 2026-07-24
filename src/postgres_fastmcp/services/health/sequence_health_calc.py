@@ -5,7 +5,8 @@ from typing import ClassVar
 
 from psycopg.sql import Identifier
 
-from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+from postgres_fastmcp.services.health.base import BaseHealthCalc
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 QUERY_SEQUENCE_DEFAULTS = """
@@ -73,7 +74,7 @@ class SequenceMetrics:
 class SequenceHealthCalc(BaseHealthCalc):
     """Калькулятор для проверок состояния последовательностей базы данных."""
 
-    def __init__(self, sql_driver: HealthSqlDriver, threshold: float = 0.9) -> None:
+    def __init__(self, sql_driver: QueryExecutorPort, threshold: float = 0.9) -> None:
         """Инициализация калькулятора состояния последовательностей.
 
         Args:

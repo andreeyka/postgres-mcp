@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 
-from postgres_fastmcp.services.health.base import BaseHealthCalc, HealthSqlDriver
+from postgres_fastmcp.services.health.base import BaseHealthCalc
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 @dataclass
@@ -44,7 +45,7 @@ class ReplicationCalc(BaseHealthCalc):
     MIN_VERSION_REPLICATION_SLOTS = 90400  # PostgreSQL 9.4.0
     MIN_VERSION_WAL_FUNCTIONS = 100000  # PostgreSQL 10.0.0
 
-    def __init__(self, sql_driver: HealthSqlDriver) -> None:
+    def __init__(self, sql_driver: QueryExecutorPort) -> None:
         super().__init__(sql_driver)
         self._server_version: int | None = None
         self._feature_support: dict[str, bool] = {}

@@ -1,7 +1,8 @@
 """Определение и кэширование версии PostgreSQL."""
 
 import logging
-from typing import Any
+
+from postgres_fastmcp.sql.ports import QueryExecutorPort
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def reset_postgres_version_cache(connection_id: str | None = None) -> None:
     _version_registry.clear(connection_id)
 
 
-async def get_postgres_version(executor: Any, connection_id: str) -> int:  # noqa: ANN401
+async def get_postgres_version(executor: QueryExecutorPort, connection_id: str) -> int:
     """Возвращает основную версию PostgreSQL (например, 16), используя кэш по идентификатору подключения."""
     cached = _version_registry.get(connection_id)
     if cached is not None:
