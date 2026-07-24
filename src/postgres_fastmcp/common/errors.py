@@ -4,8 +4,6 @@
 (согласовано с инструментами, поиском и операциями). См. правила обработки ошибок в AGENTS.md.
 """
 
-from typing import Any
-
 from fastmcp.exceptions import ToolError
 
 
@@ -253,98 +251,15 @@ class ExplainPlanError(BaseApplicationError):
         super().__init__(message)
 
 
-class HypotheticalIndexesNotListError(ExplainPlanError):
-    """Ожидался список определений индексов, передан другой тип."""
-
-    def __init__(self, got_type: type) -> None:
-        message = f"Expected list of index definitions, got {got_type}"
-        super().__init__(message)
-        self.got_type = got_type
-
-
-class IndexDefinitionNotDictError(ExplainPlanError):
-    """Элемент определения индекса должен быть словарём."""
-
-    def __init__(self, got_type: type) -> None:
-        message = f"Expected dictionary for index definition, got {got_type}"
-        super().__init__(message)
-        self.got_type = got_type
-
-
-class MissingKeyInIndexDefinitionError(ExplainPlanError):
-    """В определении индекса отсутствует обязательный ключ."""
-
-    def __init__(self, key: str) -> None:
-        message = f"Missing '{key}' in index definition"
-        super().__init__(message)
-        self.key = key
-
-
-class IndexColumnsTypeError(ExplainPlanError):
-    """Поле 'columns' в определении индекса должно быть списком."""
-
-    def __init__(self, got_type: type, detail: str | None = None) -> None:
-        message = f"Expected list for 'columns', got {got_type}" + (f": {detail}" if detail else "")
-        super().__init__(message)
-        self.got_type = got_type
-        self.detail = detail
-
-
-class HypotheticalPlanGenerationError(ExplainPlanError):
-    """Не удалось сформировать корректный план с гипотетическими индексами."""
-
-    def __init__(self) -> None:
-        super().__init__("Failed to generate a valid explain plan with the hypothetical indexes")
-
-
-class ExplainPlanNoResultsError(ExplainPlanError):
-    """EXPLAIN не вернул результатов."""
-
-    def __init__(self) -> None:
-        super().__init__("No results returned from EXPLAIN")
-
-
-class ExplainPlanUnexpectedTypeError(ExplainPlanError):
-    """Неожиданный тип результата EXPLAIN (ожидался список)."""
-
-    def __init__(self, got_type: type) -> None:
-        message = f"Expected list from EXPLAIN, got {got_type}"
-        super().__init__(message)
-        self.got_type = got_type
-
-
-class ExplainPlanResultNotDictError(ExplainPlanError):
-    """Элемент результата EXPLAIN должен быть словарём."""
-
-    def __init__(self, got_type: type, value: Any) -> None:  # noqa: ANN401
-        message = f"Expected dict in EXPLAIN result list, got {got_type} with value {value}"
-        super().__init__(message)
-        self.got_type = got_type
-        self.value = value
-
-
-class ExplainPlanConversionError(ExplainPlanError):
-    """Ошибка преобразования результата EXPLAIN в артефакт."""
-
-    def __init__(self, inner: BaseException) -> None:
-        message = f"Error converting explain plan: {inner}"
-        super().__init__(message)
-        self.inner = inner
-
-
-class ExplainPlanInternalConversionError(ExplainPlanError):
-    """Внутренняя ошибка преобразования плана (не повторять запрос)."""
-
-    def __init__(self, inner: BaseException) -> None:
-        message = f"Internal error converting explain plan - do not retry: {inner}"
-        super().__init__(message)
-        self.inner = inner
-
-
 class ExplainPlanExecutionError(ExplainPlanError):
-    """Ошибка выполнения запроса EXPLAIN."""
+    """Ошибка выполнения запроса EXPLAIN (ловится по типу в сервисе explain)."""
 
     def __init__(self, inner: BaseException) -> None:
+        """Инициализация с исходным исключением.
+
+        Args:
+            inner: Исходное исключение, вызвавшее ошибку выполнения.
+        """
         message = f"Error executing explain plan: {inner}"
         super().__init__(message)
         self.inner = inner
@@ -398,18 +313,6 @@ class InvalidSortCriteriaError(UserFacingError):
         )
 
 
-class SqlExecutionError(BaseApplicationError):
-    """Ошибка выполнения SQL (например, нет результатов или ошибка драйвера)."""
-
-    def __init__(self, message: str) -> None:
-        """Инициализация с сообщением.
-
-        Args:
-            message: Описание ошибки.
-        """
-        super().__init__(message)
-
-
 class HypopgNotInstalledError(UserFacingError):
     """Расширение HypoPG не установлено или недоступно."""
 
@@ -420,26 +323,6 @@ class HypopgNotInstalledError(UserFacingError):
             message: Текст результата проверки установки HypoPG.
         """
         super().__init__(message)
-
-
-class InvalidHealthTypeError(UserFacingError):
-    """Предоставлен(ы) неверный тип(ы) проверки состояния."""
-
-    def __init__(self, health_type: str, valid_values: str) -> None:
-        """Инициализация.
-
-        Args:
-            health_type: Переданное значение.
-            valid_values: Список допустимых значений.
-        """
-        message = (
-            f"Предоставлен(ы) неверный тип(ы) проверки состояния: '{health_type}'. "
-            f"Допустимые значения: {valid_values}. "
-            "Пожалуйста, попробуйте снова с comma-разделенным списком допустимых типов проверки состояния."
-        )
-        super().__init__(message)
-        self.health_type = health_type
-        self.valid_values = valid_values
 
 
 class QueryTimeoutError(UserFacingError):

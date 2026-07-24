@@ -3,20 +3,7 @@ import logging
 import re
 from typing import Any
 
-from postgres_fastmcp.common.errors import (
-    ExplainPlanConversionError,
-    ExplainPlanError,
-    ExplainPlanExecutionError,
-    ExplainPlanInternalConversionError,
-    ExplainPlanNoResultsError,
-    ExplainPlanResultNotDictError,
-    ExplainPlanUnexpectedTypeError,
-    HypotheticalIndexesNotListError,
-    HypotheticalPlanGenerationError,
-    IndexColumnsTypeError,
-    IndexDefinitionNotDictError,
-    MissingKeyInIndexDefinitionError,
-)
+from postgres_fastmcp.common.errors import ExplainPlanError, ExplainPlanExecutionError
 from postgres_fastmcp.sql.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.sql.models import IndexDefinition
 from postgres_fastmcp.sql.params.replacer import SqlParamReplacer
@@ -29,6 +16,18 @@ logger = logging.getLogger(__name__)
 
 INDEX_KEY_TABLE = "table"
 INDEX_KEY_COLUMNS = "columns"
+
+# Шаблоны сообщений ExplainPlanError (сами тексты — контракт с тестами и клиентом).
+NO_EXPLAIN_RESULTS = "No results returned from EXPLAIN"
+MSG_INDEXES_NOT_LIST = "Expected list of index definitions, got {got}"
+MSG_INDEX_DEF_NOT_DICT = "Expected dictionary for index definition, got {got}"
+MSG_MISSING_KEY = "Missing '{key}' in index definition"
+MSG_COLUMNS_NOT_LIST = "Expected list for 'columns', got {got}: {detail}"
+MSG_HYPOTHETICAL_PLAN_FAILED = "Failed to generate a valid explain plan with the hypothetical indexes"
+MSG_PLAN_CONVERSION = "Error converting explain plan: {error}"
+MSG_PLAN_INTERNAL_CONVERSION = "Internal error converting explain plan - do not retry: {error}"
+MSG_EXPLAIN_NOT_LIST = "Expected list from EXPLAIN, got {got}"
+MSG_EXPLAIN_ITEM_NOT_DICT = "Expected dict in EXPLAIN result list, got {got} with value {value}"
 
 
 class ExplainPlanTool:
@@ -126,20 +125,20 @@ class ExplainPlanTool:
             ExplainPlanError: При ошибке валидации, генерации или преобразования плана.
         """
         if not isinstance(hypothetical_indexes, list):
-            raise HypotheticalIndexesNotListError(type(hypothetical_indexes))
+            raise ExplainPlanError(MSG_INDEXES_NOT_LIST.format(got=type(hypothetical_indexes)))
 
         for idx in hypothetical_indexes:
             if not isinstance(idx, dict):
-                raise IndexDefinitionNotDictError(type(idx))
+                raise ExplainPlanError(MSG_INDEX_DEF_NOT_DICT.format(got=type(idx)))
             if INDEX_KEY_TABLE not in idx:
-                raise MissingKeyInIndexDefinitionError(INDEX_KEY_TABLE)
+                raise ExplainPlanError(MSG_MISSING_KEY.format(key=INDEX_KEY_TABLE))
             if INDEX_KEY_COLUMNS not in idx:
-                raise MissingKeyInIndexDefinitionError(INDEX_KEY_COLUMNS)
+                raise ExplainPlanError(MSG_MISSING_KEY.format(key=INDEX_KEY_COLUMNS))
             if not isinstance(idx["columns"], list):
                 try:
                     idx["columns"] = list(idx["columns"]) if hasattr(idx["columns"], "__iter__") else [idx["columns"]]
                 except Exception as e:
-                    raise IndexColumnsTypeError(type(idx["columns"]), str(e)) from e
+                    raise ExplainPlanError(MSG_COLUMNS_NOT_LIST.format(got=type(idx["columns"]), detail=e)) from e
 
         indexes = frozenset(
             IndexDefinition(
@@ -156,12 +155,12 @@ class ExplainPlanTool:
         )
 
         if not plan_data or not isinstance(plan_data, dict) or "Plan" not in plan_data:
-            raise HypotheticalPlanGenerationError
+            raise ExplainPlanError(MSG_HYPOTHETICAL_PLAN_FAILED)
 
         try:
             return ExplainPlanArtifact.from_json_data(plan_data)
         except Exception as e:
-            raise ExplainPlanConversionError(e) from e
+            raise ExplainPlanError(MSG_PLAN_CONVERSION.format(error=e)) from e
 
     def _has_bind_variables(self, query: str) -> bool:
         """Проверить, есть ли в запросе плейсхолдеры ($1, $2, …)."""
@@ -190,23 +189,23 @@ class ExplainPlanTool:
             logger.debug("RUNNING EXPLAIN QUERY: %s", explain_q)
             rows = await self.sql_driver.execute(explain_q, params=None, readonly=True)
             if rows is None:
-                raise ExplainPlanNoResultsError
+                raise ExplainPlanError(NO_EXPLAIN_RESULTS)
 
             query_plan_data = rows[0].cells["QUERY PLAN"]
 
             if not isinstance(query_plan_data, list):
-                raise ExplainPlanUnexpectedTypeError(type(query_plan_data))
+                raise ExplainPlanError(MSG_EXPLAIN_NOT_LIST.format(got=type(query_plan_data)))
             if len(query_plan_data) == 0:
-                raise ExplainPlanNoResultsError
+                raise ExplainPlanError(NO_EXPLAIN_RESULTS)
 
             plan_dict = query_plan_data[0]
             if not isinstance(plan_dict, dict):
-                raise ExplainPlanResultNotDictError(type(plan_dict), plan_dict)
+                raise ExplainPlanError(MSG_EXPLAIN_ITEM_NOT_DICT.format(got=type(plan_dict), value=plan_dict))
 
             try:
                 return ExplainPlanArtifact.from_json_data(plan_dict)
             except Exception as e:
-                raise ExplainPlanInternalConversionError(e) from e
+                raise ExplainPlanError(MSG_PLAN_INTERNAL_CONVERSION.format(error=e)) from e
         except ExplainPlanError:
             raise
         except Exception as e:

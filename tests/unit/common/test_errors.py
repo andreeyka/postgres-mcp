@@ -27,7 +27,6 @@ from postgres_fastmcp.common import errors
         ("QueriesLimitError", (50,)),
         ("ContextRequiredError", ()),
         ("InvalidSortCriteriaError", ()),
-        ("InvalidHealthTypeError", ("foo", "a,b,c")),
         ("QueryTimeoutError", (5.0,)),
         ("HypopgNotInstalledError", ("not installed",)),
     ],
@@ -49,10 +48,9 @@ def test_statement_type_not_allowed_is_tool_error() -> None:
 @pytest.mark.parametrize(
     "cls_name",
     [
-        "SqlExecutionError",
         "ConnectionNotEstablishedError",
         "ExplainPlanError",
-        "ExplainPlanNoResultsError",
+        "ExplainPlanExecutionError",
     ],
 )
 def test_internal_errors_do_not_inherit_tool_error(cls_name: str) -> None:
