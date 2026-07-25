@@ -8,7 +8,7 @@ import pytest
 
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
-from postgres_fastmcp.domains.index_tuning.index_opt_base import IndexTuningResult
+from postgres_fastmcp.domains.index_tuning.models import IndexTuningResult
 from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
 
 

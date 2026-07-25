@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from postgres_fastmcp.shared.errors import ContextRequiredError, EmptyQueriesError, QueriesLimitError
-from postgres_fastmcp.domains.index_tuning.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
+from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
 
 

@@ -14,7 +14,8 @@ from postgres_fastmcp.postgres.ast.visitors import TableAliasVisitor
 from postgres_fastmcp.postgres.models import IndexDefinition
 from postgres_fastmcp.postgres.ports import SqlDriverPort
 
-from .index_opt_base import IndexRecommendation, IndexTuningBase
+from .base import IndexTuningBase
+from .models import IndexRecommendation
 
 
 logger = logging.getLogger(__name__)
@@ -259,7 +260,7 @@ class LLMOptimizerTool(IndexTuningBase):
         # Get the size of the tables
         table_sizes = {}
         for table in tables:
-            table_sizes[table] = await self._get_table_size(table)
+            table_sizes[table] = await self.cost_eval.get_table_size(table)
         total_table_size = sum(table_sizes.values())
         logger.info("Total table size: %s", total_table_size)
 
@@ -276,7 +277,7 @@ class LLMOptimizerTool(IndexTuningBase):
         indexes_used: set[Index] = await self._extract_indexes_from_explain_plan_with_columns(explain_plan_json)
 
         # Get the current cost
-        original_cost = await self._evaluate_configuration_cost(query_weights, frozenset())
+        original_cost = await self.cost_eval.evaluate_configuration_cost(query_weights, frozenset())
         logger.info("Original query cost: %f", original_cost)
 
         original_config = ScoredIndexes(
@@ -362,7 +363,7 @@ class LLMOptimizerTool(IndexTuningBase):
                         "Evaluating alternative %d/%d with %d indexes", i + 1, len(index_alternatives), len(index_set)
                     )
                     # Evaluate this index configuration
-                    execution_cost_estimate = await self._evaluate_configuration_cost(
+                    execution_cost_estimate = await self.cost_eval.evaluate_configuration_cost(
                         query_weights, frozenset({index.to_index_definition() for index in index_set})
                     )
                     logger.info(

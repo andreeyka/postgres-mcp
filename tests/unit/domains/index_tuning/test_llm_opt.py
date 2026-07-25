@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from postgres_fastmcp.domains.index_tuning.index_opt_base import IndexRecommendation
+from postgres_fastmcp.domains.index_tuning.models import IndexRecommendation
 from postgres_fastmcp.domains.index_tuning.llm_opt import Index, LLMOptimizerTool, ScoredIndexes
 from postgres_fastmcp.postgres.models import IndexDefinition
 from postgres_fastmcp.postgres.models import RowResult
@@ -297,7 +297,7 @@ class TestLLMOptimizerToolGenerateRecommendations:
                 "postgres_fastmcp.domains.index_tuning.llm_opt.TableAliasVisitor",
                 return_value=mock_visitor,
             ),
-            patch.object(tool, "_get_table_size", new_callable=AsyncMock, return_value=100.0),
+            patch.object(tool.cost_eval, "get_table_size", new_callable=AsyncMock, return_value=100.0),
             patch(
                 "postgres_fastmcp.domains.index_tuning.llm_opt.ExplainPlanBuilder",
                 return_value=MagicMock(
@@ -311,8 +311,8 @@ class TestLLMOptimizerToolGenerateRecommendations:
                 return_value=set(),
             ),
             patch.object(
-                tool,
-                "_evaluate_configuration_cost",
+                tool.cost_eval,
+                "evaluate_configuration_cost",
                 new_callable=AsyncMock,
                 return_value=100.0,
             ),
