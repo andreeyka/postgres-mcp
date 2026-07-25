@@ -12,8 +12,8 @@ from fastmcp import Client
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.app.server import create_server
+from postgres_fastmcp.shared.enums import AccessMode
 
 
 def _content(result: object) -> object:
@@ -62,5 +62,12 @@ async def test_execute_sql_readonly_blocks_write(
     settings = Settings(database=database)
     mcp = create_server(settings)
     async with Client(mcp) as client:
-        result = await client.call_tool("execute_sql", {"sql": "CREATE TABLE ro_write_test (id int)"})
+        # raise_on_error=False: current fastmcp raises ToolError by default on
+        # isError results; here the error result itself is the expected outcome.
+        result = await client.call_tool(
+            "execute_sql",
+            {"sql": "CREATE TABLE ro_write_test (id int)"},
+            raise_on_error=False,
+        )
     assert result.is_error is True
+    assert "read-only" in str(_content(result) or result.content).lower()
