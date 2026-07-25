@@ -2,7 +2,6 @@
 
 import json
 import logging
-import math
 from dataclasses import dataclass
 from typing import Any, override
 
@@ -10,6 +9,7 @@ from fastmcp import Context
 from pglast.ast import SelectStmt
 from pydantic import BaseModel, ValidationError
 
+from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.postgres.ast.visitors import TableAliasVisitor
 from postgres_fastmcp.postgres.models import IndexDefinition
 from postgres_fastmcp.postgres.ports import SqlDriverPort
@@ -114,11 +114,10 @@ class LLMOptimizerTool(IndexTuningBase):
             max_no_progress_attempts: Maximum number of attempts without progress.
             pareto_alpha: Pareto optimization alpha parameter.
         """
-        super().__init__(sql_driver, connection_id=connection_id)
+        super().__init__(sql_driver, connection_id=connection_id, pareto_alpha=pareto_alpha)
         self.sql_driver = sql_driver
         self.ctx = ctx
         self.max_no_progress_attempts = max_no_progress_attempts
-        self.pareto_alpha = pareto_alpha
         logger.info(
             "Initialized LLMOptimizerTool with max_no_progress_attempts=%d",
             max_no_progress_attempts,
@@ -134,7 +133,7 @@ class LLMOptimizerTool(IndexTuningBase):
         Returns:
             Objective score value.
         """
-        return math.log(execution_cost) + self.pareto_alpha * math.log(index_size)
+        return self._pareto_objective(execution_cost, index_size)
 
     async def _get_recommendations_via_context(self, user_prompt: str) -> str:
         """Get index recommendations using MCP Context sampling.
@@ -264,9 +263,6 @@ class LLMOptimizerTool(IndexTuningBase):
         total_table_size = sum(table_sizes.values())
         logger.info("Total table size: %s", total_table_size)
 
-        # Lazy import to avoid circular dependency (explain -> index -> explain)
-        from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder  # noqa: PLC0415
-
         # Generate explain plan for the query (raises ExplainPlanError on failure)
         explain_tool = ExplainPlanBuilder(self.sql_driver, connection_id=self._connection_id)
         explain_result = await explain_tool.explain(query)
@@ -383,9 +379,7 @@ class LLMOptimizerTool(IndexTuningBase):
                     logger.info("Estimated index size: %f", index_size_estimate)
 
                     # Score based on a balance of size and performance
-                    score = math.log(execution_cost_estimate) + self.pareto_alpha * math.log(
-                        total_table_size + index_size_estimate
-                    )
+                    score = self._pareto_objective(execution_cost_estimate, total_table_size + index_size_estimate)
 
                     # Record this attempt in history
                     latest_config = ScoredIndexes(

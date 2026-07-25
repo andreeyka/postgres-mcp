@@ -1,6 +1,7 @@
 # ruff: noqa: TRY301
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
@@ -217,6 +218,7 @@ class ExplainPlanBuilder:
         indexes: frozenset[IndexDefinition],
         *,
         use_generic_plan: bool = False,
+        trace: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Сформировать план объяснения для запроса с указанным набором индексов.
 
@@ -224,6 +226,8 @@ class ExplainPlanBuilder:
             query_text: SQL-запрос для объяснения.
             indexes: Frozenset объектов IndexDefinition — индексы для включения.
             use_generic_plan: Использовать опцию GENERIC_PLAN (по умолчанию False).
+            trace: Необязательный callback для трассировки (например, dta_trace
+                настройщика индексов); explain при этом не знает о вызывающем домене.
 
         Returns:
             План объяснения в виде словаря.
@@ -254,8 +258,12 @@ class ExplainPlanBuilder:
                     plan_dict: dict[str, Any] = plan_data[0]
                     return plan_dict
                 logger.debug("plan_data is an empty list with plan_data type: %s", type(plan_data))
+                if trace:
+                    trace(f"      - plan_data is an empty list with plan_data type: {type(plan_data)}")
 
             logger.debug("returning empty plan")
+            if trace:
+                trace("      - returning empty plan")
             # Return empty plan if no result
             return {"Plan": {"Total Cost": float("inf")}}
 

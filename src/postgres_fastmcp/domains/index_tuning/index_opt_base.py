@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
@@ -260,15 +261,18 @@ class IndexTuningBase(ABC):
         self,
         sql_driver: SqlDriverPort,
         connection_id: str = "",
+        pareto_alpha: float = 2.0,
     ) -> None:
         """Инициализация IndexTuningBase.
 
         Args:
             sql_driver: SQL исполнитель для доступа к базе данных.
             connection_id: Стабильный идентификатор соединения для кэша версии/расширения.
+            pareto_alpha: Вес размера индексов в целевой функции Парето.
         """
         self.sql_driver = sql_driver
         self._connection_id = connection_id
+        self.pareto_alpha = pareto_alpha
 
         # Add memoization caches
         self.cost_cache: dict[frozenset[IndexDefinition], float] = {}
@@ -510,7 +514,7 @@ class IndexTuningBase(ABC):
 
         explain_plan_tool = ExplainPlanBuilder(self.sql_driver, connection_id=self._connection_id)
         plan = await explain_plan_tool.generate_explain_plan_with_hypothetical_indexes(
-            query_text, indexes, use_generic_plan=False
+            query_text, indexes, use_generic_plan=False, trace=self.dta_trace
         )
 
         # Cache the result
@@ -622,6 +626,23 @@ class IndexTuningBase(ABC):
         logger.debug(message)
 
         self._dta_traces.append(message)
+
+    def _pareto_objective(self, execution_cost: float, total_size_bytes: float) -> float:
+        """Целевая функция Парето: log(стоимость) + alpha * log(размер).
+
+        Единая формула для всех алгоритмов настройки индексов (DTA, LLM):
+        меньше — лучше, alpha задаёт вес размера относительно стоимости.
+
+        Args:
+            execution_cost: Стоимость выполнения нагрузки (по EXPLAIN).
+            total_size_bytes: Полный размер конфигурации (таблицы + индексы) в байтах.
+
+        Returns:
+            Значение целевой функции; float("inf") при неположительных аргументах.
+        """
+        if execution_cost <= 0 or total_size_bytes <= 0:
+            return float("inf")
+        return math.log(execution_cost) + self.pareto_alpha * math.log(total_size_bytes)
 
     async def _evaluate_configuration_cost(
         self,
