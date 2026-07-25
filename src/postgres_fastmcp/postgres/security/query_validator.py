@@ -17,6 +17,7 @@ from pglast.ast import (
     SelectStmt,
 )
 from pglast.enums import A_Expr_Kind
+from pglast.visitors import Ancestor, Visitor
 
 from postgres_fastmcp.postgres.security.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
 from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
@@ -37,6 +38,96 @@ from postgres_fastmcp.shared.errors import (
 logger = logging.getLogger(__name__)
 
 PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
+
+
+class _NodeValidationVisitor(Visitor):
+    """Проверяет каждый узел AST по политикам безопасности.
+
+    Обход дерева выполняет pglast.visitors.Visitor: все узлы попадают в
+    generic-метод visit, включая узлы во вложенных последовательностях
+    (VALUES-списки, табличные функции), которые самописный обход по
+    __slots__ пропускал.
+    """
+
+    def __init__(
+        self,
+        *,
+        allowed_node_types: tuple[type, ...],
+        allowed_schema: str | None,
+        table_prefix: str | None,
+        allow_explain_analyze: bool,
+    ) -> None:
+        """Инициализация визитора с политиками валидации.
+
+        Args:
+            allowed_node_types: Допустимые типы узлов AST.
+            allowed_schema: Если задана, разрешена только эта схема.
+            table_prefix: Если задан вместе со схемой, имена таблиц должны начинаться с него.
+            allow_explain_analyze: Разрешён ли EXPLAIN (ANALYZE).
+        """
+        super().__init__()
+        self._allowed_node_types = allowed_node_types
+        self._allowed_schema = allowed_schema
+        self._table_prefix = table_prefix
+        self._allow_explain_analyze = allow_explain_analyze
+
+    def visit(self, _ancestors: Ancestor, node: Node) -> None:
+        """Валидация одного узла AST; при нарушении политики вызывает исключение.
+
+        Raises:
+            DisallowedNodeTypeError: Тип узла AST не разрешён.
+            TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
+            SchemaNotAllowedError: Доступ к схеме не разрешён.
+            SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
+            LikePatternNotConstantError: LIKE-паттерн не константа.
+            FunctionNotAllowedError: Функция не разрешена.
+            LockingClauseProhibitedError: Блокирующее предложение в SELECT.
+            ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
+            CreateExtensionNotSupportedError: Расширение не разрешено.
+        """
+        if not isinstance(node, self._allowed_node_types):
+            raise DisallowedNodeTypeError(type(node))
+
+        if isinstance(node, RangeVar):
+            validate_schema_access(
+                node,
+                allowed_schema=self._allowed_schema,
+                table_prefix=self._table_prefix,
+            )
+
+        if (
+            isinstance(node, A_Expr)
+            and node.kind
+            in (
+                A_Expr_Kind.AEXPR_LIKE,
+                A_Expr_Kind.AEXPR_ILIKE,
+            )
+            and not (
+                isinstance(node.rexpr, A_Const)
+                and node.rexpr.val is not None
+                and hasattr(node.rexpr.val, "sval")
+                and node.rexpr.val.sval is not None
+            )
+        ):
+            raise LikePatternNotConstantError
+
+        if isinstance(node, FuncCall):
+            func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
+            match = PG_CATALOG_PATTERN.match(func_name)
+            unqualified = match.group(1) if match else func_name
+            if unqualified not in ALLOWED_FUNCTIONS:
+                raise FunctionNotAllowedError(func_name)
+
+        if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
+            raise LockingClauseProhibitedError
+
+        if isinstance(node, ExplainStmt) and not self._allow_explain_analyze:
+            for option in node.options or []:
+                if isinstance(option, DefElem) and option.defname == "analyze":
+                    raise ExplainAnalyzeNotSupportedError
+
+        if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
+            raise CreateExtensionNotSupportedError(node.extname or "")
 
 
 class QueryValidator:
@@ -89,8 +180,17 @@ class QueryValidator:
             raise SqlParseError from e
 
         allowed_stmt_types = set(ALLOWED_STMT_TYPES)
+        allowed_node_types = set(ALLOWED_NODE_TYPES)
         if not self.read_only:
             allowed_stmt_types |= DML_STMT_TYPES
+            allowed_node_types |= DML_STMT_TYPES
+
+        node_validator = _NodeValidationVisitor(
+            allowed_node_types=tuple(allowed_node_types),
+            allowed_schema=self.allowed_schema,
+            table_prefix=self.table_prefix,
+            allow_explain_analyze=self.allow_explain_analyze,
+        )
 
         for stmt in parsed:
             stmt_node = stmt.stmt if isinstance(stmt, RawStmt) else stmt
@@ -103,69 +203,4 @@ class QueryValidator:
             ):
                 raise DdlNotAllowedError(stmt_type_name)
 
-            self._validate_node(stmt)
-
-    def _validate_node(self, node: Node) -> None:
-        """Рекурсивная валидация AST узла и его детей."""
-        allowed = set(ALLOWED_NODE_TYPES)
-        if not self.read_only:
-            allowed |= DML_STMT_TYPES
-
-        if not isinstance(node, tuple(allowed)):
-            raise DisallowedNodeTypeError(type(node))
-
-        if isinstance(node, RangeVar):
-            validate_schema_access(
-                node,
-                allowed_schema=self.allowed_schema,
-                table_prefix=self.table_prefix,
-            )
-
-        if (
-            isinstance(node, A_Expr)
-            and node.kind
-            in (
-                A_Expr_Kind.AEXPR_LIKE,
-                A_Expr_Kind.AEXPR_ILIKE,
-            )
-            and not (
-                isinstance(node.rexpr, A_Const)
-                and node.rexpr.val is not None
-                and hasattr(node.rexpr.val, "sval")
-                and node.rexpr.val.sval is not None
-            )
-        ):
-            raise LikePatternNotConstantError
-
-        if isinstance(node, FuncCall):
-            func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
-            match = PG_CATALOG_PATTERN.match(func_name)
-            unqualified = match.group(1) if match else func_name
-            if unqualified not in ALLOWED_FUNCTIONS:
-                raise FunctionNotAllowedError(func_name)
-
-        if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
-            raise LockingClauseProhibitedError
-
-        if isinstance(node, ExplainStmt) and not self.allow_explain_analyze:
-            for option in node.options or []:
-                if isinstance(option, DefElem) and option.defname == "analyze":
-                    raise ExplainAnalyzeNotSupportedError
-
-        if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
-            raise CreateExtensionNotSupportedError(node.extname or "")
-
-        for attr_name in getattr(node, "__slots__", ()):
-            if attr_name.startswith("_"):
-                continue
-            try:
-                attr = getattr(node, attr_name)
-            except AttributeError as e:
-                logger.debug("Attribute %s does not exist on %s: %s", attr_name, type(node).__name__, e)
-                continue
-            if isinstance(attr, (list, tuple)):
-                for item in attr:
-                    if isinstance(item, Node):
-                        self._validate_node(item)
-            elif isinstance(attr, Node):
-                self._validate_node(attr)
+            node_validator(stmt)
