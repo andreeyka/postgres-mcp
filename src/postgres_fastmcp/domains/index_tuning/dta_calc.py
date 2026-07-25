@@ -50,14 +50,13 @@ class DatabaseTuningAdvisor(IndexTuningBase):
             pareto_alpha: Stop when relative improvement falls below this threshold.
             min_time_improvement: Stop when relative improvement falls below this threshold.
         """
-        super().__init__(sql_driver, connection_id=connection_id)
+        super().__init__(sql_driver, connection_id=connection_id, pareto_alpha=pareto_alpha)
         self.budget_mb = budget_mb
         self.max_runtime_seconds = max_runtime_seconds
         self.max_index_width = max_index_width
         self.min_column_usage = min_column_usage
         self.seed_columns_count = seed_columns_count
         self._analysis_start_time = 0.0
-        self.pareto_alpha = pareto_alpha
         self.min_time_improvement = min_time_improvement
 
     def _check_time(self) -> bool:
@@ -361,14 +360,11 @@ class DatabaseTuningAdvisor(IndexTuningBase):
         Returns:
             Tuple of final indexes and final cost.
         """
-        import math  # noqa: PLC0415
-
         # Parameters
-        alpha = self.pareto_alpha
         min_time_improvement = self.min_time_improvement  # 5% default
 
         self.dta_trace("\n[GREEDY SEARCH] Starting enumeration")
-        self.dta_trace(f"  - Parameters: alpha={alpha}, min_time_improvement={min_time_improvement}")
+        self.dta_trace(f"  - Parameters: alpha={self.pareto_alpha}, min_time_improvement={min_time_improvement}")
         self.dta_trace(f"  - Initial indexes: {len(current_indexes)}, Candidates: {len(candidate_indexes)}")
 
         # Get the tables involved in this analysis
@@ -387,11 +383,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
         # Total space is base relation plus indexes
         current_space = base_relation_size + indexes_size
         current_time = current_cost
-        current_objective = (
-            math.log(current_time) + alpha * math.log(current_space)
-            if current_cost > 0 and current_space > 0
-            else float("inf")
-        )
+        current_objective = self._pareto_objective(current_time, current_space)
 
         self.dta_trace(
             f"  - Initial configuration: Time={current_time:.2f}, "
@@ -447,7 +439,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
                     continue
 
                 # Calculate objective for this configuration
-                test_objective = math.log(test_time) + alpha * math.log(test_space)
+                test_objective = self._pareto_objective(test_time, test_space)
 
                 # Select the index with the best time improvement that meets our threshold
                 if test_objective < best_objective and time_improvement > best_time_improvement:
