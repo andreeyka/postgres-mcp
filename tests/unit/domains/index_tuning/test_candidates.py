@@ -1,12 +1,12 @@
 # mypy: ignore-errors
-"""Unit tests for DatabaseTuningAdvisor internals that must not be SQL-injectable."""
+"""Unit tests for CandidateGenerator internals that must not be SQL-injectable."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
-from postgres_fastmcp.domains.index_tuning.index_opt_base import IndexRecommendation
+from postgres_fastmcp.domains.index_tuning.candidates import CandidateGenerator
+from postgres_fastmcp.domains.index_tuning.models import IndexRecommendation
 
 
 class TestFilterLongTextColumnsParameterization:
@@ -17,10 +17,10 @@ class TestFilterLongTextColumnsParameterization:
         """A table name from a parsed query must not be embedded in the SQL text."""
         driver = AsyncMock()
         driver.execute = AsyncMock(return_value=[])
-        advisor = DatabaseTuningAdvisor(driver)
+        generator = CandidateGenerator(driver, MagicMock())
 
         malicious = "users'); DROP TABLE secrets; --"
-        await advisor._filter_long_text_columns([IndexRecommendation(malicious, ("id",))])
+        await generator._filter_long_text_columns([IndexRecommendation(malicious, ("id",))])
 
         driver.execute.assert_awaited_once()
         sent_query = driver.execute.call_args.args[0]

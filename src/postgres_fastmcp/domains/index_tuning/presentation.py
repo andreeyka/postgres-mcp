@@ -10,7 +10,9 @@ from postgres_fastmcp.postgres.models import IndexDefinition
 from postgres_fastmcp.postgres.ports import SqlDriverPort
 from postgres_fastmcp.shared.utils import calculate_improvement_multiple
 
-from .index_opt_base import IndexTuningBase, IndexTuningResult
+from .base import IndexTuningBase
+from .cost_eval import extract_cost_from_json_plan
+from .models import IndexTuningResult
 
 
 logger = logging.getLogger(__name__)
@@ -233,17 +235,17 @@ class TextPresentation:
         if unique_queries and self.index_tuning:
             for query in unique_queries:
                 # Get plan with no indexes
-                before_plan = await self.index_tuning.get_explain_plan_with_indexes(query, frozenset())
+                before_plan = await self.index_tuning.cost_eval.explain_plan_with_indexes(query, frozenset())
 
                 # Get plan with all recommended indexes
                 index_configs = frozenset(
                     IndexDefinition(rec.table, rec.columns, rec.using) for rec in session.recommendations
                 )
-                after_plan = await self.index_tuning.get_explain_plan_with_indexes(query, index_configs)
+                after_plan = await self.index_tuning.cost_eval.explain_plan_with_indexes(query, index_configs)
 
                 # Extract costs from plans
-                base_cost = self.index_tuning.extract_cost_from_json_plan(before_plan)
-                new_cost = self.index_tuning.extract_cost_from_json_plan(after_plan)
+                base_cost = extract_cost_from_json_plan(before_plan)
+                new_cost = extract_cost_from_json_plan(after_plan)
 
                 # Calculate improvement multiple
                 improvement_multiple = "∞"  # Default for cases where new_cost is zero

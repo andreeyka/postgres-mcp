@@ -499,7 +499,7 @@ uv run python -m pytest
 **Запуск конкретного файла тестов:**
 
 ```bash
-uv run python -m pytest tests/unit/index/test_dta_calc.py -v
+uv run python -m pytest tests/unit/domains/index_tuning -v
 ```
 
 **Интеграционные тесты с реальной БД:**

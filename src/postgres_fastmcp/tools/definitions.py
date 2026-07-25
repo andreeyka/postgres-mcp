@@ -15,7 +15,7 @@ from postgres_fastmcp.domains import querying, top_queries
 from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
-from postgres_fastmcp.domains.index_tuning.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
+from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
 from postgres_fastmcp.shared.enums import AnalysisMethod, ObjectType, TopQueriesSortBy
 

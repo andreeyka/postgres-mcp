@@ -6,8 +6,8 @@ from fastmcp import Context
 
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
-from postgres_fastmcp.domains.index_tuning.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.llm_opt import LLMOptimizerTool
+from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
 from postgres_fastmcp.shared.enums import AnalysisMethod
 from postgres_fastmcp.shared.errors import ContextRequiredError, EmptyQueriesError, QueriesLimitError
