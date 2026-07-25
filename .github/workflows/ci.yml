@@ -53,6 +53,8 @@ jobs:
     name: Integration tests (postgres 15/16 + hypopg)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -62,5 +64,7 @@ jobs:
         run: uv sync --all-extras
       - name: Build postgres-hypopg images
         run: uv run python tests/prepare_docker_images.py
+      # -v: строка на тест (прогресс-точки без \n не флашатся в лог GHA);
+      # --timeout: зависший тест падает со стектрейсом, а не съедает весь лимит джобы.
       - name: Run integration tests
-        run: uv run pytest tests/integration -q
+        run: uv run pytest tests/integration -v --timeout=180 --durations=20
