@@ -6,10 +6,10 @@ import logging
 
 import pytest
 
-from postgres_fastmcp.services.db_access_service import DbAccessService
-from postgres_fastmcp.services.index.dta_calc import DatabaseTuningAdvisor
-from postgres_fastmcp.services.index.index_opt_base import IndexTuningResult
-from postgres_fastmcp.services.index.presentation import TextPresentation
+from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
+from postgres_fastmcp.domains.index_tuning.index_opt_base import IndexTuningResult
+from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ async def test_dta_pareto_basic(db_service_with_hypopg: DbAccessService) -> None
 @pytest.mark.asyncio
 async def test_dta_analyze_workload_via_service(db_service_with_hypopg: DbAccessService) -> None:
     """IndexAnalysisService.analyze_query_indexes returns dict without error for simple workload."""
-    from postgres_fastmcp.services.index.service import IndexAnalysisService
+    from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
 
     sql = db_service_with_hypopg.sql_driver
     await _execute_setup(

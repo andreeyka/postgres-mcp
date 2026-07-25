@@ -1,7 +1,7 @@
 """Программная регистрация тулов в FastMCP через Tool.from_function + add_tool.
 
 Описания строятся в момент регистрации с учётом Settings (access_mode, write_mode),
-поэтому модули `tools/basic/*` и `tools/full/*` могут импортироваться без инициализации конфига.
+поэтому модуль `tools/definitions` может импортироваться без инициализации конфига.
 """
 
 from __future__ import annotations
@@ -15,28 +15,25 @@ from typing import TYPE_CHECKING, Any
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-from postgres_fastmcp.enums import AccessMode, ToolTag
-from postgres_fastmcp.tools.basic.execute_sql import execute_sql
-from postgres_fastmcp.tools.basic.explain_query import explain_query
-from postgres_fastmcp.tools.basic.get_object_details import get_object_details
-from postgres_fastmcp.tools.basic.list_objects import list_objects
-from postgres_fastmcp.tools.constants import (
-    DESTRUCTIVE,
+from postgres_fastmcp.shared.enums import AccessMode, ToolTag
+from postgres_fastmcp.tools.definitions import (
     HEALTH_TYPE_VALUES,
-    READ_ONLY_IDEMPOTENT,
-    READ_ONLY_NON_IDEMPOTENT,
+    analyze_db_health,
+    analyze_query_indexes,
+    analyze_workload_indexes,
+    execute_sql,
+    explain_query,
+    get_object_details,
+    get_top_queries,
+    list_objects,
+    list_schemas,
 )
-from postgres_fastmcp.tools.full.analyze_db_health import analyze_db_health
-from postgres_fastmcp.tools.full.analyze_query_indexes import analyze_query_indexes
-from postgres_fastmcp.tools.full.analyze_workload_indexes import analyze_workload_indexes
-from postgres_fastmcp.tools.full.get_top_queries import get_top_queries
-from postgres_fastmcp.tools.full.list_schemas import list_schemas
 
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-    from postgres_fastmcp.config import Settings
+    from postgres_fastmcp.app.config import Settings
 
 
 try:
@@ -45,6 +42,27 @@ except PackageNotFoundError:
     _VERSION = "0.0.0"
 
 _META: dict[str, Any] = {"version": _VERSION}
+
+# Annotation presets for Tool.from_function(annotations={...})
+# See https://gofastmcp.com/servers/tools — ToolAnnotations fields.
+READ_ONLY_IDEMPOTENT: dict[str, bool] = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": True,
+}
+READ_ONLY_NON_IDEMPOTENT: dict[str, bool] = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
+DESTRUCTIVE: dict[str, bool] = {
+    "readOnlyHint": False,
+    "destructiveHint": True,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
 
 
 def _ann(title: str, preset: dict[str, bool]) -> ToolAnnotations:

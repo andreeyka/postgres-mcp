@@ -23,8 +23,8 @@ except PackageNotFoundError:
 from fastmcp.server.middleware import Middleware
 from fastmcp.server.providers import FileSystemProvider, LocalProvider
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.server import create_server
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.server import create_server
 
 
 __all__ = [

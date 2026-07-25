@@ -6,8 +6,8 @@ import asyncio
 
 from fastmcp import FastMCP
 
-from postgres_fastmcp.config import Settings
-from postgres_fastmcp.enums import AccessMode
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.tools.registry import register_tools
 
 

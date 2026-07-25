@@ -32,7 +32,7 @@ packages = ["src/postgres_fastmcp"]
 include = ["src/postgres_fastmcp", "README.md", "pyproject.toml"]
 
 [project.scripts]
-postgres-mcp = "postgres_fastmcp.main:app"
+postgres-mcp = "postgres_fastmcp.app.main:app"
 
 [dependency-groups]
 dev = [
@@ -44,6 +44,7 @@ dev = [
     "docker>=7.2.0",
     "pytest-cov>=7.1.0",
     "typing_extensions>=4.16.0",
+    "pytest-timeout>=2.3.1",
 ]
 
 [tool.mypy]
@@ -162,12 +163,10 @@ ignore = [
     "ARG005",  # Unused lambda argument - acceptable for test callbacks
     "ARG001",  # Unused function argument - acceptable for mocks and fixtures
 ]
-# Facade layers touch driver internals (SLF001); index/top_queries raise in place (RSE102)
-"src/postgres_fastmcp/services/schema/service.py" = ["SLF001"]
-"src/postgres_fastmcp/services/objects/*.py" = ["SLF001"]
-"src/postgres_fastmcp/services/index/service.py" = ["RSE102"]
-"src/postgres_fastmcp/services/top_queries/service.py" = ["RSE102"]
-"src/postgres_fastmcp/sql/validation/*.py" = ["C901"]
+# Facade layers touch driver internals (SLF001); index_tuning raises in place (RSE102)
+"src/postgres_fastmcp/domains/catalog/*.py" = ["SLF001"]
+"src/postgres_fastmcp/domains/index_tuning/service.py" = ["RSE102"]
+"src/postgres_fastmcp/postgres/security/*.py" = ["C901"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -1,13 +1,12 @@
 # mypy: ignore-errors
-"""Integration tests for top queries (postgres_fastmcp: DbAccessService, TopQueriesService)."""
+"""Integration tests for top queries (postgres_fastmcp: DbAccessService, top_queries)."""
 
 import logging
 
 import pytest
 
-from postgres_fastmcp.services.db_access_service import DbAccessService
-from postgres_fastmcp.services.top_queries.service import TopQueriesService
-from postgres_fastmcp.services.top_queries.top_queries_calc import PG_STAT_STATEMENTS, TopQueriesCalc
+from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.top_queries import PG_STAT_STATEMENTS, TopQueriesCalc, get_top_queries
 
 
 logger = logging.getLogger(__name__)
@@ -80,9 +79,8 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
         if not pg_stats or len(pg_stats) == 0:
             pytest.skip("pg_stat_statements did not capture the CROSS JOIN query")
 
-        service = TopQueriesService(db_service_full)
-        total_result = await service.get_top_queries(sort_by="total_time", limit=10)
-        mean_result = await service.get_top_queries(sort_by="mean_time", limit=10)
+        total_result = await get_top_queries(db_service_full, sort_by="total_time", limit=10)
+        mean_result = await get_top_queries(db_service_full, sort_by="mean_time", limit=10)
 
         assert "slowest queries by total execution time" in total_result
         assert "slowest queries by mean execution time" in mean_result
@@ -98,7 +96,7 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
 @pytest.mark.asyncio
 async def test_extension_not_available(db_service_full: DbAccessService) -> None:
     """When pg_stat_statements is not installed, result contains installation instructions."""
-    from postgres_fastmcp.sql.extensions.status import ExtensionStatus
+    from postgres_fastmcp.postgres.extensions import ExtensionStatus
 
     calc = TopQueriesCalc(
         sql_driver=db_service_full.sql_driver,
