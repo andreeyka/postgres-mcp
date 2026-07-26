@@ -991,6 +991,17 @@ else:
 - **App / composition root** (`app/`): config, server assembly, lifespan, entry point (`app/main.py`)
 - **Presentation** (`tools/`): MCP tool functions (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)
 - **Domains** (`domains/`): one package or module per feature — `catalog`, `querying`, `explain`, `health`, `index_tuning`, `top_queries`, plus `db_access` (executor wiring)
+  - `index_tuning` is the largest domain package and is split by responsibility:
+    - `models.py` — dataclasses (`IndexRecommendation`, `IndexRecommendationAnalysis`, `IndexTuningResult`) and string helpers
+    - `workload.py` — workload sources (SQL file, `pg_stat_statements`, explicit query list), validation/parsing, query weights — plain functions
+    - `cost_eval.py` — `CostEvaluator`: memoized what-if cost/size evaluation (EXPLAIN plans, hypopg, `pg_stats`) plus `extract_cost_from_json_plan`
+    - `base.py` — `IndexTuningBase`: `analyze_workload` orchestration, prechecks, shared Pareto objective, recommendation formatting
+    - `dta_calc.py` — `DatabaseTuningAdvisor`: seed + greedy search algorithm
+    - `candidates.py` — `CandidateGenerator`: candidate enumeration and filtering (existing indexes, condition columns, long text columns), hypopg batch sizing
+    - `index_compare.py` — structural comparison of index definitions via pglast (pure functions)
+    - `condition_collector.py` — `ConditionColumnCollector` AST visitor
+    - `llm_opt.py` — `LLMOptimizerTool`: LLM-driven search via MCP context sampling
+    - `presentation.py` — `TextPresentation`: result rendering; `service.py` — `IndexAnalysisService` facade consumed by `tools/`
 - **Infrastructure** (`postgres/`): SQL driver, connection pool, safe execution and validation (`postgres/security/`), param substitution, AST utils. Domains type against `postgres/ports.py` protocols (`SqlDriverPort` / `QueryExecutorPort`), never against concrete executors
 - **Shared kernel** (`shared/`): errors, utils, enums, logger — importable from any layer
 
