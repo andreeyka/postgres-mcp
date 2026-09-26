@@ -169,9 +169,9 @@ OutputParam = Annotated[
     BeforeValidator(_normalize_output),
     Field(
         description=(
-            "'table' (default): Markdown table for reading. "
-            "'json': {'rows': [...], 'row_count': N} as structured content, for code that processes the result. "
-            "Any case is accepted."
+            "'table' (default): compact Markdown for reading. "
+            "'json': the same data as structured JSON, for code that processes the result "
+            "(row tools return {'rows': [...], 'row_count': N}). Any case is accepted."
         ),
         json_schema_extra=_any_string,
     ),

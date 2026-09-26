@@ -17,7 +17,7 @@ from postgres_fastmcp.shared.enums import AccessMode
 
 # Бюджет на весь tools/list в режиме FULL: размер после изменений плюс 15 %.
 # Пересчёт: команда в docs/superpowers/plans/2026-09-26-03-agent-output-budget.md, Task 6.
-_TOOLS_LIST_BUDGET_CHARS = 10_590
+_TOOLS_LIST_BUDGET_CHARS = 10_774
 
 _ROW_TOOLS = ("execute_sql", "list_objects", "get_object_details", "list_schemas", "get_top_queries")
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -108,3 +108,11 @@ async def test_everything_the_agent_sees_is_english(tools: dict[str, Tool]) -> N
 async def test_tools_list_fits_budget(tools: dict[str, Tool]) -> None:
     size = sum(len(json.dumps(_wire(tool))) for tool in tools.values())
     assert size <= _TOOLS_LIST_BUDGET_CHARS, size
+
+
+@pytest.mark.parametrize("name", _ROW_TOOLS)
+async def test_output_description_does_not_promise_rows_for_every_tool(tools: dict[str, Tool], name: str) -> None:
+    """get_object_details в json отдаёт поля объекта и секции, а не {'rows': ...}: описание не должно это обещать."""
+    description = tools[name].parameters["properties"]["output"]["description"]
+    assert "the same data as structured JSON" in description
+    assert "row tools return {'rows': [...], 'row_count': N}" in description
