@@ -3,10 +3,16 @@
 import logging
 from typing import Any, Literal
 
+from psycopg.errors import ObjectNotInPrerequisiteState
+
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.ports import SqlDriverPort
-from postgres_fastmcp.shared.errors import InvalidSortCriteriaError, PgStatStatementsNotInstalledError
+from postgres_fastmcp.shared.errors import (
+    InvalidSortCriteriaError,
+    PgStatStatementsNotInstalledError,
+    UnsupportedServerVersionError,
+)
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 
@@ -15,6 +21,9 @@ logger = logging.getLogger(__name__)
 PG_STAT_STATEMENTS = "pg_stat_statements"
 # PostgreSQL version where column names changed in pg_stat_statements
 PG_VERSION_COLUMN_CHANGE = 13
+# Ранжирование по ресурсам читает stddev_exec_time и wal_bytes, которые появились в PostgreSQL 13
+_RESOURCES_FEATURE = "sort_by='resources'"
+_RESOURCES_HINT = "Use sort_by='total_time' or 'mean_time' instead."
 
 
 class TopQueriesCalc:
@@ -34,8 +43,8 @@ class TopQueriesCalc:
         self.sql_driver = sql_driver
         self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
 
-    async def _time_columns(self) -> tuple[str, str]:
-        """Имена колонок общего и среднего времени для версии сервера.
+    async def _server_version(self) -> int:
+        """Мажорная версия PostgreSQL после проверки, что pg_stat_statements установлено.
 
         Raises:
             PgStatStatementsNotInstalledError: Если pg_stat_statements не установлено.
@@ -46,10 +55,21 @@ class TopQueriesCalc:
             raise PgStatStatementsNotInstalledError
         pg_version = await self._ext_inspector.get_postgres_version()
         logger.debug("PostgreSQL version: %s", pg_version)
-        # Колонки переименованы в PostgreSQL 13
-        if pg_version >= PG_VERSION_COLUMN_CHANGE:
-            return "total_exec_time", "mean_exec_time"
-        return "total_time", "mean_time"
+        return pg_version
+
+    async def _fetch(self, query: str, limit: int) -> list[dict[str, Any]]:
+        """Выполнить запрос к pg_stat_statements и декодировать строки.
+
+        Raises:
+            PgStatStatementsNotInstalledError: Расширение создано, но библиотека не загружена
+                через shared_preload_libraries: представление недоступно.
+        """
+        try:
+            rows = await self.sql_driver.execute(query, params=[limit], readonly=True)
+        except ObjectNotInPrerequisiteState as e:
+            logger.warning("Extension %s is not preloaded: %s", PG_STAT_STATEMENTS, e)
+            raise PgStatStatementsNotInstalledError from e
+        return [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
 
     async def get_top_queries_by_time(
         self, limit: int = 10, sort_by: Literal["total", "mean"] = "mean"
@@ -63,7 +83,11 @@ class TopQueriesCalc:
         Returns:
             Строки pg_stat_statements: query, calls, время, rows.
         """
-        total_time_col, mean_time_col = await self._time_columns()
+        # Колонки переименованы в PostgreSQL 13
+        if await self._server_version() >= PG_VERSION_COLUMN_CHANGE:
+            total_time_col, mean_time_col = "total_exec_time", "mean_exec_time"
+        else:
+            total_time_col, mean_time_col = "total_time", "mean_time"
         order_by_column = total_time_col if sort_by == "total" else mean_time_col
         # Имена колонок берутся из проверки версии, а не из ввода пользователя
         query = f"""
@@ -79,8 +103,7 @@ class TopQueriesCalc:
             ORDER BY {order_by_column} DESC
             LIMIT {{}};
         """  # noqa: S608
-        rows = await self.sql_driver.execute(query, params=[limit], readonly=True)
-        result = [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
+        result = await self._fetch(query, limit)
         logger.info("Found %s slow queries", len(result))
         return result
 
@@ -93,27 +116,37 @@ class TopQueriesCalc:
 
         Returns:
             Строки pg_stat_statements с долями ресурсов.
+
+        Raises:
+            UnsupportedServerVersionError: PostgreSQL ниже 13: нет stddev_exec_time и wal_bytes.
         """
-        total_time_col, mean_time_col = await self._time_columns()
-        # Имена колонок из проверки версии, frac_threshold — float-параметр, а не SQL от пользователя
+        pg_version = await self._server_version()
+        if pg_version < PG_VERSION_COLUMN_CHANGE:
+            raise UnsupportedServerVersionError(
+                _RESOURCES_FEATURE, PG_VERSION_COLUMN_CHANGE, pg_version, hint=_RESOURCES_HINT
+            )
+        # Доли делятся на NULLIF(сумма, 0): на нагрузке без WAL или чтений сумма равна нулю,
+        # доля становится NULL и не проходит фильтр по порогу вместо division by zero.
+        # frac_threshold — float-параметр, а не SQL от пользователя
         query = f"""
             WITH resource_fractions AS (
                 SELECT
                     query,
                     calls,
                     rows,
-                    {total_time_col} total_exec_time,
-                    {mean_time_col} mean_exec_time,
+                    total_exec_time,
+                    mean_exec_time,
                     stddev_exec_time,
                     shared_blks_hit,
                     shared_blks_read,
                     shared_blks_dirtied,
                     wal_bytes,
-                    total_exec_time / SUM(total_exec_time) OVER () AS total_exec_time_frac,
-                    (shared_blks_hit + shared_blks_read) / SUM(shared_blks_hit + shared_blks_read) OVER () AS shared_blks_accessed_frac,
-                    shared_blks_read / SUM(shared_blks_read) OVER () AS shared_blks_read_frac,
-                    shared_blks_dirtied / SUM(shared_blks_dirtied) OVER () AS shared_blks_dirtied_frac,
-                    wal_bytes / SUM(wal_bytes) OVER () AS total_wal_bytes_frac
+                    total_exec_time / NULLIF(SUM(total_exec_time) OVER (), 0) AS total_exec_time_frac,
+                    (shared_blks_hit + shared_blks_read)
+                        / NULLIF(SUM(shared_blks_hit + shared_blks_read) OVER (), 0) AS shared_blks_accessed_frac,
+                    shared_blks_read / NULLIF(SUM(shared_blks_read) OVER (), 0) AS shared_blks_read_frac,
+                    shared_blks_dirtied / NULLIF(SUM(shared_blks_dirtied) OVER (), 0) AS shared_blks_dirtied_frac,
+                    wal_bytes / NULLIF(SUM(wal_bytes) OVER (), 0) AS total_wal_bytes_frac
                 FROM pg_stat_statements
                 WHERE calls > 0
                   AND query NOT LIKE '%pg_stat_statements%'
@@ -143,9 +176,8 @@ class TopQueriesCalc:
                 OR total_wal_bytes_frac > {frac_threshold}
             ORDER BY total_exec_time DESC
             LIMIT {{}};
-        """  # noqa: E501, S608
-        rows = await self.sql_driver.execute(query, params=[limit], readonly=True)
-        result = [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
+        """  # noqa: S608
+        result = await self._fetch(query, limit)
         logger.info("Found %s resource-intensive queries", len(result))
         return result
 

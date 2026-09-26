@@ -4,19 +4,38 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pglast import ast, parse_sql
+from pglast.enums.parsenodes import A_Expr_Kind
+from pglast.visitors import Visitor
+from psycopg.errors import ObjectNotInPrerequisiteState
 
 from postgres_fastmcp.domains.top_queries import TopQueriesCalc, get_top_queries
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.shared.errors import InvalidSortCriteriaError, PgStatStatementsNotInstalledError
+from postgres_fastmcp.shared.errors import (
+    InvalidSortCriteriaError,
+    PgStatStatementsNotInstalledError,
+    UnsupportedServerVersionError,
+)
 
 
-def _calc(mock_executor: MagicMock, *, installed: bool = True) -> TopQueriesCalc:
-    """TopQueriesCalc с подменённой проверкой расширения и версии PostgreSQL 16."""
+def _calc(mock_executor: MagicMock, *, installed: bool = True, pg_version: int = 16) -> TopQueriesCalc:
+    """TopQueriesCalc с подменённой проверкой расширения и версией PostgreSQL (по умолчанию 16)."""
     calc = TopQueriesCalc(sql_driver=mock_executor, connection_id="test")
     calc._ext_inspector = MagicMock()
     calc._ext_inspector.check_extension = AsyncMock(return_value=MagicMock(is_installed=installed))
-    calc._ext_inspector.get_postgres_version = AsyncMock(return_value=16)
+    calc._ext_inspector.get_postgres_version = AsyncMock(return_value=pg_version)
     return calc
+
+
+class _Divisions(Visitor):
+    """Собирает правые операнды всех делений '/' в SQL."""
+
+    def __init__(self) -> None:
+        self.denominators: list[ast.Node] = []
+
+    def visit_A_Expr(self, parent: object, node: ast.A_Expr) -> None:  # noqa: ARG002
+        if node.name and node.name[0].sval == "/":
+            self.denominators.append(node.rexpr)
 
 
 class TestGetTopQueries:
@@ -87,6 +106,49 @@ async def test_missing_extension_raises(mock_executor: MagicMock, method: str) -
     with pytest.raises(PgStatStatementsNotInstalledError, match="CREATE EXTENSION pg_stat_statements"):
         await getattr(_calc(mock_executor, installed=False), method)()
     mock_executor.execute.assert_not_called()
+
+
+async def test_resource_queries_guard_zero_totals(mock_executor: MagicMock) -> None:
+    """Every fraction divides by NULLIF(total, 0): a zero total (no WAL, no reads) gives NULL, not division by zero."""
+    mock_executor.execute.return_value = []
+
+    await _calc(mock_executor).get_top_resource_queries(limit=7)
+
+    query = mock_executor.execute.call_args.args[0].replace("{}", "1")
+    divisions = _Divisions()
+    divisions(parse_sql(query))
+    assert len(divisions.denominators) == 5
+    for denominator in divisions.denominators:
+        assert isinstance(denominator, ast.A_Expr), denominator
+        assert denominator.kind == A_Expr_Kind.AEXPR_NULLIF, denominator
+
+
+@pytest.mark.parametrize("method", ["get_top_resource_queries", "get_top_queries_by_time"])
+async def test_extension_not_preloaded_raises(mock_executor: MagicMock, method: str) -> None:
+    """Extension created but not in shared_preload_libraries: the view raises, the agent gets the install hint."""
+    mock_executor.execute.side_effect = ObjectNotInPrerequisiteState("pg_stat_statements must be loaded")
+
+    with pytest.raises(PgStatStatementsNotInstalledError, match="shared_preload_libraries") as exc_info:
+        await getattr(_calc(mock_executor), method)()
+
+    assert isinstance(exc_info.value.__cause__, ObjectNotInPrerequisiteState)
+
+
+async def test_resource_queries_require_postgres_13(mock_executor: MagicMock) -> None:
+    """Before PostgreSQL 13 the resource columns do not exist: fail before querying, point to the time rankings."""
+    with pytest.raises(UnsupportedServerVersionError, match="sort_by='total_time'"):
+        await _calc(mock_executor, pg_version=12).get_top_resource_queries()
+
+    mock_executor.execute.assert_not_called()
+
+
+async def test_time_queries_work_before_postgres_13(mock_executor: MagicMock) -> None:
+    """The time rankings still work on PostgreSQL 12 with the old column names."""
+    mock_executor.execute.return_value = []
+
+    await _calc(mock_executor, pg_version=12).get_top_queries_by_time(sort_by="total")
+
+    assert "ORDER BY total_time DESC" in mock_executor.execute.call_args.args[0]
 
 
 def test_top_queries_sql_filters_self_queries_and_zero_calls() -> None:

@@ -391,10 +391,31 @@ class PgStatStatementsNotInstalledError(UserFacingError):
     def __init__(self) -> None:
         """Инициализация с фиксированным сообщением и подсказкой по установке."""
         super().__init__(
-            "The pg_stat_statements extension is not installed, so query statistics are unavailable. "
+            "The pg_stat_statements extension is not installed or not preloaded, "
+            "so query statistics are unavailable. "
             "Ask a database administrator to add pg_stat_statements to shared_preload_libraries "
             "and run CREATE EXTENSION pg_stat_statements."
         )
+
+
+class UnsupportedServerVersionError(UserFacingError):
+    """Возможность недоступна на версии PostgreSQL сервера."""
+
+    def __init__(self, feature: str, min_version: int, actual: int, *, hint: str) -> None:
+        """Инициализация с требуемой и фактической версией.
+
+        Args:
+            feature: Что недоступно, например "sort_by='resources'".
+            min_version: Минимальная мажорная версия PostgreSQL.
+            actual: Мажорная версия сервера.
+            hint: Что сделать вместо этого (английский текст для агента).
+        """
+        super().__init__(
+            f"{feature} requires PostgreSQL {min_version} or newer, but the server runs PostgreSQL {actual}. {hint}"
+        )
+        self.feature = feature
+        self.min_version = min_version
+        self.actual = actual
 
 
 class HypopgNotInstalledError(UserFacingError):
