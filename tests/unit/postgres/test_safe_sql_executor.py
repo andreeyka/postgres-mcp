@@ -2,7 +2,7 @@
 """Unit tests for SafeSqlExecutor."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from psycopg.errors import QueryCanceled
@@ -11,7 +11,7 @@ from psycopg.pq import DiagnosticField
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError, SchemaNotAllowedError
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig
-from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
+from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor, _is_statement_timeout
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
 
@@ -140,6 +140,29 @@ class TestSafeSqlExecutorTimeout:
         assert isinstance(exc_info.value.__cause__, QueryCanceled)
         assert "read_only" not in str(exc_info.value)
 
+    async def test_localized_timeout_cancel_after_timeout_maps_to_query_timeout_error(self) -> None:
+        """A non-English statement_timeout message is still a timeout once the elapsed time reached it."""
+        mock_delegate = MagicMock()
+        mock_delegate.execute = AsyncMock(side_effect=_query_canceled("выполнение оператора отменено из-за тайм-аута"))
+        executor = _make_executor(mock_delegate, config=SafeSqlConfig(query_tag="t", timeout=30))
+        with (
+            patch("postgres_fastmcp.postgres.security.driver.monotonic", side_effect=[100.0, 130.0]),
+            pytest.raises(QueryTimeoutError) as exc_info,
+        ):
+            await executor.execute("SELECT 1")
+        assert exc_info.value.timeout_seconds == 30
+
+    async def test_quick_cancel_maps_to_query_cancelled_error(self) -> None:
+        """A cancel that arrives well before the timeout is not a statement_timeout."""
+        mock_delegate = MagicMock()
+        mock_delegate.execute = AsyncMock(side_effect=_query_canceled("canceling statement due to user request"))
+        executor = _make_executor(mock_delegate, config=SafeSqlConfig(query_tag="t", timeout=30))
+        with (
+            patch("postgres_fastmcp.postgres.security.driver.monotonic", side_effect=[100.0, 100.5]),
+            pytest.raises(QueryCancelledError),
+        ):
+            await executor.execute("SELECT 1")
+
     @pytest.mark.parametrize("message_primary", ["canceling statement due to user request", None])
     async def test_other_server_cancel_maps_to_query_cancelled_error(self, message_primary: str | None) -> None:
         """A cancel not caused by statement_timeout (pg_cancel_backend, no diag) is not reported as a timeout."""
@@ -160,3 +183,20 @@ class TestSafeSqlExecutorTimeout:
         executor = _make_executor(mock_delegate)
         result = await executor.execute("SELECT 1")
         assert result == [RowResult(cells={"a": 1})]
+
+
+@pytest.mark.parametrize(
+    ("message_primary", "elapsed", "timeout", "expected"),
+    [
+        ("canceling statement due to statement timeout", 0.1, 30.0, True),
+        ("выполнение оператора отменено из-за тайм-аута", 30.0, 30.0, True),
+        (None, 31.0, 30.0, True),
+        ("canceling statement due to user request", 0.5, 30.0, False),
+        (None, 0.5, 30.0, False),
+        ("canceling statement due to user request", 100.0, None, False),
+    ],
+    ids=["english-message", "localized-at-timeout", "no-diag-after-timeout", "user-request", "no-diag-quick", "no-timeout"],
+)
+def test_is_statement_timeout(message_primary: str | None, elapsed: float, timeout: float | None, expected: bool) -> None:  # noqa: FBT001
+    """Pure classification: English marker OR elapsed time reached the configured timeout."""
+    assert _is_statement_timeout(message_primary, elapsed=elapsed, timeout=timeout) is expected

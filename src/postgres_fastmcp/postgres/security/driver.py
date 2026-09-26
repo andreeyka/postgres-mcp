@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, cast
 
 from psycopg.errors import QueryCanceled
@@ -18,8 +19,21 @@ logger = logging.getLogger(__name__)
 MS_PER_SECOND = 1000
 
 # Фрагмент diag.message_primary, по которому Postgres сообщает об отмене по statement_timeout
-# ("canceling statement due to statement timeout"). Сервер должен отдавать сообщения на английском (lc_messages).
+# ("canceling statement due to statement timeout"). Работает только при английском lc_messages,
+# поэтому дополняется проверкой прошедшего времени в _is_statement_timeout.
 _STATEMENT_TIMEOUT_MARKER = "statement timeout"
+
+
+def _is_statement_timeout(message_primary: str | None, *, elapsed: float, timeout: float | None) -> bool:
+    """Отличить отмену по statement_timeout от прочих отмен (pg_cancel_backend, запрос пользователя).
+
+    Timeout, если сообщение сервера содержит английский маркер ИЛИ прошло не меньше
+    настроенного таймаута: раньше этого срока statement_timeout сработать не может, а текст
+    сообщения зависит от lc_messages.
+    """
+    if _STATEMENT_TIMEOUT_MARKER in (message_primary or ""):
+        return True
+    return timeout is not None and elapsed >= timeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +121,7 @@ class SafeSqlExecutor:
         Любая другая отмена (pg_cancel_backend, запрос пользователя) становится QueryCancelledError,
         чтобы не выдавать её за таймаут.
         """
+        started = monotonic()
         try:
             return cast(
                 "list[RowResult] | None",
@@ -114,7 +129,7 @@ class SafeSqlExecutor:
             )
         except QueryCanceled as e:
             reason = e.diag.message_primary or ""
-            if _STATEMENT_TIMEOUT_MARKER in reason:
+            if _is_statement_timeout(reason, elapsed=monotonic() - started, timeout=self._config.timeout):
                 logger.warning(
                     "Postgres cancelled the statement (statement_timeout=%ss): %s...",
                     self._config.timeout,
