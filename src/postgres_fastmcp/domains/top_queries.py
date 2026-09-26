@@ -124,10 +124,11 @@ class TopQueriesCalc:
         else:
             return result
 
-    async def get_top_resource_queries(self, frac_threshold: float = 0.05) -> str:
+    async def get_top_resource_queries(self, limit: int = 10, frac_threshold: float = 0.05) -> str:
         """Reports the most time consuming queries based on a resource blend.
 
         Args:
+            limit: Maximum number of queries to return
             frac_threshold: Fraction threshold for filtering queries (default: 0.05)
 
         Returns:
@@ -207,12 +208,13 @@ class TopQueriesCalc:
                     OR shared_blks_dirtied_frac > {frac_threshold}
                     OR total_wal_bytes_frac > {frac_threshold}
                 ORDER BY total_exec_time DESC
+                LIMIT {{}};
             """  # noqa: E501, S608
 
             logger.debug("Executing query: %s", query)
             slow_query_rows = await self.sql_driver.execute(
                 query,
-                params=None,
+                params=[limit],
                 readonly=True,
             )
             resource_queries = [row.cells for row in slow_query_rows] if slow_query_rows else []
@@ -245,7 +247,7 @@ async def get_top_queries(
     calc = TopQueriesCalc(sql_driver=db.sql_driver, connection_id=db.connection_id)
 
     if sort_by == "resources":
-        return await calc.get_top_resource_queries()
+        return await calc.get_top_resource_queries(limit=limit)
     if sort_by in {"mean_time", "total_time"}:
         return await calc.get_top_queries_by_time(
             limit=limit,

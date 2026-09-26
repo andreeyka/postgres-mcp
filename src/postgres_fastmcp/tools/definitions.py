@@ -15,12 +15,14 @@ from postgres_fastmcp.domains import querying, top_queries
 from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
-from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
-from postgres_fastmcp.shared.enums import ObjectType, TopQueriesSortBy
-
-
-HEALTH_TYPE_VALUES = ", ".join(sorted(ht.value for ht in HealthType))
+from postgres_fastmcp.tools.params import (
+    HealthTypesParam,
+    IndexQueriesParam,
+    ObjectTypeParam,
+    TopQueriesLimitParam,
+    TopQueriesSortByParam,
+)
 
 
 async def execute_sql(
@@ -51,10 +53,7 @@ async def explain_query(
 
 async def list_objects(
     schema_name: Annotated[str, Field(description="Schema name to inspect.")],
-    object_type: Annotated[
-        ObjectType,
-        Field(default="table", description="Object kind: 'table', 'view', 'sequence', 'extension'."),
-    ] = "table",
+    object_type: ObjectTypeParam = "table",
     ctx: Context = CurrentContext(),
 ) -> list[dict[str, Any]]:
     """Получить список объектов указанного типа в схеме."""
@@ -65,10 +64,7 @@ async def list_objects(
 async def get_object_details(
     schema_name: Annotated[str, Field(description="Schema name.")],
     object_name: Annotated[str, Field(description="Object name.")],
-    object_type: Annotated[
-        ObjectType,
-        Field(default="table", description="Object kind: 'table', 'view', 'sequence', 'extension'."),
-    ] = "table",
+    object_type: ObjectTypeParam = "table",
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
     """Детали объекта: колонки, констрейнты, индексы и пр."""
@@ -83,29 +79,17 @@ async def list_schemas(ctx: Context = CurrentContext()) -> list[dict[str, Any]]:
 
 
 async def analyze_db_health(
-    health_type: Annotated[
-        str,
-        Field(
-            default="all",
-            description=f"Single check or comma-separated list. Valid: {HEALTH_TYPE_VALUES}.",
-        ),
-    ] = "all",
+    health_type: HealthTypesParam = (HealthType.ALL,),
     ctx: Context = CurrentContext(),
 ) -> str:
-    """Запустить набор health-проверок и вернуть отчёт."""
+    """Run database health checks and return a text report."""
     health_tool = DatabaseHealthAnalyzer(get_db(ctx).sql_driver)
-    return await health_tool.health(health_type=health_type)
+    return await health_tool.health(health_type=",".join(health_type))
 
 
 async def get_top_queries(
-    sort_by: Annotated[
-        TopQueriesSortBy,
-        Field(
-            default="resources",
-            description="Ranking criteria: 'total_time', 'mean_time', or 'resources'.",
-        ),
-    ] = "resources",
-    limit: Annotated[int, Field(default=10, ge=1, description="Number of queries to return.")] = 10,
+    sort_by: TopQueriesSortByParam = "resources",
+    limit: TopQueriesLimitParam = 10,
     ctx: Context = CurrentContext(),
 ) -> str:
     """Топ запросов из pg_stat_statements по выбранному критерию."""
@@ -113,10 +97,7 @@ async def get_top_queries(
 
 
 async def analyze_query_indexes(
-    queries: Annotated[
-        list[str],
-        Field(description=f"SQL queries to analyze (up to {MAX_NUM_INDEX_TUNING_QUERIES})."),
-    ],
+    queries: IndexQueriesParam,
     max_index_size_mb: Annotated[
         int,
         Field(default=10000, ge=1, description="Max recommended index size (MB)."),

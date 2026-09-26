@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from postgres_fastmcp.shared.errors import InvalidSortCriteriaError
-from postgres_fastmcp.domains.top_queries import get_top_queries
+from postgres_fastmcp.domains.top_queries import TopQueriesCalc, get_top_queries
 
 
 class TestGetTopQueries:
@@ -24,8 +24,9 @@ class TestGetTopQueries:
         mock_tool.get_top_queries_by_time = AsyncMock()
         mock_calc_cls.return_value = mock_tool
 
-        result = await get_top_queries(mock_db_access, sort_by="resources")
+        result = await get_top_queries(mock_db_access, sort_by="resources", limit=7)
         assert result == "Resource report"
+        mock_tool.get_top_resource_queries.assert_awaited_once_with(limit=7)
 
     @patch("postgres_fastmcp.domains.top_queries.TopQueriesCalc")
     async def test_get_top_queries_sort_by_mean_time_returns_mean_time_report(
@@ -68,6 +69,20 @@ class TestGetTopQueries:
 
         with pytest.raises(InvalidSortCriteriaError):
             await get_top_queries(mock_db_access, sort_by="invalid")
+
+
+async def test_resource_queries_sql_is_limited(mock_executor: MagicMock) -> None:
+    """sort_by=resources honours limit: the SQL ends with LIMIT and limit is passed as a parameter."""
+    calc = TopQueriesCalc(sql_driver=mock_executor, connection_id="test")
+    calc._ext_inspector = MagicMock()
+    calc._ext_inspector.check_extension = AsyncMock(return_value=MagicMock(is_installed=True))
+    calc._ext_inspector.get_postgres_version = AsyncMock(return_value=16)
+
+    await calc.get_top_resource_queries(limit=7)
+
+    query = mock_executor.execute.call_args.args[0]
+    assert query.rstrip().rstrip(";").endswith("LIMIT {}")
+    assert mock_executor.execute.call_args.kwargs["params"] == [7]
 
 
 def test_top_queries_sql_filters_self_queries_and_zero_calls() -> None:

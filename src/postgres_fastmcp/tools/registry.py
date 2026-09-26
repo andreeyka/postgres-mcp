@@ -18,7 +18,6 @@ from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
-    HEALTH_TYPE_VALUES,
     analyze_db_health,
     analyze_query_indexes,
     analyze_workload_indexes,
@@ -29,6 +28,7 @@ from postgres_fastmcp.tools.definitions import (
     list_objects,
     list_schemas,
 )
+from postgres_fastmcp.tools.params import HEALTH_TYPE_VALUES
 
 
 try:

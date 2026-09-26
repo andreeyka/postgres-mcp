@@ -5,6 +5,7 @@ from unittest import mock
 
 import pytest
 
+from postgres_fastmcp.domains.health.database_health import HealthType
 from postgres_fastmcp.tools import definitions as defs
 
 
@@ -121,10 +122,13 @@ async def test_analyze_db_health_custom_type(monkeypatch, db_mock, make_ctx) -> 
     fake_tool.health.return_value = "INDEX_REPORT"
     monkeypatch.setattr(defs, "DatabaseHealthAnalyzer", lambda sql_driver: fake_tool)
 
-    result = await defs.analyze_db_health(health_type="index", ctx=make_ctx(db_mock))
+    result = await defs.analyze_db_health(
+        health_type=(HealthType.INDEX, HealthType.VACUUM),
+        ctx=make_ctx(db_mock),
+    )
 
     assert result == "INDEX_REPORT"
-    fake_tool.health.assert_awaited_once_with(health_type="index")
+    fake_tool.health.assert_awaited_once_with(health_type="index,vacuum")
 
 
 @pytest.mark.asyncio
