@@ -65,10 +65,11 @@ def main(  # noqa: PLR0913
         access_mode=access_mode,
     )
     actual_transport = transport if transport is not None else settings.server.transport
+    # Сервер собирается до отключения логов в stdio: предупреждения auth на старте уходят в stderr
+    mcp = create_server(settings)
     if actual_transport == "stdio":
         configure_logging(disable=True)
 
-    mcp = create_server(settings)
     try:
         if actual_transport == "http":
             mcp.run(

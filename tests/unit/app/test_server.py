@@ -10,6 +10,7 @@ from fastmcp.server.providers import LocalProvider
 
 from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.config.auth import AuthSettings
 from postgres_fastmcp.app.middleware.response_budget import ResponseBudgetMiddleware
 from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.provider import PostgresProvider
@@ -111,3 +112,63 @@ async def test_create_server_passes_access_resolver_to_provider() -> None:
     )
     names = {t.name for t in await server.list_tools()}
     assert names == {"execute_sql", "list_objects", "get_object_details", "explain_query"}
+
+
+_STATIC_AUTH = AuthSettings(mode="static", tokens={"tok-secret-value": {"client_id": "c"}})
+
+
+def _auth_settings(*, transport: str = "http", host: str = "127.0.0.1", auth: AuthSettings | None = None) -> Settings:
+    s = _settings()
+    s.server = s.server.model_copy(update={"transport": transport, "host": host})
+    s.auth = auth or AuthSettings()
+    return s
+
+
+def _auth_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records if r.name == "postgres_fastmcp.app.server" and r.levelname == "WARNING"
+    ]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_no_warning_for_loopback_http_without_auth(caplog: pytest.LogCaptureFixture, host: str) -> None:
+    create_server(_auth_settings(host=host))
+    assert _auth_warnings(caplog) == []
+
+
+def test_warns_when_http_is_exposed_without_auth(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(_auth_settings(host="0.0.0.0"))
+    [message] = _auth_warnings(caplog)
+    assert "HTTP server on 0.0.0.0 has no authentication" in message
+
+
+def test_no_warning_when_exposed_http_has_auth(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(_auth_settings(host="0.0.0.0", auth=_STATIC_AUTH))
+    create_server(_auth_settings(host="0.0.0.0"), auth=AuthProvider())
+    assert _auth_warnings(caplog) == []
+
+
+def test_warns_that_auth_does_not_apply_to_stdio(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(_auth_settings(transport="stdio", auth=_STATIC_AUTH))
+    [message] = _auth_warnings(caplog)
+    assert "Authentication (StaticTokenVerifier) applies only to the HTTP transport" in message
+    assert "tok-secret-value" not in caplog.text
+
+
+def test_no_warning_for_stdio_without_auth(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(_auth_settings(transport="stdio"))
+    assert _auth_warnings(caplog) == []
+
+
+def test_warns_that_enforced_policy_needs_auth(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(_auth_settings(auth=AuthSettings(access_policy={"enforced": True})))
+    [message] = _auth_warnings(caplog)
+    assert "access_policy.enforced=true has no effect without authentication" in message
+
+
+def test_no_policy_warning_with_custom_resolver(caplog: pytest.LogCaptureFixture) -> None:
+    create_server(
+        _auth_settings(auth=AuthSettings(access_policy={"enforced": True})),
+        access_resolver=lambda _token: EffectiveAccess(AccessMode.BASIC, write_mode=False),
+    )
+    assert _auth_warnings(caplog) == []

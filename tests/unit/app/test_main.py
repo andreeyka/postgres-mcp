@@ -51,6 +51,30 @@ class TestMainTransportStdio:
                     assert len(disable_calls) == 1
 
 
+def test_stdio_builds_the_server_before_disabling_logs() -> None:
+    """Предупреждения auth пишутся в create_server: логи в stdio отключаются только после него."""
+    calls: list[str] = []
+    settings = type(
+        "Settings", (), {"server": type("Server", (), {"transport": "stdio", "host": "127.0.0.1", "port": 8000})()}
+    )()
+    mcp = type("MCP", (), {"run": lambda self, **kw: None})()
+
+    def fake_create_server(_settings):
+        calls.append("create_server")
+        return mcp
+
+    def fake_configure_logging(**kwargs):
+        calls.append("disable_logging" if kwargs.get("disable") else "configure_logging")
+
+    with (
+        patch("postgres_fastmcp.app.main.build_settings_from_cli", return_value=settings),
+        patch("postgres_fastmcp.app.main.create_server", side_effect=fake_create_server),
+        patch("postgres_fastmcp.app.main.configure_logging", side_effect=fake_configure_logging),
+    ):
+        app(tokens=["--transport", "stdio"], result_action="return_value")
+    assert calls == ["configure_logging", "create_server", "disable_logging"]
+
+
 def test_pool_max_size_default_is_10() -> None:
     from pydantic import SecretStr
 
