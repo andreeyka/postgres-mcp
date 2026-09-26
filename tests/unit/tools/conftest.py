@@ -1,30 +1,20 @@
 """Общие фикстуры для тестов тулов."""
 
-from collections.abc import Callable
-from typing import Any
 from unittest import mock
 
 import pytest
 
-
-class FakeCtx:
-    """Минимальный stand-in для fastmcp.server.context.Context в тестах."""
-
-    def __init__(self, db: Any) -> None:  # noqa: ANN401
-        self.lifespan_context: dict[str, Any] = {"db": db}
-
-
-@pytest.fixture
-def make_ctx() -> Callable[..., FakeCtx]:
-    """Фабрика FakeCtx с подставленным моком DbAccessPort (доступ к БД на запрос)."""
-
-    def factory(db: Any | None = None) -> FakeCtx:  # noqa: ANN401
-        return FakeCtx(db=db if db is not None else mock.AsyncMock())
-
-    return factory
+from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.tools.definitions import ToolSet
 
 
 @pytest.fixture
 def db_mock() -> mock.AsyncMock:
-    """Готовый AsyncMock на роль DbAccessPort (доступ к БД на запрос)."""
-    return mock.AsyncMock()
+    """Готовый AsyncMock на роль DbAccessPort; spec=DbAccess ловит обращения к полям, которых у порта нет."""
+    return mock.AsyncMock(spec=DbAccess)
+
+
+@pytest.fixture
+def toolset(db_mock: mock.AsyncMock) -> ToolSet:
+    """ToolSet, который на каждый вызов тула отдаёт db_mock."""
+    return ToolSet(get_db=lambda: db_mock)

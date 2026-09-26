@@ -1,7 +1,7 @@
-"""Программная регистрация тулов в FastMCP через Tool.from_function + add_tool.
+"""Программная регистрация тулов ToolSet в LocalProvider через Tool.from_function + add_tool.
 
-Описания строятся в момент регистрации с учётом Settings (access_mode, write_mode),
-поэтому модуль `tools/definitions` может импортироваться без инициализации конфига.
+Описания, аннотации и таймауты строятся в момент регистрации по серверному потолку
+(access_mode, write_mode, safe_sql_timeout из конфигурации БД).
 """
 
 from importlib.metadata import (
@@ -10,24 +10,15 @@ from importlib.metadata import (
 )
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp.server.auth import AuthCheck
+from fastmcp.server.providers import LocalProvider
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
-from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.domains.db_access import DatabaseConfigPort
 from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
-from postgres_fastmcp.tools.definitions import (
-    analyze_db_health,
-    analyze_query_indexes,
-    analyze_workload_indexes,
-    execute_sql,
-    explain_query,
-    get_object_details,
-    get_top_queries,
-    list_objects,
-    list_schemas,
-)
+from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.params import HEALTH_TYPE_VALUES
 
 
@@ -76,77 +67,89 @@ def _ann(title: str, preset: dict[str, bool]) -> ToolAnnotations:
     return ToolAnnotations(title=title, **preset)
 
 
-def register_tools(mcp: FastMCP, settings: Settings) -> None:
-    """Зарегистрировать все 9 тулов на сервере.
+def register_tools(
+    provider: LocalProvider,
+    toolset: ToolSet,
+    *,
+    ceiling: DatabaseConfigPort,
+    full_tool_auth: AuthCheck | None = None,
+) -> None:
+    """Зарегистрировать все 9 тулов в провайдере.
 
-    Visibility-фильтр (basic/full) по тегам применяется снаружи через FastMCP.
+    Видимость basic/full по тегам настраивает владелец провайдера (``disable(tags=...)``).
+
+    Args:
+        provider: Провайдер, в который добавляются тулы.
+        toolset: Методы-тулы с доступом к БД.
+        ceiling: Серверный потолок: от него зависят описания, аннотации и таймауты.
+        full_tool_auth: Проверка прав на full-тулах (None — без проверки).
     """
-    for spec in _all_tool_specs(settings):
-        mcp.add_tool(Tool.from_function(**spec))
+    for spec in _all_tool_specs(toolset, ceiling, full_tool_auth):
+        provider.add_tool(Tool.from_function(**spec))
 
 
-def _all_tool_specs(settings: Settings) -> list[dict[str, Any]]:
-    specs = _basic_specs(settings) + _full_specs()
+def _all_tool_specs(
+    toolset: ToolSet, ceiling: DatabaseConfigPort, full_tool_auth: AuthCheck | None
+) -> list[dict[str, Any]]:
+    specs = _basic_specs(toolset, ceiling) + _full_specs(toolset, full_tool_auth)
     for spec in specs:
-        spec["timeout"] = _tool_timeout(spec["timeout"], settings)
+        spec["timeout"] = _tool_timeout(spec["timeout"], ceiling)
     return specs
 
 
-def _tool_timeout(base: float, settings: Settings) -> float:
+def _tool_timeout(base: float, ceiling: DatabaseConfigPort) -> float:
     """Таймаут тула: не короче базового и строго длиннее statement_timeout + страховки.
 
     В режиме FULL + write_mode SafeSqlExecutor не используется и statement_timeout нет,
     поэтому базовое значение остаётся как есть.
     """
-    db = settings.database
-    if db.access_mode == AccessMode.FULL and db.write_mode:
+    if ceiling.access_mode == AccessMode.FULL and ceiling.write_mode:
         return base
-    derived = db.safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
+    derived = ceiling.safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
     return max(base, derived)
 
 
-def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
-    db = settings.database
-    unrestricted = db.access_mode == AccessMode.FULL and db.write_mode
+def _basic_specs(toolset: ToolSet, ceiling: DatabaseConfigPort) -> list[dict[str, Any]]:
+    unrestricted = ceiling.access_mode == AccessMode.FULL and ceiling.write_mode
     if unrestricted:
         execute_preset = DESTRUCTIVE
-    elif db.write_mode:
+    elif ceiling.write_mode:
         execute_preset = WRITE_NON_DESTRUCTIVE
     else:
         execute_preset = READ_ONLY_NON_IDEMPOTENT
     return [
         {
-            "fn": execute_sql,
+            "fn": toolset.execute_sql,
             "name": "execute_sql",
             "output_schema": None,
-            "description": _execute_sql_desc(unrestricted=unrestricted, write_mode=db.write_mode),
+            "description": _execute_sql_desc(unrestricted=unrestricted, write_mode=ceiling.write_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Execute SQL", execute_preset),
             "timeout": 30.0,
             "meta": _META,
         },
         {
-            "fn": list_objects,
+            "fn": toolset.list_objects,
             "name": "list_objects",
             "output_schema": None,
-            "description": _list_objects_desc(db.access_mode),
+            "description": _list_objects_desc(ceiling.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("List Objects", READ_ONLY_IDEMPOTENT),
             "timeout": 30.0,
             "meta": _META,
         },
         {
-            "fn": get_object_details,
+            "fn": toolset.get_object_details,
             "name": "get_object_details",
             "output_schema": None,
-            "description": _get_object_details_desc(db.access_mode),
+            "description": _get_object_details_desc(ceiling.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Get Object Details", READ_ONLY_IDEMPOTENT),
             "timeout": 30.0,
             "meta": _META,
         },
         {
-            "fn": explain_query,
+            "fn": toolset.explain_query,
             "name": "explain_query",
             "description": _explain_query_desc(),
             "tags": {ToolTag.BASIC.value},
@@ -157,10 +160,10 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
     ]
 
 
-def _full_specs() -> list[dict[str, Any]]:
+def _full_specs(toolset: ToolSet, full_tool_auth: AuthCheck | None) -> list[dict[str, Any]]:
     return [
         {
-            "fn": list_schemas,
+            "fn": toolset.list_schemas,
             "name": "list_schemas",
             "output_schema": None,
             "description": (
@@ -171,9 +174,10 @@ def _full_specs() -> list[dict[str, Any]]:
             "annotations": _ann("List Schemas", READ_ONLY_IDEMPOTENT),
             "timeout": 30.0,
             "meta": _META,
+            "auth": full_tool_auth,
         },
         {
-            "fn": analyze_db_health,
+            "fn": toolset.analyze_db_health,
             "name": "analyze_db_health",
             "description": (
                 "Comprehensive PostgreSQL health audit across multiple independent dimensions: "
@@ -185,9 +189,10 @@ def _full_specs() -> list[dict[str, Any]]:
             "annotations": _ann("Analyze DB Health", READ_ONLY_IDEMPOTENT),
             "timeout": 60.0,
             "meta": _META,
+            "auth": full_tool_auth,
         },
         {
-            "fn": get_top_queries,
+            "fn": toolset.get_top_queries,
             "name": "get_top_queries",
             "output_schema": None,
             "description": (
@@ -199,9 +204,10 @@ def _full_specs() -> list[dict[str, Any]]:
             "annotations": _ann("Get Top Queries", READ_ONLY_NON_IDEMPOTENT),
             "timeout": 30.0,
             "meta": _META,
+            "auth": full_tool_auth,
         },
         {
-            "fn": analyze_query_indexes,
+            "fn": toolset.analyze_query_indexes,
             "name": "analyze_query_indexes",
             "description": (
                 "Recommend optimal indexes for a given list of SQL queries using cost-based analysis "
@@ -212,9 +218,10 @@ def _full_specs() -> list[dict[str, Any]]:
             "annotations": _ann("Analyze Query Indexes", READ_ONLY_IDEMPOTENT),
             "timeout": 60.0,
             "meta": _META,
+            "auth": full_tool_auth,
         },
         {
-            "fn": analyze_workload_indexes,
+            "fn": toolset.analyze_workload_indexes,
             "name": "analyze_workload_indexes",
             "description": (
                 "Recommend indexes based on the actual workload captured in pg_stat_statements, "
@@ -226,6 +233,7 @@ def _full_specs() -> list[dict[str, Any]]:
             "annotations": _ann("Analyze Workload Indexes", READ_ONLY_NON_IDEMPOTENT),
             "timeout": 60.0,
             "meta": _META,
+            "auth": full_tool_auth,
         },
     ]
 

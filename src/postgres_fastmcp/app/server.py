@@ -6,11 +6,14 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
+from fastmcp.server.providers import LocalProvider
 
 from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.context import get_db
 from postgres_fastmcp.app.lifespan import build_lifespan
 from postgres_fastmcp.app.middleware.response_budget import ResponseBudgetMiddleware
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
+from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import register_tools
 
 
@@ -35,6 +38,8 @@ def create_server(
         Готовый FastMCP, на котором можно сразу вызывать `.run(...)`.
     """
     lifespan_cm = build_lifespan(settings)
+    tools = LocalProvider(on_duplicate="error")
+    register_tools(tools, ToolSet(get_db=get_db), ceiling=settings.database)
 
     fastmcp_kwargs: dict[str, Any] = {
         "name": settings.fastmcp.server_name,
@@ -47,8 +52,7 @@ def create_server(
         fastmcp_kwargs["instructions"] = instructions
     if auth is not None:
         fastmcp_kwargs["auth"] = auth
-    if extra_providers:
-        fastmcp_kwargs["providers"] = list(extra_providers)
+    fastmcp_kwargs["providers"] = [tools, *extra_providers]
 
     mcp = FastMCP(**fastmcp_kwargs)
 
@@ -58,8 +62,6 @@ def create_server(
     mcp.add_middleware(LoggingMiddleware())
     for m in extra_middleware:
         mcp.add_middleware(m)
-
-    register_tools(mcp, settings)
 
     if settings.database.access_mode == AccessMode.BASIC:
         mcp.disable(tags={ToolTag.FULL.value})

@@ -1,39 +1,31 @@
 """Тесты описаний тулов в реестре."""
 
 import asyncio
+from unittest.mock import MagicMock
 
-from fastmcp import FastMCP
+from fastmcp.server.providers import LocalProvider
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import register_tools
 
 
-def _make_settings(*, access_mode: AccessMode, write_mode: bool = False) -> Settings:
-    s = Settings()
-    s.database = s.database.model_copy(update={"access_mode": access_mode, "write_mode": write_mode})
-    return s
-
-
-def _descriptions(mcp: FastMCP) -> dict[str, str]:
-    result = asyncio.run(mcp.list_tools())
-    if isinstance(result, dict):
-        return {name: (t.description or "") for name, t in result.items()}
-    return {t.name: (t.description or "") for t in result}
+def _descriptions(*, access_mode: AccessMode, write_mode: bool = False) -> dict[str, str]:
+    database = Settings().database.model_copy(update={"access_mode": access_mode, "write_mode": write_mode})
+    provider = LocalProvider()
+    register_tools(provider, ToolSet(get_db=MagicMock), ceiling=database)
+    return {t.name: (t.description or "") for t in asyncio.run(provider.list_tools())}
 
 
 def test_execute_sql_description_restricted_in_basic_mode() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
-    desc = _descriptions(mcp)["execute_sql"]
+    desc = _descriptions(access_mode=AccessMode.BASIC)["execute_sql"]
     assert "read-only" in desc.lower()
 
 
 def test_execute_sql_description_allows_dml_in_basic_write_mode() -> None:
     """BASIC + write_mode: DML разрешён и коммитится, DDL отклоняется — описание не называет тул read-only."""
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC, write_mode=True))
-    desc = _descriptions(mcp)["execute_sql"]
+    desc = _descriptions(access_mode=AccessMode.BASIC, write_mode=True)["execute_sql"]
     assert "read-only" not in desc.lower()
     assert "INSERT, UPDATE and DELETE" in desc
     assert "DDL is rejected (except CREATE EXTENSION hypopg / pg_stat_statements)" in desc
@@ -41,45 +33,33 @@ def test_execute_sql_description_allows_dml_in_basic_write_mode() -> None:
 
 
 def test_execute_sql_description_restricted_in_full_without_write_mode() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL, write_mode=False))
-    desc = _descriptions(mcp)["execute_sql"]
+    desc = _descriptions(access_mode=AccessMode.FULL, write_mode=False)["execute_sql"]
     assert "read-only" in desc.lower()
 
 
 def test_execute_sql_description_unrestricted_when_full_and_write_mode() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL, write_mode=True))
-    desc = _descriptions(mcp)["execute_sql"]
+    desc = _descriptions(access_mode=AccessMode.FULL, write_mode=True)["execute_sql"]
     lower = desc.lower()
     assert "any sql" in lower or "ddl" in lower
 
 
 def test_list_objects_description_mentions_public_in_basic() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
-    desc = _descriptions(mcp)["list_objects"]
+    desc = _descriptions(access_mode=AccessMode.BASIC)["list_objects"]
     assert "public" in desc.lower()
 
 
 def test_list_objects_description_in_full_mentions_schema() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.FULL))
-    desc = _descriptions(mcp)["list_objects"]
+    desc = _descriptions(access_mode=AccessMode.FULL)["list_objects"]
     assert "specified schema" in desc.lower()
 
 
 def test_get_object_details_description_mentions_public_in_basic() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
-    desc = _descriptions(mcp)["get_object_details"]
+    desc = _descriptions(access_mode=AccessMode.BASIC)["get_object_details"]
     assert "public" in desc.lower()
 
 
 def test_explain_query_description_present() -> None:
-    mcp = FastMCP(name="t")
-    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
-    desc = _descriptions(mcp)["explain_query"]
+    desc = _descriptions(access_mode=AccessMode.BASIC)["explain_query"]
     assert "execution plan" in desc.lower()
 
 
