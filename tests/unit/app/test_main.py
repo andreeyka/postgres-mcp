@@ -64,3 +64,21 @@ def test_pool_max_size_default_is_10() -> None:
         name="db",
     )
     assert cfg.pool_max_size == 10
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_safe_sql_timeout_must_be_positive(value: int) -> None:
+    """A non-positive statement_timeout would disable or break the guard: rejected at config load."""
+    from pydantic import SecretStr, ValidationError
+
+    from postgres_fastmcp.app.config.database import DatabaseConfig
+
+    with pytest.raises(ValidationError, match="safe_sql_timeout"):
+        DatabaseConfig(
+            host="localhost",
+            port=5432,
+            user="u",
+            password=SecretStr("p"),
+            name="db",
+            safe_sql_timeout=value,
+        )
