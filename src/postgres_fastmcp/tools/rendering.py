@@ -61,7 +61,7 @@ def _table(rows: Sequence[Mapping[str, Any]]) -> str:
     """GFM-таблица: колонки один раз в шапке, в порядке первого появления ключа."""
     columns = list(dict.fromkeys(key for row in rows for key in row))
     lines = [
-        _line(columns),
+        _line([_cell(column) for column in columns]),
         _line(["---"] * len(columns)),
         *(_line([_cell(row.get(column)) for column in columns]) for row in rows),
     ]

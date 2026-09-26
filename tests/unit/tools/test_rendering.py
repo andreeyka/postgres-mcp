@@ -27,6 +27,12 @@ def test_table_escapes_pipe_and_flattens_newlines() -> None:
     assert "| a\\|b c d |" in text
 
 
+def test_table_escapes_column_names() -> None:
+    """Имена колонок из SQL-алиасов (SELECT 1 AS "a|b") экранируются так же, как ячейки."""
+    text = _text(rows_result([{"a|b": 1, "c\nd": 2}], "table"))
+    assert text == "| a\\|b | c d |\n| --- | --- |\n| 1 | 2 |\n\n1 rows."
+
+
 def test_table_renders_none_as_empty_cell() -> None:
     text = _text(rows_result([{"a": None, "b": 1}], "table"))
     assert "|  | 1 |" in text
