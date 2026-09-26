@@ -17,6 +17,8 @@ env:
   MCP_DATABASE_USER: testuser
   MCP_DATABASE_PASSWORD: testpassword
   MCP_DATABASE_NAME: testdb
+  # Camel-case field access shims are removed in a future FastMCP release; fail early.
+  FASTMCP_MCP_CAMELCASE_COMPAT: "false"
 
 jobs:
   lint:

@@ -7,6 +7,7 @@ import pytest
 
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.top_queries import PG_STAT_STATEMENTS, TopQueriesCalc, get_top_queries
+from postgres_fastmcp.shared.errors import PgStatStatementsNotInstalledError
 
 
 logger = logging.getLogger(__name__)
@@ -79,15 +80,19 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
         if not pg_stats or len(pg_stats) == 0:
             pytest.skip("pg_stat_statements did not capture the CROSS JOIN query")
 
-        total_result = await get_top_queries(db_service_full, sort_by="total_time", limit=10)
-        mean_result = await get_top_queries(db_service_full, sort_by="mean_time", limit=10)
+        total_rows = await get_top_queries(db_service_full, sort_by="total_time", limit=10)
+        mean_rows = await get_top_queries(db_service_full, sort_by="mean_time", limit=10)
+        resource_rows = await get_top_queries(db_service_full, sort_by="resources", limit=2)
 
-        assert "slowest queries by total execution time" in total_result
-        assert "slowest queries by mean execution time" in mean_result
+        assert 0 < len(total_rows) <= 10
+        assert 0 < len(mean_rows) <= 10
+        assert len(resource_rows) <= 2
+        assert {"query", "calls", "rows"} <= set(total_rows[0])
 
-        has_cross_join = "CROSS JOIN" in total_result
-        has_value_gt_500 = "value > 500" in total_result
-        has_count = "COUNT(*)" in total_result
+        total_text = " ".join(row["query"] for row in total_rows)
+        has_cross_join = "CROSS JOIN" in total_text
+        has_value_gt_500 = "value > 500" in total_text
+        has_count = "COUNT(*)" in total_text
         assert has_cross_join or has_value_gt_500 or has_count, "None of our test queries appeared in the results"
     finally:
         await cleanup_test_data(db_service_full)
@@ -95,7 +100,7 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
 
 @pytest.mark.asyncio
 async def test_extension_not_available(db_service_full: DbAccessService) -> None:
-    """When pg_stat_statements is not installed, result contains installation instructions."""
+    """When pg_stat_statements is not installed, a user-facing error carries installation instructions."""
     from postgres_fastmcp.postgres.extensions import ExtensionStatus
 
     calc = TopQueriesCalc(
@@ -114,6 +119,5 @@ async def test_extension_not_available(db_service_full: DbAccessService) -> None
         return not_installed_status
 
     calc._ext_inspector.check_extension = mock_check_extension  # type: ignore[method-assign]
-    result = await calc.get_top_queries_by_time()
-    assert "not currently installed" in result
-    assert "CREATE EXTENSION" in result
+    with pytest.raises(PgStatStatementsNotInstalledError, match="CREATE EXTENSION pg_stat_statements"):
+        await calc.get_top_queries_by_time()

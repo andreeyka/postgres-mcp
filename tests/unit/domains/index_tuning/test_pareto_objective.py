@@ -5,7 +5,6 @@ import math
 from unittest.mock import MagicMock
 
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
-from postgres_fastmcp.domains.index_tuning.llm_opt import LLMOptimizerTool
 
 
 class TestParetoObjective:
@@ -27,10 +26,3 @@ class TestParetoObjective:
         assert dta._pareto_objective(0.0, 1000.0) == float("inf")
         assert dta._pareto_objective(100.0, 0.0) == float("inf")
         assert dta._pareto_objective(-1.0, -1.0) == float("inf")
-
-    def test_llm_score_delegates_to_shared_objective(self) -> None:
-        """LLMOptimizerTool.score uses the same base formula as DTA."""
-        llm = LLMOptimizerTool(MagicMock(), ctx=MagicMock(), pareto_alpha=2.0)
-        dta = DatabaseTuningAdvisor(MagicMock(), pareto_alpha=2.0)
-        assert llm.score(100.0, 1000.0) == dta._pareto_objective(100.0, 1000.0)
-        assert llm.score(0.0, 1000.0) == float("inf")

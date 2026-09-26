@@ -84,6 +84,7 @@ class DatabaseConfig(BaseSettings):
     )
     safe_sql_timeout: int = Field(
         default=30,
+        ge=1,
         description=(
             "Таймаут в секундах для SafeSqlDriver. "
             "Используется для всех режимов кроме access_mode=full с write_mode=True."

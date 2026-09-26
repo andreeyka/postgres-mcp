@@ -237,7 +237,7 @@ class IndexTuningBase(ABC):
     def _pareto_objective(self, execution_cost: float, total_size_bytes: float) -> float:
         """Целевая функция Парето: log(стоимость) + alpha * log(размер).
 
-        Единая формула для всех алгоритмов настройки индексов (DTA, LLM):
+        Единая формула для всех алгоритмов настройки индексов (DTA):
         меньше — лучше, alpha задаёт вес размера относительно стоимости.
 
         Args:

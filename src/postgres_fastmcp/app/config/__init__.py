@@ -9,7 +9,8 @@
     "transport": "http",
     "endpoint": "mcp",
     "workers": 1,
-    "health_endpoint_enabled": true
+    "health_endpoint_enabled": true,
+    "response_max_tokens": 20000
   },
   "fastmcp": {
     "server_name": "PostgreSQL MCP",

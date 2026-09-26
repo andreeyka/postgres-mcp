@@ -5,16 +5,12 @@
 Это убирает дублирование нетипизированного доступа ``ctx.lifespan_context["db"]``.
 """
 
-from __future__ import annotations
+from typing import TypedDict, cast
 
-from typing import TYPE_CHECKING, TypedDict, cast
+from fastmcp.server.context import Context
 
-
-if TYPE_CHECKING:
-    from fastmcp.server.context import Context
-
-    from postgres_fastmcp.app.config import Settings
-    from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.domains.db_access import DbAccessService
 
 
 class LifespanContext(TypedDict):

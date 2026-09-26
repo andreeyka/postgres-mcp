@@ -493,5 +493,10 @@ ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "first_value",
         "last_value",
         "nth_value",
+        "generate_series",
+        "generate_subscripts",
+        "timezone",
+        "similar_to_escape",
+        "similar_escape",
     )
 )

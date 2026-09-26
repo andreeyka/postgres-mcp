@@ -21,7 +21,7 @@ from pglast.visitors import Ancestor, Visitor
 
 from postgres_fastmcp.postgres.security.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
 from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
-from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, DML_STMT_TYPES
+from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_NODE_TYPES, WRITE_STMT_TYPES
 from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
     DdlNotAllowedError,
@@ -126,8 +126,28 @@ class _NodeValidationVisitor(Visitor):
                 if isinstance(option, DefElem) and option.defname == "analyze":
                     raise ExplainAnalyzeNotSupportedError
 
-        if isinstance(node, CreateExtensionStmt) and node.extname not in ALLOWED_EXTENSIONS:
-            raise CreateExtensionNotSupportedError(node.extname or "")
+        if isinstance(node, CreateExtensionStmt):
+            self._validate_create_extension(node)
+
+    def _validate_create_extension(self, node: CreateExtensionStmt) -> None:
+        """Разрешить только расширения из allowlist, без CASCADE и без SCHEMA при ограничении схемы.
+
+        CASCADE может доустановить зависимости вне allowlist; SCHEMA при заданной
+        allowed_schema размещает объекты расширения за её пределами.
+
+        Raises:
+            CreateExtensionNotSupportedError: Расширение или опция не разрешены.
+        """
+        extname = node.extname or ""
+        if extname not in ALLOWED_EXTENSIONS:
+            raise CreateExtensionNotSupportedError(extname)
+        for option in node.options or []:
+            if not isinstance(option, DefElem):
+                continue
+            if option.defname == "cascade":
+                raise CreateExtensionNotSupportedError(extname, "CASCADE")
+            if option.defname == "schema" and self._allowed_schema is not None:
+                raise CreateExtensionNotSupportedError(extname, "SCHEMA")
 
 
 class QueryValidator:
@@ -182,8 +202,8 @@ class QueryValidator:
         allowed_stmt_types = set(ALLOWED_STMT_TYPES)
         allowed_node_types = set(ALLOWED_NODE_TYPES)
         if not self.read_only:
-            allowed_stmt_types |= DML_STMT_TYPES
-            allowed_node_types |= DML_STMT_TYPES
+            allowed_stmt_types |= WRITE_STMT_TYPES
+            allowed_node_types |= WRITE_NODE_TYPES
 
         node_validator = _NodeValidationVisitor(
             allowed_node_types=tuple(allowed_node_types),

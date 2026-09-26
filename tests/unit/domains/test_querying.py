@@ -3,7 +3,7 @@
 
 from unittest.mock import MagicMock
 
-from postgres_fastmcp.domains.querying import SUCCESS_NO_ROWS, execute_sql
+from postgres_fastmcp.domains.querying import execute_sql
 from postgres_fastmcp.postgres.models import RowResult
 
 
@@ -51,16 +51,16 @@ class TestExecuteSql:
         assert result == []
         mock_executor.execute.assert_called_once()
 
-    async def test_execute_sql_none_returns_success_status(
+    async def test_execute_sql_none_means_no_result_set(
         self,
         mock_db_access: MagicMock,
         mock_executor: MagicMock,
     ) -> None:
-        """When driver returns None (e.g. DDL/DML without RETURNING), service reports success, not error."""
+        """When driver returns None (e.g. DDL/DML without RETURNING), service returns None, not an error."""
         mock_db_access.write_mode = True
         mock_executor.execute.return_value = None
         result = await execute_sql(mock_db_access, "CREATE TABLE t (id int)")
-        assert result == [{"status": "success", "message": SUCCESS_NO_ROWS}]
+        assert result is None
 
     async def test_execute_sql_bytes_decoded(
         self,

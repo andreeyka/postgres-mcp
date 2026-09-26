@@ -4,11 +4,41 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg import InterfaceError, OperationalError
+from psycopg.errors import (
+    AdminShutdown,
+    ConnectionFailure,
+    DatabaseDropped,
+    DeadlockDetected,
+    IdleSessionTimeout,
+    LockNotAvailable,
+    ObjectNotInPrerequisiteState,
+    QueryCanceled,
+    SerializationFailure,
+    UndefinedTable,
+    error_from_result,
+)
+from psycopg_pool import PoolTimeout
 
-from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
+
+
+class _NoSqlstateResult:
+    """Стаб PGresult без SQLSTATE — как при libpq FATAL_ERROR без кода ошибки."""
+
+    def error_field(self, fieldcode: int) -> bytes | None:  # noqa: ARG002
+        return None
+
+    def get_error_message(self, encoding: str = "utf-8") -> str:  # noqa: ARG002
+        return "server closed the connection unexpectedly"
+
+
+def _database_error_without_sqlstate() -> Exception:
+    """Собрать исключение так же, как это делает psycopg на пути FATAL_ERROR без SQLSTATE."""
+    return error_from_result(_NoSqlstateResult())
 
 
 class TestSqlExecutorRender:
@@ -76,3 +106,65 @@ class TestSqlExecutorExecuteWithPool:
             call_args = mock_exec.call_args
             assert "10" in str(call_args[0][1])
             assert "{}" not in str(call_args[0][1])
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UndefinedTable('relation "t" does not exist'),
+            QueryCanceled("canceling statement due to statement timeout"),
+            ObjectNotInPrerequisiteState('pg_stat_statements must be loaded via "shared_preload_libraries"'),
+            DeadlockDetected("deadlock detected"),
+            SerializationFailure("could not serialize access due to concurrent update"),
+            LockNotAvailable('could not obtain lock on relation "t"'),
+        ],
+        ids=[
+            "programming-error",
+            "statement-timeout",
+            "object-not-in-prerequisite-state",
+            "deadlock",
+            "serialization-failure",
+            "lock-not-available",
+        ],
+    )
+    async def test_sql_errors_do_not_invalidate_pool(self, error: Exception) -> None:
+        """A failed statement is the client's problem, not the pool's: the pool stays valid."""
+        mock_pool = self._mock_pool_for_execute()
+        executor = SqlExecutor(conn=mock_pool)
+        with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
+            mock_exec.side_effect = error
+            with pytest.raises(type(error)):
+                await executor.execute("SELECT 1", readonly=True)
+            mock_pool.mark_invalid.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            AdminShutdown("terminating connection due to administrator command"),
+            ConnectionFailure("connection failure"),
+            InterfaceError("the connection is closed"),
+            OperationalError("server closed the connection unexpectedly"),
+            PoolTimeout("couldn't get a connection after 30.00 sec"),
+            _database_error_without_sqlstate(),
+            DatabaseDropped("database is being dropped"),
+            IdleSessionTimeout("terminating connection due to idle-session timeout"),
+        ],
+        ids=[
+            "admin-shutdown",
+            "class-08",
+            "interface-error",
+            "operational-without-sqlstate",
+            "pool-timeout",
+            "database-error-without-sqlstate-from-result",
+            "database-dropped-57p04",
+            "idle-session-timeout-57p05",
+        ],
+    )
+    async def test_connection_errors_invalidate_pool(self, error: Exception) -> None:
+        """Real connection failures invalidate the pool."""
+        mock_pool = self._mock_pool_for_execute()
+        executor = SqlExecutor(conn=mock_pool)
+        with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
+            mock_exec.side_effect = error
+            with pytest.raises(type(error)):
+                await executor.execute("SELECT 1", readonly=True)
+            mock_pool.mark_invalid.assert_called_once()

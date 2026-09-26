@@ -4,7 +4,24 @@
 (согласовано с инструментами, поиском и операциями). См. правила обработки ошибок в AGENTS.md.
 """
 
+import difflib
+from collections.abc import Sequence
+from typing import get_args
+
 from fastmcp.exceptions import ToolError
+
+from postgres_fastmcp.shared.enums import ObjectType, TopQueriesSortBy
+
+
+def _did_you_mean(value: str, allowed: Sequence[str]) -> str:
+    """Подсказка ближайшего допустимого значения (пустая строка, если похожих нет)."""
+    matches = difflib.get_close_matches(value.strip().lower(), allowed, n=1)
+    return f" Did you mean '{matches[0]}'?" if matches else ""
+
+
+def _one_of(allowed: Sequence[str]) -> str:
+    """Список допустимых значений для текста ошибки: 'a', 'b', 'c'."""
+    return ", ".join(f"'{item}'" for item in allowed)
 
 
 class BaseApplicationError(Exception):
@@ -114,7 +131,7 @@ class SqlParseError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Failed to parse SQL statement")
+        super().__init__("Failed to parse SQL statement. Check the SQL syntax and send a single valid statement.")
 
 
 class StatementTypeNotAllowedError(UserFacingError):
@@ -129,15 +146,14 @@ class StatementTypeNotAllowedError(UserFacingError):
         """
         if read_only:
             message = (
-                "Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other "
-                "read-only statements are allowed. "
-                f"Received: {stmt_type_name}"
+                "Only SELECT, EXPLAIN, SHOW and other read-only statements are allowed "
+                f"in read-only mode. Received: {stmt_type_name}"
             )
         else:
             message = (
-                "Only SELECT, INSERT, UPDATE, DELETE, ANALYZE, VACUUM, EXPLAIN, "
-                "SHOW and other allowed statements are permitted. "
-                "DDL operations (CREATE, DROP, ALTER) are not allowed. "
+                "Only SELECT, INSERT, UPDATE, DELETE, EXPLAIN, SHOW and CREATE EXTENSION "
+                "(hypopg, pg_stat_statements) are allowed. "
+                "DDL operations (CREATE, DROP, ALTER), VACUUM and ANALYZE are not allowed. "
                 f"Received: {stmt_type_name}"
             )
         super().__init__(message)
@@ -154,7 +170,10 @@ class DdlNotAllowedError(UserFacingError):
         Args:
             stmt_type_name: Имя типа DDL-оператора.
         """
-        message = f"DDL operations are not allowed. Received: {stmt_type_name}"
+        message = (
+            f"DDL operations are not allowed. Received: {stmt_type_name}. "
+            "Use SELECT to read data; schema changes must be made outside this server."
+        )
         super().__init__(message)
         self.stmt_type_name = stmt_type_name
 
@@ -168,7 +187,7 @@ class DisallowedNodeTypeError(UserFacingError):
         Args:
             node_type: Тип узла AST, который не разрешён.
         """
-        message = f"Node type {node_type} is not allowed"
+        message = f"Node type {node_type.__name__} is not allowed. Rewrite the query without this SQL construct."
         super().__init__(message)
         self.node_type = node_type
 
@@ -178,7 +197,9 @@ class LikePatternNotConstantError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("LIKE pattern must be a constant string")
+        super().__init__(
+            "LIKE pattern must be a constant string. Put the pattern into a string literal, e.g. LIKE 'abc%'."
+        )
 
 
 class FunctionNotAllowedError(UserFacingError):
@@ -190,7 +211,7 @@ class FunctionNotAllowedError(UserFacingError):
         Args:
             func_name: Имя функции, которая не разрешена.
         """
-        message = f"Function {func_name} is not allowed"
+        message = f"Function {func_name} is not allowed. Rewrite the query without this function."
         super().__init__(message)
         self.func_name = func_name
 
@@ -200,7 +221,7 @@ class LockingClauseProhibitedError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Locking clause on select is prohibited")
+        super().__init__("Locking clause on select is prohibited. Remove FOR UPDATE / FOR SHARE from the query.")
 
 
 class ExplainAnalyzeNotSupportedError(UserFacingError):
@@ -208,21 +229,32 @@ class ExplainAnalyzeNotSupportedError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("EXPLAIN ANALYZE is not supported")
+        super().__init__("EXPLAIN ANALYZE is not supported. Use the explain_query tool with analyze=true instead.")
 
 
 class CreateExtensionNotSupportedError(UserFacingError):
     """Создание указанного расширения не разрешено."""
 
-    def __init__(self, extname: str) -> None:
-        """Инициализация с именем расширения.
+    def __init__(self, extname: str, option: str | None = None) -> None:
+        """Инициализация с именем расширения и, при необходимости, запрещённой опцией.
 
         Args:
             extname: Имя расширения, которое не разрешено.
+            option: Запрещённая опция CREATE EXTENSION (например, SCHEMA или CASCADE).
         """
-        message = f"CREATE EXTENSION {extname} is not supported"
+        if option is None:
+            message = (
+                f"CREATE EXTENSION {extname} is not supported. "
+                "Only hypopg and pg_stat_statements can be created, and only with write_mode enabled."
+            )
+        else:
+            message = (
+                f"CREATE EXTENSION {extname} with the {option} option is not supported. "
+                f"Run CREATE EXTENSION {extname} without {option}."
+            )
         super().__init__(message)
         self.extname = extname
+        self.option = option
 
 
 class UnsupportedObjectTypeError(UserFacingError):
@@ -234,8 +266,31 @@ class UnsupportedObjectTypeError(UserFacingError):
         Args:
             object_type: Неподдерживаемый тип объекта.
         """
-        message = f"Unsupported object type: {object_type}"
+        allowed = get_args(ObjectType)
+        message = (
+            f"Unsupported object type: '{object_type}'.{_did_you_mean(object_type, allowed)} "
+            f"Use one of: {_one_of(allowed)}."
+        )
         super().__init__(message)
+        self.object_type = object_type
+
+
+class ObjectNotFoundError(UserFacingError):
+    """Объект каталога не найден: get_object_details не должен выглядеть как успешный поиск."""
+
+    def __init__(self, schema_name: str, object_name: str, object_type: str) -> None:
+        """Инициализация со схемой, именем и типом объекта.
+
+        Args:
+            schema_name: Имя схемы.
+            object_name: Имя объекта.
+            object_type: Тип объекта (table, view, sequence, extension).
+        """
+        # Расширения не принадлежат схеме: схему в тексте не показываем
+        qualified = object_name if object_type == "extension" else f"{schema_name}.{object_name}"
+        super().__init__(f"Object not found: {qualified} ({object_type}). Use list_objects to see existing objects.")
+        self.schema_name = schema_name
+        self.object_name = object_name
         self.object_type = object_type
 
 
@@ -270,7 +325,10 @@ class ExplainAnalyzeWithHypotheticalError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Нельзя использовать analyze и гипотетические индексы вместе.")
+        super().__init__(
+            "analyze=true cannot be combined with hypothetical_indexes. "
+            "Call explain_query twice: once with analyze=true, once with hypothetical_indexes."
+        )
 
 
 class EmptyQueriesError(UserFacingError):
@@ -278,7 +336,7 @@ class EmptyQueriesError(UserFacingError):
 
     def __init__(self) -> None:
         """Инициализация."""
-        super().__init__("Пожалуйста, предоставьте непустой список запросов для анализа.")
+        super().__init__("The queries list is empty. Pass at least one SQL query to analyze.")
 
 
 class QueriesLimitError(UserFacingError):
@@ -290,27 +348,111 @@ class QueriesLimitError(UserFacingError):
         Args:
             limit: Допустимое максимальное количество запросов.
         """
-        message = f"Пожалуйста, предоставьте список не более чем из {limit} запросов для анализа."
+        message = (
+            f"Too many queries: at most {limit} can be analyzed in one call. "
+            "Split the list into several calls, or use analyze_workload_indexes for the whole workload."
+        )
         super().__init__(message)
         self.limit = limit
-
-
-class ContextRequiredError(UserFacingError):
-    """Контекст требуется для этой операции (например, оптимизация LLM)."""
-
-    def __init__(self) -> None:
-        """Инициализация."""
-        super().__init__("Контекст требуется для метода оптимизации LLM.")
 
 
 class InvalidSortCriteriaError(UserFacingError):
     """Неверный критерий сортировки для топ-запросов."""
 
-    def __init__(self) -> None:
-        """Инициализация."""
-        super().__init__(
-            "Неверный критерий сортировки. Пожалуйста, используйте 'resources', 'mean_time' или 'total_time'."
+    def __init__(self, sort_by: str) -> None:
+        """Инициализация с отклонённым значением.
+
+        Args:
+            sort_by: Значение sort_by, которое не удалось распознать.
+        """
+        allowed = get_args(TopQueriesSortBy)
+        message = f"Invalid sort_by: '{sort_by}'.{_did_you_mean(sort_by, allowed)} Use one of: {_one_of(allowed)}."
+        super().__init__(message)
+        self.sort_by = sort_by
+
+
+class InvalidHealthTypeError(UserFacingError):
+    """Неизвестный тип health-проверки в health_type."""
+
+    def __init__(self, health_type: str, allowed: Sequence[str]) -> None:
+        """Инициализация с отклонённым значением и допустимыми типами.
+
+        Args:
+            health_type: Значение, которое не удалось распознать.
+            allowed: Допустимые типы проверок (HealthType живёт в домене, shared его не импортирует).
+        """
+        message = (
+            f"Invalid health_type: '{health_type}'.{_did_you_mean(health_type, allowed)} "
+            f"Use one or more of: {_one_of(allowed)}, e.g. 'index,vacuum'."
         )
+        super().__init__(message)
+        self.health_type = health_type
+
+
+class InvalidOutputFormatError(UserFacingError):
+    """Неизвестный формат вывода в параметре output."""
+
+    def __init__(self, output: str) -> None:
+        """Инициализация с отклонённым значением.
+
+        Args:
+            output: Значение output, которое не удалось распознать.
+        """
+        allowed = ("table", "json")
+        message = f"Invalid output: '{output}'.{_did_you_mean(output, allowed)} Use one of: {_one_of(allowed)}."
+        super().__init__(message)
+        self.output = output
+
+
+class PgStatStatementsNotInstalledError(UserFacingError):
+    """Расширение pg_stat_statements не установлено: топ запросов недоступен."""
+
+    def __init__(self) -> None:
+        """Инициализация с фиксированным сообщением и подсказкой по установке."""
+        super().__init__(
+            "The pg_stat_statements extension is not installed or not preloaded, "
+            "so query statistics are unavailable. "
+            "Ask a database administrator to add pg_stat_statements to shared_preload_libraries "
+            "and run CREATE EXTENSION pg_stat_statements."
+        )
+
+
+class ExtensionStatusUnavailableError(UserFacingError):
+    """Каталог расширений не ответил: статус расширения неизвестен (не путать с «не установлено»)."""
+
+    def __init__(self, extension_name: str, reason: str) -> None:
+        """Инициализация с именем расширения и причиной сбоя каталога.
+
+        Args:
+            extension_name: Имя расширения, статус которого не удалось проверить.
+            reason: Описание сбоя каталога (английский текст для агента).
+        """
+        super().__init__(
+            f"Could not check whether the {extension_name} extension is installed. {reason} "
+            "Also check the database role's permissions and the connection, then retry."
+        )
+        self.extension_name = extension_name
+        self.reason = reason
+
+
+class UnsupportedServerVersionError(UserFacingError):
+    """Возможность недоступна на версии PostgreSQL сервера."""
+
+    def __init__(self, feature: str, min_version: int, actual: int, *, hint: str) -> None:
+        """Инициализация с требуемой и фактической версией.
+
+        Args:
+            feature: Что недоступно, например "sort_by='resources'".
+            min_version: Минимальная мажорная версия PostgreSQL.
+            actual: Мажорная версия сервера.
+            hint: Что сделать вместо этого (английский текст для агента).
+        """
+        super().__init__(
+            f"{feature} requires PostgreSQL {min_version} or newer, but the server runs PostgreSQL {actual}. {hint}"
+        )
+        self.feature = feature
+        self.min_version = min_version
+        self.actual = actual
 
 
 class HypopgNotInstalledError(UserFacingError):
@@ -326,7 +468,7 @@ class HypopgNotInstalledError(UserFacingError):
 
 
 class QueryTimeoutError(UserFacingError):
-    """Выполнение запроса превысило заданный таймаут в режиме ограничения."""
+    """Выполнение запроса превысило заданный таймаут (statement_timeout или клиентская страховка)."""
 
     def __init__(self, timeout_seconds: float) -> None:
         """Инициализация с длительностью таймаута в секундах.
@@ -335,11 +477,63 @@ class QueryTimeoutError(UserFacingError):
             timeout_seconds: Таймаут в секундах, который был превышен.
         """
         message = (
-            f"Query execution exceeded the timeout of {timeout_seconds} seconds in read_only mode. "
+            f"Query execution exceeded the timeout of {timeout_seconds} seconds. "
             "Consider simplifying the query or increasing the timeout."
         )
         super().__init__(message)
         self.timeout_seconds = timeout_seconds
+
+
+class QueryCancelledError(UserFacingError):
+    """Сервер отменил запрос не по statement_timeout (pg_cancel_backend, запрос пользователя)."""
+
+    def __init__(self) -> None:
+        """Инициализация с фиксированным сообщением."""
+        super().__init__("The query was cancelled by the server before it completed.")
+
+
+class ResponseTooLargeError(UserFacingError):
+    """Ответ тула больше бюджета токенов: агенту нужно сузить запрос."""
+
+    def __init__(self, tokens: int, max_tokens: int) -> None:
+        """Инициализация с оценкой размера ответа и лимитом.
+
+        Args:
+            tokens: Оценка размера ответа в токенах.
+            max_tokens: Лимит ответа в токенах.
+        """
+        message = (
+            f"Response is too large: ~{tokens} tokens, the limit is {max_tokens}. Refine the request: "
+            "add WHERE or LIMIT, select only the needed columns, aggregate (count, group by), "
+            "or narrow the schema/object filter."
+        )
+        self._init(message, tokens, max_tokens)
+
+    def _init(self, message: str, tokens: int, max_tokens: int) -> None:
+        """Общая инициализация для подклассов с другим текстом."""
+        UserFacingError.__init__(self, message)
+        self.tokens = tokens
+        self.max_tokens = max_tokens
+
+
+class ResponseTooLargeAfterWriteError(ResponseTooLargeError):
+    """Ответ пишущего тула больше бюджета: изменения уже применены, повтор запишет их дважды."""
+
+    def __init__(self, tokens: int, max_tokens: int) -> None:
+        """Инициализация с оценкой размера ответа и лимитом.
+
+        Args:
+            tokens: Оценка размера ответа в токенах.
+            max_tokens: Лимит ответа в токенах.
+        """
+        message = (
+            f"Response is too large: ~{tokens} tokens, the limit is {max_tokens}. "
+            "If the statement modified data, its changes are already applied — do not re-run it; "
+            "query the affected rows with a narrower SELECT instead. "
+            "Otherwise refine the request: add WHERE or LIMIT, select only the needed columns, "
+            "aggregate (count, group by)."
+        )
+        self._init(message, tokens, max_tokens)
 
 
 class ConnectionFailedError(BaseApplicationError):

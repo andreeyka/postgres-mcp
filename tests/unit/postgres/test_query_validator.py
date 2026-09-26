@@ -12,6 +12,7 @@ from postgres_fastmcp.shared.errors import (
     SqlParseError,
     StatementTypeNotAllowedError,
     TablePrefixAccessError,
+    UserFacingError,
 )
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
@@ -125,6 +126,28 @@ class TestQueryValidatorFunctions:
         v = QueryValidator(read_only=True)
         v.validate("SELECT * FROM (VALUES (1), (2)) AS v(x)")
 
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM generate_series(1, 10)",
+            "SELECT generate_subscripts(ARRAY[1,2], 1)",
+            "SELECT created_at AT TIME ZONE 'UTC' FROM t",
+            "SELECT * FROM t WHERE name SIMILAR TO 'a%'",
+            "SELECT * FROM json_to_recordset('[{\"a\":1}]') AS x(a int)",
+            "SELECT * FROM jsonb_to_recordset('[]'::jsonb) AS x(a int, b text)",
+        ],
+    )
+    def test_allows_common_read_only_constructs(self, sql: str) -> None:
+        """Everyday SELECT constructs must not be rejected as unsafe."""
+        v = QueryValidator(read_only=True)
+        v.validate(sql)
+
+    def test_column_def_does_not_unlock_create_table(self) -> None:
+        """ColumnDef is allowed as an AST node, but CREATE TABLE is still rejected at statement level."""
+        v = QueryValidator(read_only=False)
+        with pytest.raises((StatementTypeNotAllowedError, DdlNotAllowedError)):
+            v.validate("CREATE TABLE t (id int)")
+
 
 class TestQueryValidatorExplainAnalyze:
     """EXPLAIN ANALYZE is blocked by default, allowed when allow_explain_analyze=True."""
@@ -143,14 +166,51 @@ class TestQueryValidatorExplainAnalyze:
 
 
 class TestQueryValidatorCreateExtension:
-    """CREATE EXTENSION whitelist."""
+    """CREATE EXTENSION: only in write mode, only hypopg / pg_stat_statements."""
 
-    def test_create_extension_disallowed_raises(self) -> None:
-        """CREATE EXTENSION with non-whitelisted name raises CreateExtensionNotSupportedError."""
+    @pytest.mark.parametrize("extname", ["hypopg", "pg_stat_statements", "dblink"])
+    def test_read_only_rejects_any_create_extension(self, extname: str) -> None:
+        """In read-only mode CREATE EXTENSION is rejected by statement type before touching the DB."""
         v = QueryValidator(read_only=True)
+        with pytest.raises(StatementTypeNotAllowedError):
+            v.validate(f"CREATE EXTENSION {extname}")
+
+    @pytest.mark.parametrize("extname", ["hypopg", "pg_stat_statements"])
+    def test_write_mode_allows_whitelisted_extension(self, extname: str) -> None:
+        """Write mode allows the two extensions the server itself relies on."""
+        v = QueryValidator(read_only=False)
+        v.validate(f"CREATE EXTENSION IF NOT EXISTS {extname}")
+
+    @pytest.mark.parametrize("extname", ["dblink", "file_fdw", "plpython3u", "unknown_ext"])
+    def test_write_mode_rejects_other_extensions(self, extname: str) -> None:
+        """Any other extension is rejected with CreateExtensionNotSupportedError."""
+        v = QueryValidator(read_only=False)
         with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
-            v.validate("CREATE EXTENSION unknown_ext")
-        assert "unknown_ext" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
+            v.validate(f"CREATE EXTENSION {extname}")
+        assert extname in str(exc_info.value)
+
+    def test_write_mode_with_allowed_schema_rejects_schema_option(self) -> None:
+        """With allowed_schema set, SCHEMA would place the extension outside it: rejected, option named."""
+        v = QueryValidator(allowed_schema="public", read_only=False)
+        with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
+            v.validate("CREATE EXTENSION hypopg SCHEMA secret")
+        assert "SCHEMA" in str(exc_info.value)
+
+    def test_write_mode_without_allowed_schema_allows_schema_option(self) -> None:
+        """Without a schema restriction the SCHEMA option is not a policy violation."""
+        QueryValidator(read_only=False).validate("CREATE EXTENSION hypopg SCHEMA secret")
+
+    @pytest.mark.parametrize("allowed_schema", [None, "public"], ids=["no-schema", "public"])
+    def test_write_mode_rejects_cascade(self, allowed_schema: str | None) -> None:
+        """CASCADE could install dependencies outside the allowlist, so it is always rejected."""
+        v = QueryValidator(allowed_schema=allowed_schema, read_only=False)
+        with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
+            v.validate("CREATE EXTENSION hypopg CASCADE")
+        assert "CASCADE" in str(exc_info.value)
+
+    def test_write_mode_with_allowed_schema_allows_plain_if_not_exists(self) -> None:
+        """The form the server itself uses still passes in basic write mode."""
+        QueryValidator(allowed_schema="public", read_only=False).validate("CREATE EXTENSION IF NOT EXISTS hypopg")
 
 
 class TestQueryValidatorDmlMode:
@@ -171,3 +231,20 @@ class TestQueryValidatorDmlMode:
         v = QueryValidator(read_only=False)
         with pytest.raises(StatementTypeNotAllowedError):
             v.validate("VACUUM users")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t (a) VALUES (1) RETURNING id",
+            "UPDATE t SET a = 1 WHERE id = 1 RETURNING *",
+            "WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w",
+        ],
+    )
+    def test_returning_allowed_in_write_mode(self, sql: str) -> None:
+        """RETURNING is part of DML and must pass when DML is allowed."""
+        QueryValidator(read_only=False).validate(sql)
+
+    def test_returning_still_blocked_in_read_only(self) -> None:
+        """A data-modifying CTE stays rejected in read-only mode."""
+        with pytest.raises(UserFacingError):
+            QueryValidator(read_only=True).validate("WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w")

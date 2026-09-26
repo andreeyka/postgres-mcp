@@ -4,20 +4,20 @@
 поэтому модуль `tools/definitions` может импортироваться без инициализации конфига.
 """
 
-from __future__ import annotations
-
 from importlib.metadata import (
     PackageNotFoundError,
     version as _pkg_version,
 )
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from fastmcp import FastMCP
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
+from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
-    HEALTH_TYPE_VALUES,
     analyze_db_health,
     analyze_query_indexes,
     analyze_workload_indexes,
@@ -28,12 +28,7 @@ from postgres_fastmcp.tools.definitions import (
     list_objects,
     list_schemas,
 )
-
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
-
-    from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.tools.params import HEALTH_TYPE_VALUES
 
 
 try:
@@ -43,26 +38,38 @@ except PackageNotFoundError:
 
 _META: dict[str, Any] = {"version": _VERSION}
 
-# Annotation presets for Tool.from_function(annotations={...})
-# See https://gofastmcp.com/servers/tools — ToolAnnotations fields.
+# Annotation presets for Tool.from_function(annotations=...)
+# See https://gofastmcp.com/servers/tools — ToolAnnotations fields (snake_case since MCP SDK v2).
 READ_ONLY_IDEMPOTENT: dict[str, bool] = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": True,
-    "openWorldHint": True,
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": True,
+    "open_world_hint": True,
 }
 READ_ONLY_NON_IDEMPOTENT: dict[str, bool] = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": False,
-    "openWorldHint": True,
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": False,
+    "open_world_hint": True,
+}
+# BASIC + write_mode: DML в public коммитится, но DDL отклоняется — запись без разрушения схемы.
+WRITE_NON_DESTRUCTIVE: dict[str, bool] = {
+    "read_only_hint": False,
+    "destructive_hint": False,
+    "idempotent_hint": False,
+    "open_world_hint": True,
 }
 DESTRUCTIVE: dict[str, bool] = {
-    "readOnlyHint": False,
-    "destructiveHint": True,
-    "idempotentHint": False,
-    "openWorldHint": True,
+    "read_only_hint": False,
+    "destructive_hint": True,
+    "idempotent_hint": False,
+    "open_world_hint": True,
 }
+
+
+# Запас поверх statement_timeout + клиентской страховки SafeSqlExecutor: первым должен
+# срабатывать Postgres (QueryTimeoutError), а не таймаут тула в FastMCP.
+_TOOL_TIMEOUT_MARGIN = 5.0
 
 
 def _ann(title: str, preset: dict[str, bool]) -> ToolAnnotations:
@@ -79,18 +86,40 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
 
 
 def _all_tool_specs(settings: Settings) -> list[dict[str, Any]]:
-    return _basic_specs(settings) + _full_specs()
+    specs = _basic_specs(settings) + _full_specs()
+    for spec in specs:
+        spec["timeout"] = _tool_timeout(spec["timeout"], settings)
+    return specs
+
+
+def _tool_timeout(base: float, settings: Settings) -> float:
+    """Таймаут тула: не короче базового и строго длиннее statement_timeout + страховки.
+
+    В режиме FULL + write_mode SafeSqlExecutor не используется и statement_timeout нет,
+    поэтому базовое значение остаётся как есть.
+    """
+    db = settings.database
+    if db.access_mode == AccessMode.FULL and db.write_mode:
+        return base
+    derived = db.safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
+    return max(base, derived)
 
 
 def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
     db = settings.database
     unrestricted = db.access_mode == AccessMode.FULL and db.write_mode
-    execute_preset = DESTRUCTIVE if unrestricted else READ_ONLY_NON_IDEMPOTENT
+    if unrestricted:
+        execute_preset = DESTRUCTIVE
+    elif db.write_mode:
+        execute_preset = WRITE_NON_DESTRUCTIVE
+    else:
+        execute_preset = READ_ONLY_NON_IDEMPOTENT
     return [
         {
             "fn": execute_sql,
             "name": "execute_sql",
-            "description": _execute_sql_desc(unrestricted=unrestricted),
+            "output_schema": None,
+            "description": _execute_sql_desc(unrestricted=unrestricted, write_mode=db.write_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Execute SQL", execute_preset),
             "timeout": 30.0,
@@ -99,6 +128,7 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
         {
             "fn": list_objects,
             "name": "list_objects",
+            "output_schema": None,
             "description": _list_objects_desc(db.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("List Objects", READ_ONLY_IDEMPOTENT),
@@ -108,6 +138,7 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
         {
             "fn": get_object_details,
             "name": "get_object_details",
+            "output_schema": None,
             "description": _get_object_details_desc(db.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Get Object Details", READ_ONLY_IDEMPOTENT),
@@ -131,6 +162,7 @@ def _full_specs() -> list[dict[str, Any]]:
         {
             "fn": list_schemas,
             "name": "list_schemas",
+            "output_schema": None,
             "description": (
                 "Lists all schemas in the PostgreSQL database. Use this first to discover "
                 "available namespaces before listing objects in a specific schema."
@@ -157,6 +189,7 @@ def _full_specs() -> list[dict[str, Any]]:
         {
             "fn": get_top_queries,
             "name": "get_top_queries",
+            "output_schema": None,
             "description": (
                 "Report the slowest or most resource-intensive queries from pg_stat_statements. "
                 "The pg_stat_statements extension must be enabled. Workflow: get_top_queries -> "
@@ -171,9 +204,8 @@ def _full_specs() -> list[dict[str, Any]]:
             "fn": analyze_query_indexes,
             "name": "analyze_query_indexes",
             "description": (
-                "Recommend optimal indexes for a given list of SQL queries. "
-                "method='dta' uses cost-based analysis with hypothetical indexes (hypopg required); "
-                "method='llm' uses LLM-driven pattern analysis. "
+                "Recommend optimal indexes for a given list of SQL queries using cost-based analysis "
+                "with hypothetical indexes (the hypopg extension is required). "
                 "Use analyze_workload_indexes instead if you want to optimize aggregate workload."
             ),
             "tags": {ToolTag.FULL.value},
@@ -185,9 +217,9 @@ def _full_specs() -> list[dict[str, Any]]:
             "fn": analyze_workload_indexes,
             "name": "analyze_workload_indexes",
             "description": (
-                "Recommend indexes based on the actual workload captured in pg_stat_statements. "
-                "method='dta' uses cost-based analysis (hypopg required); method='llm' uses LLM-driven "
-                "analysis. Use periodically to find missing indexes. "
+                "Recommend indexes based on the actual workload captured in pg_stat_statements, "
+                "using cost-based analysis with hypothetical indexes (hypopg required). "
+                "Use periodically to find missing indexes. "
                 "Use analyze_query_indexes instead if you want to optimize specific queries."
             ),
             "tags": {ToolTag.FULL.value},
@@ -198,11 +230,18 @@ def _full_specs() -> list[dict[str, Any]]:
     ]
 
 
-def _execute_sql_desc(*, unrestricted: bool) -> str:
+def _execute_sql_desc(*, unrestricted: bool, write_mode: bool) -> str:
     if unrestricted:
         return (
             "Execute ANY SQL statement (DDL, DML, DCL). Server is in FULL access with write_mode=True. "
             "Use with caution; prefer explain_query first for non-trivial SELECTs. "
+            "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
+        )
+    if write_mode:
+        return (
+            "Execute a SQL statement in the public schema. SELECT, EXPLAIN and SHOW are allowed, "
+            "and so are INSERT, UPDATE and DELETE (changes are committed); DDL is rejected "
+            "(except CREATE EXTENSION hypopg / pg_stat_statements). "
             "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
         )
     return (

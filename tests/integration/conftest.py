@@ -7,8 +7,8 @@ import pytest
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.shared.enums import AccessMode
 
 
 @pytest.fixture

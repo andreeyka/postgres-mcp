@@ -94,6 +94,8 @@ uv run postgres-fastmcp
 
 Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
 
+Опционально в `server`: `response_max_tokens` — предел ответа инструмента в токенах (по умолчанию `20000`, минимум `1000`). Ответ больше предела заменяется ошибкой с просьбой уточнить запрос.
+
 #### 3. Переменные окружения
 
 Используйте префиксы `MCP_SERVER_*`, `MCP_DATABASE_*` и `MCP_FASTMCP_*` (см. [env.example](env.example)):
@@ -109,6 +111,7 @@ export MCP_DATABASE_PASSWORD=password
 export MCP_DATABASE_NAME=dbname
 export MCP_DATABASE_ROLE=admin
 export MCP_DATABASE_WRITE_MODE=false
+export MCP_RESPONSE_MAX_TOKENS=20000
 
 uv run postgres-fastmcp
 ```
@@ -268,10 +271,11 @@ uv run postgres-fastmcp \
 
 В проекте используется многоуровневая защита при выполнении SQL:
 
-1. **Разбор SQL** — библиотека `pglast` анализирует SQL перед выполнением
+1. **Разбор SQL** — библиотека `pglast` анализирует SQL перед выполнением; разрешён только allowlist типов операторов, узлов AST и функций
 2. **Транзакции только для чтения** — в режимах только чтение используются read-only транзакции PostgreSQL
 3. **Проверки COMMIT/ROLLBACK** — блокируются попытки обойти режим только чтение
-4. **Таймауты** — ограничение времени выполнения запросов в ограниченных режимах
+4. **Таймауты** — `safe_sql_timeout` выставляется как `statement_timeout` внутри транзакции, запрос отменяет сам PostgreSQL. Таймаут самого тула выводится так, чтобы быть длиннее `statement_timeout` с клиентской страховкой, поэтому первым срабатывает именно PostgreSQL
+5. **Расширения** — `CREATE EXTENSION` допускается только для `hypopg` и `pg_stat_statements` и только при `write_mode=true`
 
 ## MCP API
 
@@ -286,17 +290,24 @@ uv run postgres-fastmcp \
 | `get_object_details`   | Информация об объекте БД: столбцы, ограничения, индексы таблицы и т.п. |
 | `execute_sql`           | Выполнение SQL с ограничениями только чтение при write_mode=false |
 | `explain_query`         | План выполнения запроса; поддерживаются гипотетические индексы для симуляции |
-| `get_top_queries`      | Самые медленные запросы по суммарному времени (данные `pg_stat_statements`) |
+| `get_top_queries`      | Самые медленные или ресурсоёмкие запросы из `pg_stat_statements`, не больше `limit` (до 100) |
 | `analyze_workload_indexes` | Анализ нагрузки и рекомендации оптимальных индексов |
 | `analyze_query_indexes`    | Анализ списка запросов (до 10) и рекомендации индексов |
 | `analyze_db_health`    | Проверка здоровья БД: буферный кэш, соединения, ограничения, индексы (дубликаты/неиспользуемые/невалидные), последовательности, vacuum |
+
+### Формат ответа и бюджет
+
+- `execute_sql`, `list_schemas`, `list_objects`, `get_object_details` и `get_top_queries` принимают `output`: `table` (по умолчанию) — Markdown-таблица, в которой колонки перечислены один раз, и строка `N rows.`; `json` — `{"rows": [...], "row_count": N}` в `structuredContent` и тот же JSON текстом. `get_object_details` в `json` отдаёт поля объекта и разделы (`columns`, `constraints`, `indexes`) одним объектом.
+- Ответ инструмента больше `response_max_tokens` (переменная `MCP_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3. Если инструмент мог записать данные (аннотация `readOnlyHint=false`, то есть `execute_sql` при `write_mode=true`), текст другой и не утверждает, что запись точно произошла — это мог быть и обычный `SELECT`: `... If the statement modified data, its changes are already applied — do not re-run it; query the affected rows with a narrower SELECT instead. Otherwise refine the request: ...`.
+- Ввод нормализуется: `object_type` понимает `Tables`, `VIEW`, `sequences`; `health_type` — список или строку через запятую в любом регистре; `sort_by` — синонимы `total`, `mean`, `avg`, `resource`; `limit` больше 100 урезается до 100 и действует для всех `sort_by`, включая `resources`. Неверное значение даёт ошибку, в которой всегда перечислены допустимые значения; если есть похожее, добавляется подсказка `Did you mean ...?`.
 
 ### Ограничения по доступу
 
 - **Роль `user`**: только базовые инструменты (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`); опционально `table_prefix` для ограничения набора таблиц
 - **Роль `admin`**: все инструменты (базовые + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
 - **write_mode=false**: разрешён только SELECT
-- **write_mode=true** (при access_mode=full): разрешён DML; DDL для access_mode=full
+- **write_mode=true** при access_mode=basic: в схеме `public` разрешены INSERT/UPDATE/DELETE (изменения коммитятся), DDL отклоняется
+- **write_mode=true** при access_mode=full: без ограничений, включая DDL
 
 ## Установка расширений PostgreSQL (опционально)
 
@@ -565,8 +576,9 @@ uv run mypy src/
 
 - Разбор SQL через `pglast` для выявления и отклонения небезопасных операторов
 - Транзакции только для чтения в ограниченных режимах
-- Таймауты выполнения запросов
-- Ограничения по схемам для пользовательских режимов
+- `statement_timeout` на стороне PostgreSQL в ограниченных режимах
+- Ограничения по схемам для режима `basic`
+- `CREATE EXTENSION` только для `hypopg` и `pg_stat_statements` в режиме записи
 
 ## Лицензия
 

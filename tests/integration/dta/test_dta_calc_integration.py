@@ -151,7 +151,6 @@ async def test_dta_analyze_workload_via_service(db_service_with_hypopg: DbAccess
         await sql.execute("SELECT hypopg_reset()", readonly=False)
         service = IndexAnalysisService(db_service_with_hypopg)
         result = await service.analyze_query_indexes(
-            method="dta",
             queries=["SELECT * FROM service_test WHERE a = 1", "SELECT * FROM service_test WHERE b = 'x100'"],
             max_index_size_mb=50,
         )

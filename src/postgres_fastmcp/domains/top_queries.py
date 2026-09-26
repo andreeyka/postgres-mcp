@@ -1,12 +1,20 @@
 """Домен топ-запросов: отчёты по pg_stat_statements (тул get_top_queries)."""
 
 import logging
-from typing import Literal
+from typing import Any, Literal
+
+from psycopg.errors import ObjectNotInPrerequisiteState
 
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.ports import SqlDriverPort
-from postgres_fastmcp.shared.errors import InvalidSortCriteriaError
+from postgres_fastmcp.shared.errors import (
+    ExtensionStatusUnavailableError,
+    InvalidSortCriteriaError,
+    PgStatStatementsNotInstalledError,
+    UnsupportedServerVersionError,
+)
+from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 
 logger = logging.getLogger(__name__)
@@ -14,175 +22,119 @@ logger = logging.getLogger(__name__)
 PG_STAT_STATEMENTS = "pg_stat_statements"
 # PostgreSQL version where column names changed in pg_stat_statements
 PG_VERSION_COLUMN_CHANGE = 13
-
-install_pg_stat_statements_message = (
-    "The pg_stat_statements extension is required to "
-    "report slow queries, but it is not currently "
-    "installed.\n\n"
-    "You can install it by running: "
-    "`CREATE EXTENSION pg_stat_statements;`\n\n"
-    "**What does it do?** It records statistics (like "
-    "execution time, number of calls, rows returned) for "
-    "every query executed against the database.\n\n"
-    "**Is it safe?** Installing 'pg_stat_statements' is "
-    "generally safe and a standard practice for performance "
-    "monitoring. It adds overhead by tracking statistics, "
-    "but this is usually negligible unless under extreme load."
-)
+# Ранжирование по ресурсам читает stddev_exec_time и wal_bytes, которые появились в PostgreSQL 13
+_RESOURCES_FEATURE = "sort_by='resources'"
+_RESOURCES_HINT = "Use sort_by='total_time' or 'mean_time' instead."
 
 
 class TopQueriesCalc:
-    """Tool for retrieving the slowest SQL queries."""
+    """Строки pg_stat_statements: самые медленные и самые ресурсоёмкие запросы."""
 
     def __init__(
         self,
         sql_driver: SqlDriverPort,
         connection_id: str = "",
     ) -> None:
-        """Initialize TopQueriesCalc.
+        """Инициализация.
 
         Args:
-            sql_driver: SQL executor to use for queries (and as template for extension checks).
-            connection_id: Stable connection id for extension/version cache.
+            sql_driver: SQL-драйвер для запросов (и шаблон для проверки расширений).
+            connection_id: Стабильный id подключения для кэша расширений и версии.
         """
         self.sql_driver = sql_driver
         self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
 
-    async def get_top_queries_by_time(self, limit: int = 10, sort_by: Literal["total", "mean"] = "mean") -> str:
-        """Reports the slowest SQL queries based on execution time.
+    async def _server_version(self) -> int:
+        """Мажорная версия PostgreSQL после проверки, что pg_stat_statements установлено.
 
-        Args:
-            limit: Number of slow queries to return
-            sort_by: Sort criteria - 'total' for total execution time or
-                'mean' for mean execution time per call (default)
+        Raises:
+            ExtensionStatusUnavailableError: Каталог расширений ответил ошибкой, статус неизвестен.
+            PgStatStatementsNotInstalledError: Если pg_stat_statements не установлено.
+        """
+        extension_status = await self._ext_inspector.check_extension(PG_STAT_STATEMENTS, include_messages=False)
+        if extension_status.catalog_error:
+            logger.warning("Extension catalog error while checking %s", PG_STAT_STATEMENTS)
+            raise ExtensionStatusUnavailableError(PG_STAT_STATEMENTS, extension_status.catalog_error)
+        if not extension_status.is_installed:
+            logger.warning("Extension %s is not installed", PG_STAT_STATEMENTS)
+            raise PgStatStatementsNotInstalledError
+        pg_version = await self._ext_inspector.get_postgres_version()
+        logger.debug("PostgreSQL version: %s", pg_version)
+        return pg_version
 
-        Returns:
-            A string with the top queries or installation instructions
+    async def _fetch(self, query: str, limit: int) -> list[dict[str, Any]]:
+        """Выполнить запрос к pg_stat_statements и декодировать строки.
+
+        Raises:
+            PgStatStatementsNotInstalledError: Расширение создано, но библиотека не загружена
+                через shared_preload_libraries: представление недоступно.
         """
         try:
-            logger.debug("Getting top queries by time. limit=%s, sort_by=%s", limit, sort_by)
-            extension_status = await self._ext_inspector.check_extension(
-                PG_STAT_STATEMENTS,
-                include_messages=False,
-            )
+            rows = await self.sql_driver.execute(query, params=[limit], readonly=True)
+        except ObjectNotInPrerequisiteState as e:
+            logger.warning("Extension %s is not preloaded: %s", PG_STAT_STATEMENTS, e)
+            raise PgStatStatementsNotInstalledError from e
+        return [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
 
-            if not extension_status.is_installed:
-                logger.warning("Extension %s is not installed", PG_STAT_STATEMENTS)
-                # Return installation instructions if the extension is not installed
-                return install_pg_stat_statements_message
+    async def get_top_queries_by_time(
+        self, limit: int = 10, sort_by: Literal["total", "mean"] = "mean"
+    ) -> list[dict[str, Any]]:
+        """Самые медленные запросы по общему или среднему времени выполнения.
 
-            # Check PostgreSQL version to determine column names
-            pg_version = await self._ext_inspector.get_postgres_version()
-            logger.debug("PostgreSQL version: %s", pg_version)
+        Args:
+            limit: Максимум строк.
+            sort_by: 'total' — по общему времени, 'mean' — по среднему на вызов.
 
-            # Column names changed in PostgreSQL 13
-            if pg_version >= PG_VERSION_COLUMN_CHANGE:
-                # PostgreSQL 13 and newer
-                total_time_col = "total_exec_time"
-                mean_time_col = "mean_exec_time"
-            else:
-                # PostgreSQL 12 and older
-                total_time_col = "total_time"
-                mean_time_col = "mean_time"
-
-            logger.debug("Using time columns: total=%s, mean=%s", total_time_col, mean_time_col)
-
-            # Determine which column to sort by based on sort_by parameter and version
-            order_by_column = total_time_col if sort_by == "total" else mean_time_col
-
-            # Column names are validated and come from version check, not user input
-            query = f"""
-                SELECT
-                    query,
-                    calls,
-                    {total_time_col},
-                    {mean_time_col},
-                    rows
-                FROM pg_stat_statements
-                WHERE calls > 0
-                  AND query NOT LIKE '%pg_stat_statements%'
-                ORDER BY {order_by_column} DESC
-                LIMIT {{}};
-            """  # noqa: S608
-            logger.debug("Executing query: %s", query)
-            slow_query_rows = await self.sql_driver.execute(
-                query,
-                params=[limit],
-                readonly=True,
-            )
-            slow_queries = [row.cells for row in slow_query_rows] if slow_query_rows else []
-            logger.info("Found %s slow queries", len(slow_queries))
-
-            # Create result description based on sort criteria
-            criteria = "total execution time" if sort_by == "total" else "mean execution time per call"
-
-            result = f"Top {len(slow_queries)} slowest queries by {criteria}:\n"
-            result += str(slow_queries)
-        except Exception as e:
-            logger.exception("Error getting slow queries")
-            return f"Error getting slow queries: {e}"
+        Returns:
+            Строки pg_stat_statements: query, calls, время, rows.
+        """
+        # Колонки переименованы в PostgreSQL 13
+        if await self._server_version() >= PG_VERSION_COLUMN_CHANGE:
+            total_time_col, mean_time_col = "total_exec_time", "mean_exec_time"
         else:
-            return result
+            total_time_col, mean_time_col = "total_time", "mean_time"
+        order_by_column = total_time_col if sort_by == "total" else mean_time_col
+        # Имена колонок берутся из проверки версии, а не из ввода пользователя
+        query = f"""
+            SELECT
+                query,
+                calls,
+                {total_time_col},
+                {mean_time_col},
+                rows
+            FROM pg_stat_statements
+            WHERE calls > 0
+              AND query NOT LIKE '%pg_stat_statements%'
+            ORDER BY {order_by_column} DESC
+            LIMIT {{}};
+        """  # noqa: S608
+        result = await self._fetch(query, limit)
+        logger.info("Found %s slow queries", len(result))
+        return result
 
-    async def get_top_resource_queries(self, frac_threshold: float = 0.05) -> str:
-        """Reports the most time consuming queries based on a resource blend.
+    async def get_top_resource_queries(self, limit: int = 10, frac_threshold: float = 0.05) -> list[dict[str, Any]]:
+        """Самые ресурсоёмкие запросы: доля времени, буферов и WAL выше порога.
 
         Args:
-            frac_threshold: Fraction threshold for filtering queries (default: 0.05)
+            limit: Максимум строк.
+            frac_threshold: Порог доли ресурса (по умолчанию 0.05).
 
         Returns:
-            A string with the resource-heavy queries or error message
+            Строки pg_stat_statements с долями ресурсов.
+
+        Raises:
+            UnsupportedServerVersionError: PostgreSQL ниже 13: нет stddev_exec_time и wal_bytes.
         """
-        try:
-            logger.debug("Getting top resource queries with threshold %s", frac_threshold)
-            extension_status = await self._ext_inspector.check_extension(
-                PG_STAT_STATEMENTS,
-                include_messages=False,
+        pg_version = await self._server_version()
+        if pg_version < PG_VERSION_COLUMN_CHANGE:
+            raise UnsupportedServerVersionError(
+                _RESOURCES_FEATURE, PG_VERSION_COLUMN_CHANGE, pg_version, hint=_RESOURCES_HINT
             )
-
-            if not extension_status.is_installed:
-                logger.warning("Extension %s is not installed", PG_STAT_STATEMENTS)
-                # Return installation instructions if the extension is not installed
-                return install_pg_stat_statements_message
-
-            # Check PostgreSQL version to determine column names
-            pg_version = await self._ext_inspector.get_postgres_version()
-            logger.debug("PostgreSQL version: %s", pg_version)
-
-            # Column names changed in PostgreSQL 13
-            if pg_version >= PG_VERSION_COLUMN_CHANGE:
-                # PostgreSQL 13 and newer
-                total_time_col = "total_exec_time"
-                mean_time_col = "mean_exec_time"
-            else:
-                # PostgreSQL 12 and older
-                total_time_col = "total_time"
-                mean_time_col = "mean_time"
-
-            # Column names are validated and come from version check, not user input
-            # frac_threshold is a float parameter, not user-provided SQL
-            query = f"""
-                WITH resource_fractions AS (
-                    SELECT
-                        query,
-                        calls,
-                        rows,
-                        {total_time_col} total_exec_time,
-                        {mean_time_col} mean_exec_time,
-                        stddev_exec_time,
-                        shared_blks_hit,
-                        shared_blks_read,
-                        shared_blks_dirtied,
-                        wal_bytes,
-                        total_exec_time / SUM(total_exec_time) OVER () AS total_exec_time_frac,
-                        (shared_blks_hit + shared_blks_read) / SUM(shared_blks_hit + shared_blks_read) OVER () AS shared_blks_accessed_frac,
-                        shared_blks_read / SUM(shared_blks_read) OVER () AS shared_blks_read_frac,
-                        shared_blks_dirtied / SUM(shared_blks_dirtied) OVER () AS shared_blks_dirtied_frac,
-                        wal_bytes / SUM(wal_bytes) OVER () AS total_wal_bytes_frac
-                    FROM pg_stat_statements
-                    WHERE calls > 0
-                      AND query NOT LIKE '%pg_stat_statements%'
-                )
+        # Доли делятся на NULLIF(сумма, 0): на нагрузке без WAL или чтений сумма равна нулю,
+        # доля становится NULL и не проходит фильтр по порогу вместо division by zero.
+        # frac_threshold — float-параметр, а не SQL от пользователя
+        query = f"""
+            WITH resource_fractions AS (
                 SELECT
                     query,
                     calls,
@@ -190,65 +142,77 @@ class TopQueriesCalc:
                     total_exec_time,
                     mean_exec_time,
                     stddev_exec_time,
-                    total_exec_time_frac,
-                    shared_blks_accessed_frac,
-                    shared_blks_read_frac,
-                    shared_blks_dirtied_frac,
-                    total_wal_bytes_frac,
                     shared_blks_hit,
                     shared_blks_read,
                     shared_blks_dirtied,
-                    wal_bytes
-                FROM resource_fractions
-                WHERE
-                    total_exec_time_frac > {frac_threshold}
-                    OR shared_blks_accessed_frac > {frac_threshold}
-                    OR shared_blks_read_frac > {frac_threshold}
-                    OR shared_blks_dirtied_frac > {frac_threshold}
-                    OR total_wal_bytes_frac > {frac_threshold}
-                ORDER BY total_exec_time DESC
-            """  # noqa: E501, S608
-
-            logger.debug("Executing query: %s", query)
-            slow_query_rows = await self.sql_driver.execute(
-                query,
-                params=None,
-                readonly=True,
+                    wal_bytes,
+                    total_exec_time / NULLIF(SUM(total_exec_time) OVER (), 0) AS total_exec_time_frac,
+                    (shared_blks_hit + shared_blks_read)
+                        / NULLIF(SUM(shared_blks_hit + shared_blks_read) OVER (), 0) AS shared_blks_accessed_frac,
+                    shared_blks_read / NULLIF(SUM(shared_blks_read) OVER (), 0) AS shared_blks_read_frac,
+                    shared_blks_dirtied / NULLIF(SUM(shared_blks_dirtied) OVER (), 0) AS shared_blks_dirtied_frac,
+                    wal_bytes / NULLIF(SUM(wal_bytes) OVER (), 0) AS total_wal_bytes_frac
+                FROM pg_stat_statements
+                WHERE calls > 0
+                  AND query NOT LIKE '%pg_stat_statements%'
             )
-            resource_queries = [row.cells for row in slow_query_rows] if slow_query_rows else []
-            logger.info("Found %s resource-intensive queries", len(resource_queries))
-
-            return str(resource_queries)
-        except Exception:
-            logger.exception("Error getting resource-intensive queries")
-            return "Error resource-intensive queries"
+            SELECT
+                query,
+                calls,
+                rows,
+                total_exec_time,
+                mean_exec_time,
+                stddev_exec_time,
+                total_exec_time_frac,
+                shared_blks_accessed_frac,
+                shared_blks_read_frac,
+                shared_blks_dirtied_frac,
+                total_wal_bytes_frac,
+                shared_blks_hit,
+                shared_blks_read,
+                shared_blks_dirtied,
+                wal_bytes
+            FROM resource_fractions
+            WHERE
+                total_exec_time_frac > {frac_threshold}
+                OR shared_blks_accessed_frac > {frac_threshold}
+                OR shared_blks_read_frac > {frac_threshold}
+                OR shared_blks_dirtied_frac > {frac_threshold}
+                OR total_wal_bytes_frac > {frac_threshold}
+            ORDER BY total_exec_time DESC
+            LIMIT {{}};
+        """  # noqa: S608
+        result = await self._fetch(query, limit)
+        logger.info("Found %s resource-intensive queries", len(result))
+        return result
 
 
 async def get_top_queries(
     db: DbAccessService,
     sort_by: str = "resources",
     limit: int = 10,
-) -> str:
-    """Получить список самых медленных или ресурсоемких запросов.
+) -> list[dict[str, Any]]:
+    """Самые медленные или ресурсоёмкие запросы из pg_stat_statements.
 
     Args:
         db: Сервис доступа к базе данных.
-        sort_by: Критерий сортировки (по умолчанию "resources").
-        limit: Максимальное количество запросов (по умолчанию 10).
+        sort_by: Критерий: 'resources', 'mean_time' или 'total_time'.
+        limit: Максимум строк (по умолчанию 10).
 
     Returns:
-        Строка с отчетом о самых медленных запросах.
+        Строки pg_stat_statements.
 
     Raises:
-        InvalidSortCriteriaError: Если указан недопустимый параметр sort_by.
+        InvalidSortCriteriaError: Если указан недопустимый sort_by.
+        PgStatStatementsNotInstalledError: Если pg_stat_statements не установлено.
     """
     calc = TopQueriesCalc(sql_driver=db.sql_driver, connection_id=db.connection_id)
 
     if sort_by == "resources":
-        return await calc.get_top_resource_queries()
+        return await calc.get_top_resource_queries(limit=limit)
     if sort_by in {"mean_time", "total_time"}:
         return await calc.get_top_queries_by_time(
             limit=limit,
             sort_by="mean" if sort_by == "mean_time" else "total",
         )
-    raise InvalidSortCriteriaError
+    raise InvalidSortCriteriaError(sort_by)
