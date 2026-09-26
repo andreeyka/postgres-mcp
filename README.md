@@ -94,6 +94,8 @@ uv run postgres-fastmcp
 
 Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
 
+Опционально в `server`: `response_max_tokens` — предел ответа инструмента в токенах (по умолчанию `20000`, минимум `1000`). Ответ больше предела заменяется ошибкой с просьбой уточнить запрос.
+
 #### 3. Переменные окружения
 
 Используйте префиксы `MCP_SERVER_*`, `MCP_DATABASE_*` и `MCP_FASTMCP_*` (см. [env.example](env.example)):
@@ -109,6 +111,7 @@ export MCP_DATABASE_PASSWORD=password
 export MCP_DATABASE_NAME=dbname
 export MCP_DATABASE_ROLE=admin
 export MCP_DATABASE_WRITE_MODE=false
+export MCP_RESPONSE_MAX_TOKENS=20000
 
 uv run postgres-fastmcp
 ```
@@ -287,10 +290,16 @@ uv run postgres-fastmcp \
 | `get_object_details`   | Информация об объекте БД: столбцы, ограничения, индексы таблицы и т.п. |
 | `execute_sql`           | Выполнение SQL с ограничениями только чтение при write_mode=false |
 | `explain_query`         | План выполнения запроса; поддерживаются гипотетические индексы для симуляции |
-| `get_top_queries`      | Самые медленные запросы по суммарному времени (данные `pg_stat_statements`) |
+| `get_top_queries`      | Самые медленные или ресурсоёмкие запросы из `pg_stat_statements`, не больше `limit` (до 100) |
 | `analyze_workload_indexes` | Анализ нагрузки и рекомендации оптимальных индексов |
 | `analyze_query_indexes`    | Анализ списка запросов (до 10) и рекомендации индексов |
 | `analyze_db_health`    | Проверка здоровья БД: буферный кэш, соединения, ограничения, индексы (дубликаты/неиспользуемые/невалидные), последовательности, vacuum |
+
+### Формат ответа и бюджет
+
+- `execute_sql`, `list_schemas`, `list_objects`, `get_object_details` и `get_top_queries` принимают `output`: `table` (по умолчанию) — Markdown-таблица, в которой колонки перечислены один раз, и строка `N rows.`; `json` — `{"rows": [...], "row_count": N}` в `structuredContent` и тот же JSON текстом. `get_object_details` в `json` отдаёт поля объекта и разделы (`columns`, `constraints`, `indexes`) одним объектом.
+- Ответ инструмента больше `response_max_tokens` (переменная `MCP_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3.
+- Ввод нормализуется: `object_type` понимает `Tables`, `VIEW`, `sequences`; `health_type` — список или строку через запятую в любом регистре; `sort_by` — синонимы `total`, `mean`, `avg`, `resource`; `limit` больше 100 урезается до 100 и действует для всех `sort_by`, включая `resources`. Неверное значение даёт ошибку с подсказкой `Did you mean ...?`.
 
 ### Ограничения по доступу
 
