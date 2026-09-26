@@ -8,12 +8,15 @@ from psycopg import InterfaceError, OperationalError
 from psycopg.errors import (
     AdminShutdown,
     ConnectionFailure,
+    DatabaseDropped,
     DeadlockDetected,
+    IdleSessionTimeout,
     LockNotAvailable,
     ObjectNotInPrerequisiteState,
     QueryCanceled,
     SerializationFailure,
     UndefinedTable,
+    error_from_result,
 )
 from psycopg_pool import PoolTimeout
 
@@ -21,6 +24,21 @@ from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
+
+
+class _NoSqlstateResult:
+    """Стаб PGresult без SQLSTATE — как при libpq FATAL_ERROR без кода ошибки."""
+
+    def error_field(self, fieldcode: int) -> bytes | None:  # noqa: ARG002
+        return None
+
+    def get_error_message(self, encoding: str = "utf-8") -> str:  # noqa: ARG002
+        return "server closed the connection unexpectedly"
+
+
+def _database_error_without_sqlstate() -> Exception:
+    """Собрать исключение так же, как это делает psycopg на пути FATAL_ERROR без SQLSTATE."""
+    return error_from_result(_NoSqlstateResult())
 
 
 class TestSqlExecutorRender:
@@ -126,8 +144,20 @@ class TestSqlExecutorExecuteWithPool:
             InterfaceError("the connection is closed"),
             OperationalError("server closed the connection unexpectedly"),
             PoolTimeout("couldn't get a connection after 30.00 sec"),
+            _database_error_without_sqlstate(),
+            DatabaseDropped("database is being dropped"),
+            IdleSessionTimeout("terminating connection due to idle-session timeout"),
         ],
-        ids=["admin-shutdown", "class-08", "interface-error", "operational-without-sqlstate", "pool-timeout"],
+        ids=[
+            "admin-shutdown",
+            "class-08",
+            "interface-error",
+            "operational-without-sqlstate",
+            "pool-timeout",
+            "database-error-without-sqlstate-from-result",
+            "database-dropped-57p04",
+            "idle-session-timeout-57p05",
+        ],
     )
     async def test_connection_errors_invalidate_pool(self, error: Exception) -> None:
         """Real connection failures invalidate the pool."""
