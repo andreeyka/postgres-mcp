@@ -17,6 +17,7 @@ from pglast.ast import (
     ClosePortalStmt,
     CoalesceExpr,
     CollateClause,
+    ColumnDef,
     ColumnRef,
     CommonTableExpr,
     CreateExtensionStmt,
@@ -47,6 +48,7 @@ from pglast.ast import (
     RangeVar,
     RawStmt,
     ResTarget,
+    ReturningClause,
     RowCompareExpr,
     RowExpr,
     ScalarArrayOpExpr,
@@ -134,6 +136,7 @@ ALLOWED_NODE_TYPES: set[type] = ALLOWED_STMT_TYPES | {
     TableSampleClause,
     RowCompareExpr,
     CollateClause,
+    ColumnDef,
     TargetEntry,
     ScalarArrayOpExpr,
 }
@@ -142,6 +145,9 @@ ALLOWED_NODE_TYPES: set[type] = ALLOWED_STMT_TYPES | {
 # in a READ ONLY transaction it fails anyway, and in write mode the extension name is checked
 # against ALLOWED_EXTENSIONS (see query_validator).
 WRITE_STMT_TYPES: set[type] = {InsertStmt, UpdateStmt, DeleteStmt, CreateExtensionStmt}
+
+# AST nodes that exist only inside write statements (RETURNING ...). Allowed together with them.
+WRITE_NODE_TYPES: set[type] = WRITE_STMT_TYPES | {ReturningClause}
 
 # Note: VACUUM/ANALYZE (VacuumStmt) are intentionally NOT allowed in any mode — they write
 # to disk and cannot run inside the executor's wrapped transaction block. They are rejected

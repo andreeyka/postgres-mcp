@@ -12,6 +12,7 @@ from postgres_fastmcp.shared.errors import (
     SqlParseError,
     StatementTypeNotAllowedError,
     TablePrefixAccessError,
+    UserFacingError,
 )
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
@@ -125,6 +126,28 @@ class TestQueryValidatorFunctions:
         v = QueryValidator(read_only=True)
         v.validate("SELECT * FROM (VALUES (1), (2)) AS v(x)")
 
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM generate_series(1, 10)",
+            "SELECT generate_subscripts(ARRAY[1,2], 1)",
+            "SELECT created_at AT TIME ZONE 'UTC' FROM t",
+            "SELECT * FROM t WHERE name SIMILAR TO 'a%'",
+            "SELECT * FROM json_to_recordset('[{\"a\":1}]') AS x(a int)",
+            "SELECT * FROM jsonb_to_recordset('[]'::jsonb) AS x(a int, b text)",
+        ],
+    )
+    def test_allows_common_read_only_constructs(self, sql: str) -> None:
+        """Everyday SELECT constructs must not be rejected as unsafe."""
+        v = QueryValidator(read_only=True)
+        v.validate(sql)
+
+    def test_column_def_does_not_unlock_create_table(self) -> None:
+        """ColumnDef is allowed as an AST node, but CREATE TABLE is still rejected at statement level."""
+        v = QueryValidator(read_only=False)
+        with pytest.raises((StatementTypeNotAllowedError, DdlNotAllowedError)):
+            v.validate("CREATE TABLE t (id int)")
+
 
 class TestQueryValidatorExplainAnalyze:
     """EXPLAIN ANALYZE is blocked by default, allowed when allow_explain_analyze=True."""
@@ -185,3 +208,20 @@ class TestQueryValidatorDmlMode:
         v = QueryValidator(read_only=False)
         with pytest.raises(StatementTypeNotAllowedError):
             v.validate("VACUUM users")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t (a) VALUES (1) RETURNING id",
+            "UPDATE t SET a = 1 WHERE id = 1 RETURNING *",
+            "WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w",
+        ],
+    )
+    def test_returning_allowed_in_write_mode(self, sql: str) -> None:
+        """RETURNING is part of DML and must pass when DML is allowed."""
+        QueryValidator(read_only=False).validate(sql)
+
+    def test_returning_still_blocked_in_read_only(self) -> None:
+        """A data-modifying CTE stays rejected in read-only mode."""
+        with pytest.raises(UserFacingError):
+            QueryValidator(read_only=True).validate("WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w")

@@ -21,7 +21,7 @@ from pglast.visitors import Ancestor, Visitor
 
 from postgres_fastmcp.postgres.security.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
 from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
-from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_STMT_TYPES
+from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_NODE_TYPES, WRITE_STMT_TYPES
 from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
     DdlNotAllowedError,
@@ -183,7 +183,7 @@ class QueryValidator:
         allowed_node_types = set(ALLOWED_NODE_TYPES)
         if not self.read_only:
             allowed_stmt_types |= WRITE_STMT_TYPES
-            allowed_node_types |= WRITE_STMT_TYPES
+            allowed_node_types |= WRITE_NODE_TYPES
 
         node_validator = _NodeValidationVisitor(
             allowed_node_types=tuple(allowed_node_types),
