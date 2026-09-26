@@ -10,7 +10,6 @@ MountMode = Literal["tool", "endpoint"]
 # Tool parameter types
 ObjectType = Literal["table", "view", "sequence", "extension"]
 TopQueriesSortBy = Literal["total_time", "mean_time", "resources"]
-AnalysisMethod = Literal["dta", "llm"]
 
 
 class AccessMode(StrEnum):

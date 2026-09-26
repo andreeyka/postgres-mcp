@@ -295,14 +295,6 @@ class QueriesLimitError(UserFacingError):
         self.limit = limit
 
 
-class ContextRequiredError(UserFacingError):
-    """Контекст требуется для этой операции (например, оптимизация LLM)."""
-
-    def __init__(self) -> None:
-        """Инициализация."""
-        super().__init__("Контекст требуется для метода оптимизации LLM.")
-
-
 class InvalidSortCriteriaError(UserFacingError):
     """Неверный критерий сортировки для топ-запросов."""
 

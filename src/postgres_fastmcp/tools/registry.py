@@ -165,9 +165,8 @@ def _full_specs() -> list[dict[str, Any]]:
             "fn": analyze_query_indexes,
             "name": "analyze_query_indexes",
             "description": (
-                "Recommend optimal indexes for a given list of SQL queries. "
-                "method='dta' uses cost-based analysis with hypothetical indexes (hypopg required); "
-                "method='llm' uses LLM-driven pattern analysis. "
+                "Recommend optimal indexes for a given list of SQL queries using cost-based analysis "
+                "with hypothetical indexes (the hypopg extension is required). "
                 "Use analyze_workload_indexes instead if you want to optimize aggregate workload."
             ),
             "tags": {ToolTag.FULL.value},
@@ -179,9 +178,9 @@ def _full_specs() -> list[dict[str, Any]]:
             "fn": analyze_workload_indexes,
             "name": "analyze_workload_indexes",
             "description": (
-                "Recommend indexes based on the actual workload captured in pg_stat_statements. "
-                "method='dta' uses cost-based analysis (hypopg required); method='llm' uses LLM-driven "
-                "analysis. Use periodically to find missing indexes. "
+                "Recommend indexes based on the actual workload captured in pg_stat_statements, "
+                "using cost-based analysis with hypothetical indexes (hypopg required). "
+                "Use periodically to find missing indexes. "
                 "Use analyze_query_indexes instead if you want to optimize specific queries."
             ),
             "tags": {ToolTag.FULL.value},

@@ -157,11 +157,10 @@ async def test_analyze_workload_indexes_default(monkeypatch, db_mock, make_ctx) 
     fake_service.analyze_workload_indexes.return_value = {"recommendations": []}
     monkeypatch.setattr(defs, "IndexAnalysisService", lambda **kw: fake_service)
 
-    ctx = make_ctx(db_mock)
-    result = await defs.analyze_workload_indexes(ctx=ctx)
+    result = await defs.analyze_workload_indexes(ctx=make_ctx(db_mock))
 
     assert result == {"recommendations": []}
-    fake_service.analyze_workload_indexes.assert_awaited_once_with(method="dta", max_index_size_mb=10000, ctx=ctx)
+    fake_service.analyze_workload_indexes.assert_awaited_once_with(max_index_size_mb=10000)
 
 
 @pytest.mark.asyncio
@@ -170,13 +169,7 @@ async def test_analyze_query_indexes_default(monkeypatch, db_mock, make_ctx) -> 
     fake_service.analyze_query_indexes.return_value = {"recommendations": ["idx"]}
     monkeypatch.setattr(defs, "IndexAnalysisService", lambda **kw: fake_service)
 
-    ctx = make_ctx(db_mock)
-    result = await defs.analyze_query_indexes(queries=["SELECT 1"], ctx=ctx)
+    result = await defs.analyze_query_indexes(queries=["SELECT 1"], ctx=make_ctx(db_mock))
 
     assert result == {"recommendations": ["idx"]}
-    fake_service.analyze_query_indexes.assert_awaited_once_with(
-        method="dta",
-        queries=["SELECT 1"],
-        max_index_size_mb=10000,
-        ctx=ctx,
-    )
+    fake_service.analyze_query_indexes.assert_awaited_once_with(queries=["SELECT 1"], max_index_size_mb=10000)

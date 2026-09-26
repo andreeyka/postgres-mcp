@@ -17,7 +17,7 @@ from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
 from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
-from postgres_fastmcp.shared.enums import AnalysisMethod, ObjectType, TopQueriesSortBy
+from postgres_fastmcp.shared.enums import ObjectType, TopQueriesSortBy
 
 
 HEALTH_TYPE_VALUES = ", ".join(sorted(ht.value for ht in HealthType))
@@ -121,23 +121,11 @@ async def analyze_query_indexes(
         int,
         Field(default=10000, ge=1, description="Max recommended index size (MB)."),
     ] = 10000,
-    method: Annotated[
-        AnalysisMethod,
-        Field(
-            default="dta",
-            description="Analysis method: 'dta' (cost-based) or 'llm' (LLM-driven).",
-        ),
-    ] = "dta",
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
-    """Рекомендовать индексы под список запросов."""
+    """Рекомендовать индексы под список запросов (cost-based DTA, требует hypopg)."""
     service = IndexAnalysisService(db=get_db(ctx))
-    return await service.analyze_query_indexes(
-        method=method,
-        queries=queries,
-        max_index_size_mb=max_index_size_mb,
-        ctx=ctx,
-    )
+    return await service.analyze_query_indexes(queries=queries, max_index_size_mb=max_index_size_mb)
 
 
 async def analyze_workload_indexes(
@@ -145,16 +133,8 @@ async def analyze_workload_indexes(
         int,
         Field(default=10000, ge=1, description="Max recommended index size (MB)."),
     ] = 10000,
-    method: Annotated[
-        AnalysisMethod,
-        Field(default="dta", description="Analysis method: 'dta' or 'llm'."),
-    ] = "dta",
     ctx: Context = CurrentContext(),
 ) -> dict[str, Any]:
-    """Рекомендовать индексы по агрегированной нагрузке БД."""
+    """Рекомендовать индексы по агрегированной нагрузке БД (cost-based DTA, требует hypopg)."""
     service = IndexAnalysisService(db=get_db(ctx))
-    return await service.analyze_workload_indexes(
-        method=method,
-        max_index_size_mb=max_index_size_mb,
-        ctx=ctx,
-    )
+    return await service.analyze_workload_indexes(max_index_size_mb=max_index_size_mb)
