@@ -175,6 +175,15 @@ def test_unknown_mode_is_rejected() -> None:
         AuthSettings(mode="basic")
 
 
+def test_invalid_mode_with_valid_tokens_still_fails_on_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Регрессия: валидные tokens не должны маскировать ошибку невалидного mode, а токен — течь в неё."""
+    monkeypatch.setenv("MCP_AUTH_MODE", "bogus")
+    monkeypatch.setenv("MCP_AUTH_TOKENS", json.dumps({_SECRET: {"client_id": "alice"}}))
+    with pytest.raises(ValidationError, match="mode") as exc_info:
+        AuthSettings()
+    assert _SECRET not in str(exc_info.value)
+
+
 def test_settings_from_config_json_section() -> None:
     settings = Settings(
         auth={
