@@ -10,12 +10,16 @@ from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
-from postgres_fastmcp.shared.errors import QueryTimeoutError
+from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError
 
 
 logger = logging.getLogger(__name__)
 
 MS_PER_SECOND = 1000
+
+# Фрагмент diag.message_primary, по которому Postgres сообщает об отмене по statement_timeout
+# ("canceling statement due to statement timeout"). Сервер должен отдавать сообщения на английском (lc_messages).
+_STATEMENT_TIMEOUT_MARKER = "statement timeout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,7 @@ class SafeSqlExecutor:
 
         Raises:
             QueryTimeoutError: Postgres отменил запрос по statement_timeout либо сработала клиентская страховка.
+            QueryCancelledError: Postgres отменил запрос по другой причине.
         """
         query = self.render(query, params) if params else f"/* {self._config.query_tag} */ {query}"
         self._validator.validate(query)
@@ -97,19 +102,27 @@ class SafeSqlExecutor:
             raise QueryTimeoutError(self._config.timeout) from e
 
     async def _run(self, query: str) -> list[RowResult] | None:
-        """Выполнить через делегата; отмену по statement_timeout превратить в QueryTimeoutError."""
+        """Выполнить через делегата; отмену по statement_timeout превратить в QueryTimeoutError.
+
+        Любая другая отмена (pg_cancel_backend, запрос пользователя) становится QueryCancelledError,
+        чтобы не выдавать её за таймаут.
+        """
         try:
             return cast(
                 "list[RowResult] | None",
                 await self._delegate.execute(query, params=None, readonly=self._config.read_only),
             )
         except QueryCanceled as e:
-            logger.warning(
-                "Postgres cancelled the statement (statement_timeout=%ss): %s...",
-                self._config.timeout,
-                query[:100],
-            )
-            raise QueryTimeoutError(self._config.timeout or 0.0) from e
+            reason = e.diag.message_primary or ""
+            if _STATEMENT_TIMEOUT_MARKER in reason:
+                logger.warning(
+                    "Postgres cancelled the statement (statement_timeout=%ss): %s...",
+                    self._config.timeout,
+                    query[:100],
+                )
+                raise QueryTimeoutError(self._config.timeout or 0.0) from e
+            logger.warning("Postgres cancelled the statement (%s): %s...", reason or "no reason", query[:100])
+            raise QueryCancelledError from e
 
     def _with_session_settings(self, query: str) -> str:
         """Добавить SET LOCAL statement_timeout и search_path; порядок важен для читаемости логов."""

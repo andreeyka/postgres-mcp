@@ -27,6 +27,7 @@ from postgres_fastmcp.shared import errors
         ("QueriesLimitError", (50,)),
         ("InvalidSortCriteriaError", ()),
         ("QueryTimeoutError", (5.0,)),
+        ("QueryCancelledError", ()),
         ("HypopgNotInstalledError", ("not installed",)),
     ],
 )

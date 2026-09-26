@@ -322,7 +322,7 @@ class HypopgNotInstalledError(UserFacingError):
 
 
 class QueryTimeoutError(UserFacingError):
-    """Выполнение запроса превысило заданный таймаут в режиме ограничения."""
+    """Выполнение запроса превысило заданный таймаут (statement_timeout или клиентская страховка)."""
 
     def __init__(self, timeout_seconds: float) -> None:
         """Инициализация с длительностью таймаута в секундах.
@@ -331,11 +331,19 @@ class QueryTimeoutError(UserFacingError):
             timeout_seconds: Таймаут в секундах, который был превышен.
         """
         message = (
-            f"Query execution exceeded the timeout of {timeout_seconds} seconds in read_only mode. "
+            f"Query execution exceeded the timeout of {timeout_seconds} seconds. "
             "Consider simplifying the query or increasing the timeout."
         )
         super().__init__(message)
         self.timeout_seconds = timeout_seconds
+
+
+class QueryCancelledError(UserFacingError):
+    """Сервер отменил запрос не по statement_timeout (pg_cancel_backend, запрос пользователя)."""
+
+    def __init__(self) -> None:
+        """Инициализация с фиксированным сообщением."""
+        super().__init__("The query was cancelled by the server before it completed.")
 
 
 class ConnectionFailedError(BaseApplicationError):
