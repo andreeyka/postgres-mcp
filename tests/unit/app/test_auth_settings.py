@@ -193,3 +193,56 @@ def test_settings_error_hides_secrets_of_the_auth_block() -> None:
     with pytest.raises(ValidationError, match="auth.mode=oidc requires base_url") as exc_info:
         Settings(auth={**{k: v for k, v in _OIDC.items() if k != "base_url"}, "mode": "oidc"})
     assert "oidc-client-secret" not in str(exc_info.value)
+
+
+def test_malformed_inline_tokens_are_ignored_in_none_mode() -> None:
+    """Форма tokens проверяется только в static: в none поле чужого режима игнорируется."""
+    auth = AuthSettings(tokens={_SECRET: {"scopes": ["x"]}})
+    assert auth.mode == AuthMode.NONE
+
+
+def test_malformed_inline_tokens_are_ignored_in_jwt_mode() -> None:
+    auth = AuthSettings(mode="jwt", tokens={_SECRET: {"scopes": ["x"]}}, **_JWT, jwt_jwks_uri="https://x/certs")
+    assert auth.mode == AuthMode.JWT
+
+
+def test_malformed_env_tokens_are_ignored_outside_static(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_AUTH_TOKENS", json.dumps({_SECRET: {"scopes": ["x"]}}))
+    assert AuthSettings().mode == AuthMode.NONE
+
+
+def test_malformed_tokens_still_fail_in_static_mode_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_AUTH_MODE", "static")
+    monkeypatch.setenv("MCP_AUTH_TOKENS", json.dumps({_SECRET: {"scopes": ["x"]}}))
+    with pytest.raises(ValidationError, match=r"tokens must map each token.*client_id: Field required") as exc_info:
+        AuthSettings()
+    assert _SECRET not in str(exc_info.value)
+
+
+def test_tokens_are_excluded_from_model_dump() -> None:
+    auth = AuthSettings(mode="static", tokens={_SECRET: {"client_id": "alice"}})
+    dump = auth.model_dump()
+    assert "tokens" not in dump
+    assert _SECRET not in json.dumps(dump, default=str)
+    assert _SECRET not in auth.model_dump_json()
+
+
+def test_tokens_file_bad_encoding_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "tokens.json"
+    path.write_bytes(b"\xff\xfe\x00\x01")
+    with pytest.raises(ValidationError, match="cannot be read") as exc_info:
+        AuthSettings(mode="static", tokens_file=path)
+    assert _SECRET not in str(exc_info.value)
+
+
+def test_blank_token_key_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="tokens must not contain a blank token string") as exc_info:
+        AuthSettings(mode="static", tokens={"   ": {"client_id": "alice"}})
+    assert _SECRET not in str(exc_info.value)
+
+
+def test_blank_token_key_in_tokens_file_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "tokens.json"
+    path.write_text(json.dumps({"": {"client_id": "alice"}}), encoding="utf-8")
+    with pytest.raises(ValidationError, match="tokens_file .* must not contain a blank token string"):
+        AuthSettings(mode="static", tokens_file=path)

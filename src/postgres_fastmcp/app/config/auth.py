@@ -4,7 +4,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, SecretStr, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from postgres_fastmcp.access import AccessPolicy
@@ -27,6 +36,9 @@ def _validate_tokens(value: object, source: str) -> dict[str, StaticToken]:
 
     У ошибки pydantic первый элемент ``loc`` — ключ словаря, то есть сам токен.
     """
+    if isinstance(value, dict) and any(not str(key).strip() for key in value):
+        msg = f"{source} must not contain a blank token string"
+        raise ValueError(msg)
     try:
         return _TOKENS.validate_python(value)
     except ValidationError as exc:
@@ -57,7 +69,9 @@ class AuthSettings(BaseSettings):
     required_scopes: list[str] = Field(default_factory=list, description="Скоупы, без которых токен не принимается")
     access_policy: AccessPolicy = Field(default_factory=AccessPolicy, description="Сужение прав по claim токена")
 
-    tokens: dict[str, StaticToken] = Field(default_factory=dict, repr=False, description="static: токен -> описание")
+    tokens: dict[str, StaticToken] = Field(
+        default_factory=dict, repr=False, exclude=True, description="static: токен -> описание"
+    )
     tokens_file: Path | None = Field(default=None, description="static: JSON-файл той же формы, что tokens")
 
     jwt_jwks_uri: str | None = Field(default=None, description="jwt: URL JWKS (или jwt_public_key)")
@@ -74,7 +88,10 @@ class AuthSettings(BaseSettings):
 
     @field_validator("tokens", mode="before")
     @classmethod
-    def _check_tokens(cls, value: object) -> dict[str, StaticToken]:
+    def _check_tokens(cls, value: object, info: ValidationInfo) -> dict[str, StaticToken]:
+        """Форма tokens проверяется только в static; в остальных режимах поле чужого режима игнорируется."""
+        if info.data.get("mode") != AuthMode.STATIC:
+            return {}
         return _validate_tokens(value, "tokens")
 
     @model_validator(mode="after")
@@ -105,8 +122,9 @@ class AuthSettings(BaseSettings):
             return {}
         try:
             raw = json.loads(self.tokens_file.read_text(encoding="utf-8"))
-        except OSError as exc:
-            msg = f"tokens_file {self.tokens_file} cannot be read: {exc.strerror}"
+        except (OSError, UnicodeDecodeError) as exc:
+            reason = exc.strerror if isinstance(exc, OSError) else str(exc)
+            msg = f"tokens_file {self.tokens_file} cannot be read: {reason}"
             raise ValueError(msg) from None
         except json.JSONDecodeError as exc:
             msg = f"tokens_file {self.tokens_file} is not valid JSON (line {exc.lineno}, column {exc.colno})"
