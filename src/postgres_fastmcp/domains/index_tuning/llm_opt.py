@@ -150,7 +150,7 @@ class LLMOptimizerTool(IndexTuningBase):
             "Always respond with valid JSON only, no additional text."
         )
 
-        response = await self.ctx.sample(
+        response = await self.ctx.sample(  # type: ignore[attr-defined]  # ctx.sample removed in FastMCP 4; file deleted in the LLM-removal task
             messages=user_prompt,
             system_prompt=system_prompt,
             temperature=1.2,
