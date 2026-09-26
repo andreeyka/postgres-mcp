@@ -41,6 +41,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "HypopgNotInstalledError": lambda: errors.HypopgNotInstalledError("The hypopg extension is not installed."),
     "QueryTimeoutError": lambda: errors.QueryTimeoutError(5.0),
     "QueryCancelledError": errors.QueryCancelledError,
+    "ResponseTooLargeError": lambda: errors.ResponseTooLargeError(25000, 20000),
 }
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -84,6 +85,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("InvalidHealthTypeError", "Did you mean 'index'?"),
         ("InvalidOutputFormatError", "Did you mean 'json'?"),
         ("PgStatStatementsNotInstalledError", "CREATE EXTENSION pg_stat_statements"),
+        ("ResponseTooLargeError", "Refine the request: add WHERE or LIMIT"),
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
     ],
 )

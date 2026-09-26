@@ -455,6 +455,26 @@ class QueryCancelledError(UserFacingError):
         super().__init__("The query was cancelled by the server before it completed.")
 
 
+class ResponseTooLargeError(UserFacingError):
+    """Ответ тула больше бюджета токенов: агенту нужно сузить запрос."""
+
+    def __init__(self, tokens: int, max_tokens: int) -> None:
+        """Инициализация с оценкой размера ответа и лимитом.
+
+        Args:
+            tokens: Оценка размера ответа в токенах.
+            max_tokens: Лимит ответа в токенах.
+        """
+        message = (
+            f"Response is too large: ~{tokens} tokens, the limit is {max_tokens}. Refine the request: "
+            "add WHERE or LIMIT, select only the needed columns, aggregate (count, group by), "
+            "or narrow the schema/object filter."
+        )
+        super().__init__(message)
+        self.tokens = tokens
+        self.max_tokens = max_tokens
+
+
 class ConnectionFailedError(BaseApplicationError):
     """Сбой подключения к базе данных или инициализации пула."""
 

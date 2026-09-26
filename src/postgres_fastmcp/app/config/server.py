@@ -21,3 +21,8 @@ class ServerSettings(BaseSettings):
     health_endpoint_enabled: bool = Field(
         default=True, description="Включает endpoint проверки состояния /health (авторизация не требуется)"
     )
+    response_max_tokens: int = Field(
+        default=20000,
+        ge=1000,
+        description="Предел ответа тула в токенах (MCP_RESPONSE_MAX_TOKENS); больший ответ заменяется ошибкой",
+    )

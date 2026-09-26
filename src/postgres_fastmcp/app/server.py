@@ -9,6 +9,7 @@ from fastmcp.server.middleware.timing import TimingMiddleware
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.lifespan import build_lifespan
+from postgres_fastmcp.app.middleware.response_budget import ResponseBudgetMiddleware
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.registry import register_tools
 
@@ -27,7 +28,8 @@ def create_server(
         auth: Опциональный auth-provider FastMCP (Bearer/JWT/custom).
             По умолчанию без авторизации.
         extra_providers: Дополнительные FastMCP-провайдеры от потребителя библиотеки.
-        extra_middleware: Дополнительные middleware (встают после встроенных Timing/Logging).
+        extra_middleware: Дополнительные middleware (встают после встроенных; бюджет ответа
+            стоит первым и проверяет и их результат).
 
     Returns:
         Готовый FastMCP, на котором можно сразу вызывать `.run(...)`.
@@ -50,6 +52,8 @@ def create_server(
 
     mcp = FastMCP(**fastmcp_kwargs)
 
+    # Первым = внешним: бюджет проверяет ровно то, что уходит клиенту, включая результат extra_middleware
+    mcp.add_middleware(ResponseBudgetMiddleware(settings.server.response_max_tokens))
     mcp.add_middleware(TimingMiddleware())
     mcp.add_middleware(LoggingMiddleware())
     for m in extra_middleware:
