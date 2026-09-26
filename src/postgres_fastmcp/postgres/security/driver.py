@@ -23,6 +23,10 @@ MS_PER_SECOND = 1000
 # поэтому дополняется проверкой прошедшего времени в _is_statement_timeout.
 _STATEMENT_TIMEOUT_MARKER = "statement timeout"
 
+# Запас в секундах для клиентской страховки поверх statement_timeout; вынесен в константу,
+# чтобы registry.py мог использовать то же значение без создания временного SafeSqlConfig.
+CLIENT_TIMEOUT_GRACE_SECONDS = 5.0
+
 
 def _is_statement_timeout(message_primary: str | None, *, elapsed: float, timeout: float | None) -> bool:
     """Отличить отмену по statement_timeout от прочих отмен (pg_cancel_backend, запрос пользователя).
@@ -55,7 +59,7 @@ class SafeSqlConfig:
     allowed_schema: str | None = None
     read_only: bool = True
     table_prefix: str | None = None
-    client_timeout_grace: float = 5.0
+    client_timeout_grace: float = CLIENT_TIMEOUT_GRACE_SECONDS
 
 
 class SafeSqlExecutor:

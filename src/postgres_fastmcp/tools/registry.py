@@ -15,7 +15,7 @@ from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
 from postgres_fastmcp.app.config import Settings
-from postgres_fastmcp.postgres.security.driver import SafeSqlConfig
+from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
     HEALTH_TYPE_VALUES,
@@ -94,7 +94,7 @@ def _tool_timeout(base: float, settings: Settings) -> float:
     db = settings.database
     if db.access_mode == AccessMode.FULL and db.write_mode:
         return base
-    derived = db.safe_sql_timeout + SafeSqlConfig().client_timeout_grace + _TOOL_TIMEOUT_MARGIN
+    derived = db.safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
     return max(base, derived)
 
 
