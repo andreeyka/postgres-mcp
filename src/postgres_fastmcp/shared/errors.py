@@ -213,15 +213,20 @@ class ExplainAnalyzeNotSupportedError(UserFacingError):
 class CreateExtensionNotSupportedError(UserFacingError):
     """Создание указанного расширения не разрешено."""
 
-    def __init__(self, extname: str) -> None:
-        """Инициализация с именем расширения.
+    def __init__(self, extname: str, option: str | None = None) -> None:
+        """Инициализация с именем расширения и, при необходимости, запрещённой опцией.
 
         Args:
             extname: Имя расширения, которое не разрешено.
+            option: Запрещённая опция CREATE EXTENSION (например, SCHEMA или CASCADE).
         """
-        message = f"CREATE EXTENSION {extname} is not supported"
+        if option is None:
+            message = f"CREATE EXTENSION {extname} is not supported"
+        else:
+            message = f"CREATE EXTENSION {extname} with the {option} option is not supported"
         super().__init__(message)
         self.extname = extname
+        self.option = option
 
 
 class UnsupportedObjectTypeError(UserFacingError):

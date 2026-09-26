@@ -36,6 +36,7 @@ MUST_BLOCK_EVERYWHERE = [
     "SELECT * FROM t FOR UPDATE",
     "CREATE EXTENSION dblink",
     "CREATE EXTENSION file_fdw",
+    "CREATE EXTENSION hypopg CASCADE",
     "SELECT * FROM dblink('dbname=x', 'DROP TABLE t') AS t(a int)",
     "SET search_path = evil",
     "COMMIT",
@@ -65,6 +66,11 @@ DML_STATEMENTS = [
     "INSERT INTO t VALUES (1) RETURNING id",
     "WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w",
     "CREATE EXTENSION IF NOT EXISTS hypopg",
+]
+
+# Запись, которую BASIC_WRITE всё равно блокирует: выход за пределы allowed_schema.
+BASIC_WRITE_BLOCKED = [
+    "CREATE EXTENSION hypopg SCHEMA secret",
 ]
 
 # Обычный read-only SQL: обязан проходить во всех режимах (нет ссылок на таблицы, чтобы не задеть prefix).
@@ -167,3 +173,9 @@ def test_basic_allows_prefixed_public_tables(sql: str) -> None:
 def test_basic_blocks_foreign_schemas_and_prefix_mismatch(sql: str) -> None:
     with pytest.raises(UserFacingError):
         BASIC_READ_ONLY.validate(sql)
+
+
+@pytest.mark.parametrize("sql", BASIC_WRITE_BLOCKED)
+def test_basic_write_blocks_escape_from_allowed_schema(sql: str) -> None:
+    with pytest.raises(UserFacingError):
+        BASIC_WRITE.validate(sql)

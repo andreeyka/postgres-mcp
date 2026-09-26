@@ -189,6 +189,29 @@ class TestQueryValidatorCreateExtension:
             v.validate(f"CREATE EXTENSION {extname}")
         assert extname in str(exc_info.value)
 
+    def test_write_mode_with_allowed_schema_rejects_schema_option(self) -> None:
+        """With allowed_schema set, SCHEMA would place the extension outside it: rejected, option named."""
+        v = QueryValidator(allowed_schema="public", read_only=False)
+        with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
+            v.validate("CREATE EXTENSION hypopg SCHEMA secret")
+        assert "SCHEMA" in str(exc_info.value)
+
+    def test_write_mode_without_allowed_schema_allows_schema_option(self) -> None:
+        """Without a schema restriction the SCHEMA option is not a policy violation."""
+        QueryValidator(read_only=False).validate("CREATE EXTENSION hypopg SCHEMA secret")
+
+    @pytest.mark.parametrize("allowed_schema", [None, "public"], ids=["no-schema", "public"])
+    def test_write_mode_rejects_cascade(self, allowed_schema: str | None) -> None:
+        """CASCADE could install dependencies outside the allowlist, so it is always rejected."""
+        v = QueryValidator(allowed_schema=allowed_schema, read_only=False)
+        with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
+            v.validate("CREATE EXTENSION hypopg CASCADE")
+        assert "CASCADE" in str(exc_info.value)
+
+    def test_write_mode_with_allowed_schema_allows_plain_if_not_exists(self) -> None:
+        """The form the server itself uses still passes in basic write mode."""
+        QueryValidator(allowed_schema="public", read_only=False).validate("CREATE EXTENSION IF NOT EXISTS hypopg")
+
 
 class TestQueryValidatorDmlMode:
     """read_only=False allows DML."""
