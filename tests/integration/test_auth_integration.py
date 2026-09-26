@@ -69,7 +69,9 @@ def _text(result) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auth", [_SCOPE_AUTH, _GROUPS_AUTH], ids=["scope", "groups"])
-async def test_reader_token_is_read_only_basic(integration_settings: Settings, auth_tables, auth: AuthSettings) -> None:
+async def test_reader_token_is_read_only_basic(
+    integration_settings: Settings, auth_tables, auth: AuthSettings, db_full: DbAccess
+) -> None:
     integration_settings.auth = auth
     async with asgi_server(create_server(integration_settings)) as running, running.client(auth="tok-reader") as client:
         names = {tool.name for tool in await client.list_tools()}
@@ -87,6 +89,9 @@ async def test_reader_token_is_read_only_basic(integration_settings: Settings, a
     assert "read-only mode" in _text(insert)
     assert schemas.is_error is True
     assert "Unknown tool" in _text(schemas)
+    # Читаем напрямую через db_full: денайд reader'а не должен был оставить строку в auth_items
+    remaining = await db_full.sql_driver.execute("SELECT count(*) AS n FROM auth_items", readonly=True)
+    assert remaining[0].cells["n"] == 0
 
 
 @pytest.mark.asyncio
@@ -103,12 +108,17 @@ async def test_writer_token_writes_dml_but_not_ddl(
         insert = await client.call_tool(
             "execute_sql", {"sql": "INSERT INTO auth_items (id) VALUES (1)"}, raise_on_error=False
         )
-        count = await client.call_tool("execute_sql", {"sql": "SELECT count(*) AS n FROM auth_items", "output": "json"})
+        count = await client.call_tool(
+            "execute_sql",
+            {"sql": "SELECT count(*) AS n FROM auth_items", "output": "json"},
+            raise_on_error=False,
+        )
         schemas = await client.call_tool("list_schemas", {}, raise_on_error=False)
     assert names == _BASIC_TOOLS
     assert create.is_error is True
     assert "DDL operations (CREATE, DROP, ALTER)" in _text(create)
-    assert insert.is_error is False
+    assert insert.is_error is False, _text(insert)
+    assert count.is_error is False, _text(count)
     assert count.structured_content == {"rows": [{"n": 1}], "row_count": 1}
     assert schemas.is_error is True
     assert "Unknown tool" in _text(schemas)
@@ -128,10 +138,26 @@ async def test_admin_token_gets_the_full_ceiling(
         insert = await client.call_tool(
             "execute_sql", {"sql": "INSERT INTO auth_items (id) VALUES (1)"}, raise_on_error=False
         )
-        schemas = await client.call_tool("list_schemas", {"output": "json"})
+        exists = await client.call_tool(
+            "execute_sql",
+            {"sql": "SELECT to_regclass('public.auth_created') IS NOT NULL AS ok", "output": "json"},
+            raise_on_error=False,
+        )
+        count = await client.call_tool(
+            "execute_sql",
+            {"sql": "SELECT count(*) AS n FROM auth_items", "output": "json"},
+            raise_on_error=False,
+        )
+        schemas = await client.call_tool("list_schemas", {"output": "json"}, raise_on_error=False)
     assert names == _ALL_TOOLS
-    assert create.is_error is False
-    assert insert.is_error is False
+    assert create.is_error is False, _text(create)
+    assert insert.is_error is False, _text(insert)
+    # Читаем обратно: CREATE и INSERT выше не просто прошли без ошибки, а реально осели в базе
+    assert exists.is_error is False, _text(exists)
+    assert exists.structured_content == {"rows": [{"ok": True}], "row_count": 1}
+    assert count.is_error is False, _text(count)
+    assert count.structured_content == {"rows": [{"n": 1}], "row_count": 1}
+    assert schemas.is_error is False, _text(schemas)
     assert "public" in {row["schema_name"] for row in schemas.structured_content["rows"]}
 
 
