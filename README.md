@@ -493,6 +493,7 @@ server.run(transport="http", host="0.0.0.0", port=8000)
 Замечания:
 - `auth=None` означает отсутствие аутентификации. Это безопасно для транспорта `stdio` или доверенного localhost. Для сетевого HTTP-развёртывания подключите `AuthProvider` из `fastmcp.server.auth` или собственный.
 - Имена инструментов из `extra_providers` не должны совпадать со встроенными (`execute_sql`, `list_objects`, `get_object_details`, `explain_query`, `list_schemas`, `analyze_db_health`, `get_top_queries`, `analyze_query_indexes`, `analyze_workload_indexes`): при совпадении FastMCP пишет предупреждение и оставляет встроенный инструмент. Чтобы развести имена, подключите свой провайдер через `server.add_provider(provider, namespace="...")`.
+- В `access_mode=basic` скрываются только full-инструменты этого пакета; инструменты из `extra_providers` тегом `full` не фильтруются и остаются видимыми независимо от `access_mode`.
 - Middleware выполняются в порядке: бюджет ответа, timing, logging, затем `extra_middleware`. Бюджет стоит первым и проверяет в том числе результат ваших middleware.
 
 ## Разработка
