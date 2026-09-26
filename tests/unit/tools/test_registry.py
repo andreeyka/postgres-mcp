@@ -11,6 +11,7 @@ from fastmcp.server.providers import LocalProvider
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import (
@@ -18,6 +19,7 @@ from postgres_fastmcp.tools.registry import (
     READ_ONLY_IDEMPOTENT,
     READ_ONLY_NON_IDEMPOTENT,
     WRITE_NON_DESTRUCTIVE,
+    _TOOL_TIMEOUT_MARGIN,
     register_tools,
 )
 
@@ -130,13 +132,21 @@ def _registered_timeouts(database: DatabaseConfig) -> dict[str, float | None]:
     return {t.name: t.timeout for t in asyncio.run(_provider(database).list_tools())}
 
 
+def _derived_timeout(safe_sql_timeout: float) -> float:
+    return safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
+
+
 @pytest.mark.parametrize(
     ("access_mode", "write_mode"),
-    [(AccessMode.FULL, False), (AccessMode.BASIC, False), (AccessMode.BASIC, True)],
-    ids=["full-ro", "basic-ro", "basic-rw"],
+    [(AccessMode.FULL, False), (AccessMode.BASIC, False), (AccessMode.BASIC, True), (AccessMode.FULL, True)],
+    ids=["full-ro", "basic-ro", "basic-rw", "full-rw"],
 )
 def test_tool_timeouts_outlast_statement_timeout(access_mode: AccessMode, *, write_mode: bool) -> None:
-    """При SafeSqlExecutor таймаут тула длиннее statement_timeout + клиентской страховки."""
+    """Таймаут тула длиннее statement_timeout + клиентской страховки при любом потолке.
+
+    Даже FULL + write_mode считается: свой access_resolver может сузить запрос до read-only,
+    и тогда он получит SafeSqlExecutor со statement_timeout, о котором тул-таймаут обязан знать.
+    """
     timeouts = _registered_timeouts(_database(access_mode, write_mode=write_mode, safe_sql_timeout=30))
     assert set(timeouts) == set(_PRE_CHANGE_TIMEOUTS)
     for name, timeout in timeouts.items():
@@ -153,10 +163,24 @@ def test_tool_timeouts_follow_larger_safe_sql_timeout() -> None:
         assert timeout > 120 + 5, name
 
 
-def test_unrestricted_mode_keeps_existing_tool_timeouts() -> None:
-    """FULL + write_mode идёт мимо SafeSqlExecutor: таймауты тулов остаются прежними."""
+def test_full_write_mode_timeouts_also_follow_safe_sql_timeout() -> None:
+    """FULL + write_mode больше не фиксирован на базовом значении.
+
+    Сервер сам не использует SafeSqlExecutor в этом режиме, но резолвер запроса может сузить
+    права до read-only, и тогда исполнитель у запроса будет SafeSqlExecutor со
+    statement_timeout = safe_sql_timeout; тул-таймаут должен быть длиннее в любом случае.
+    """
     timeouts = _registered_timeouts(_database(AccessMode.FULL, write_mode=True, safe_sql_timeout=120))
-    assert timeouts == _PRE_CHANGE_TIMEOUTS
+    derived = _derived_timeout(120)
+    assert timeouts == dict.fromkeys(_PRE_CHANGE_TIMEOUTS, derived)
+
+
+async def test_tool_timeout_is_not_part_of_the_tools_list_wire() -> None:
+    """timeout — параметр вызова FastMCP, а не поле протокольного Tool: формула таймаута
+    не может изменить то, что клиент видит в tools/list."""
+    tool = await _provider(_database(AccessMode.BASIC, safe_sql_timeout=999)).get_tool("execute_sql")
+    wire = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
+    assert "timeout" not in wire
 
 
 _ROW_TOOLS = ("execute_sql", "list_objects", "get_object_details", "list_schemas", "get_top_queries")

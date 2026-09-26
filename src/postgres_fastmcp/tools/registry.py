@@ -100,11 +100,10 @@ def _all_tool_specs(
 def _tool_timeout(base: float, ceiling: DatabaseConfigPort) -> float:
     """Таймаут тула: не короче базового и строго длиннее statement_timeout + страховки.
 
-    В режиме FULL + write_mode SafeSqlExecutor не используется и statement_timeout нет,
-    поэтому базовое значение остаётся как есть.
+    Считается от серверного потолка независимо от режима: даже при FULL + write_mode свой
+    ``access_resolver`` может сузить конкретный запрос до read-only, и тот получит
+    SafeSqlExecutor со statement_timeout = safe_sql_timeout — тул-таймаут должен это пережить.
     """
-    if ceiling.access_mode == AccessMode.FULL and ceiling.write_mode:
-        return base
     derived = ceiling.safe_sql_timeout + CLIENT_TIMEOUT_GRACE_SECONDS + _TOOL_TIMEOUT_MARGIN
     return max(base, derived)
 
