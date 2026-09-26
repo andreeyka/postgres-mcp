@@ -240,8 +240,9 @@ def _execute_sql_desc(*, unrestricted: bool, write_mode: bool) -> str:
     if write_mode:
         return (
             "Execute a SQL statement in the public schema. SELECT, EXPLAIN and SHOW are allowed, "
-            "and so are INSERT, UPDATE and DELETE (changes are committed); DDL is rejected. "
-            "Workflow: list_objects → get_object_details → execute_sql."
+            "and so are INSERT, UPDATE and DELETE (changes are committed); DDL is rejected "
+            "(except CREATE EXTENSION hypopg / pg_stat_statements). "
+            "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
         )
     return (
         "Execute a read-only SELECT query. DDL/DML/DCL statements are blocked. "

@@ -36,7 +36,7 @@ def test_execute_sql_description_allows_dml_in_basic_write_mode() -> None:
     desc = _descriptions(mcp)["execute_sql"]
     assert "read-only" not in desc.lower()
     assert "INSERT, UPDATE and DELETE" in desc
-    assert "DDL is rejected" in desc
+    assert "DDL is rejected (except CREATE EXTENSION hypopg / pg_stat_statements)" in desc
     assert "public schema" in desc
 
 
