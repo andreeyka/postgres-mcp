@@ -1,7 +1,5 @@
 """Тесты для tools/registry.py: проверка регистрации 9 тулов через add_tool."""
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest

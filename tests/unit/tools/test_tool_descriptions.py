@@ -1,7 +1,5 @@
 """Тесты описаний тулов в реестре."""
 
-from __future__ import annotations
-
 import asyncio
 
 from fastmcp import FastMCP
