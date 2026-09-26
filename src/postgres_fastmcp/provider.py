@@ -46,14 +46,12 @@ class PostgresProvider(LocalProvider):
 
         Args:
             database: Подключение и серверный потолок прав (access_mode, write_mode).
-            access_policy: Политика сужения прав по claim токена (без resolver).
+            access_policy: Политика сужения прав по claim токена (``resolve_access``);
+                без неё права запроса равны потолку.
             access_resolver: Свой резолвер токен -> права; приоритетнее access_policy.
                 Результат всегда ограничивается потолком. Вызывается на каждый list_tools
                 для каждого full-тула, на каждой проверке доступа full-тула и на каждом
                 вызове get_db — должен быть дешёвым и детерминированным.
-
-        Raises:
-            ValueError: Если access_policy.enforced=True, а access_resolver не задан.
         """
         super().__init__(on_duplicate="error")
         ceiling = EffectiveAccess(database.access_mode, write_mode=database.write_mode)

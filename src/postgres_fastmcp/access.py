@@ -1,24 +1,19 @@
 """Права одного запроса: серверный потолок, политика по claim токена и резолвер.
 
 Потолок (``EffectiveAccess`` из ``DatabaseConfig``) задаёт максимум прав сервера.
-Резолвер переводит токен запроса в эффективные права не выше потолка. Пока
-auth-шаг не реализован, резолвер по умолчанию всегда возвращает потолок, а
-``AccessPolicy(enforced=True)`` отклоняется, чтобы не выдать права молча.
+Резолвер переводит токен запроса в эффективные права не выше потолка: при
+``AccessPolicy(enforced=True)`` — по значениям claim токена (``resolve_access``),
+иначе всегда потолок.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from fastmcp.server.auth import AccessToken, AuthCheck, AuthContext
 from pydantic import BaseModel, Field
 
 from postgres_fastmcp.shared.enums import AccessMode
-
-
-ERROR_POLICY_NOT_SUPPORTED = (
-    "AccessPolicy.enforced=True is not supported yet: token claims do not narrow access in this version. "
-    "Remove enforced=True or pass a custom access_resolver."
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +25,12 @@ class EffectiveAccess:
 
 
 class AccessPolicy(BaseModel):
-    """Политика сужения прав по claim токена (правила применяются на auth-шаге)."""
+    """Политика сужения прав по claim токена.
+
+    ``claim`` — имя claim или путь через точку (``realm_access.roles``); ``scope`` читается
+    из ``AccessToken.scopes``. Запись даёт любое значение из ``write_values``, режим FULL —
+    любое значение из ``full_values``; оба никогда не выше серверного потолка.
+    """
 
     enforced: bool = False
     claim: str = "scope"
@@ -41,8 +41,54 @@ class AccessPolicy(BaseModel):
 AccessResolver = Callable[[AccessToken | None], EffectiveAccess]
 
 
+def _claim_values(token: AccessToken, claim: str) -> set[str]:
+    """Значения claim токена как множество строк.
+
+    ``scope`` берётся из ``token.scopes`` (верификатор FastMCP уже разобрал ``scope``/``scp``).
+    Иначе сначала ищется ключ целиком (claim с точкой в имени, например URL-namespace Auth0),
+    затем путь через точку по вложенным словарям. Строка делится по пробелам, из списка
+    берутся строковые элементы; отсутствие пути и другие типы дают пустое множество.
+    """
+    if claim == "scope":
+        return set(token.scopes)
+    claims: dict[str, Any] = token.claims or {}
+    value: Any = claims.get(claim)
+    if value is None:
+        value = claims
+        for part in claim.split("."):
+            if not isinstance(value, dict):
+                return set()
+            value = value.get(part)
+    if isinstance(value, str):
+        return set(value.split())
+    if isinstance(value, list):
+        return {item for item in value if isinstance(item, str)}
+    return set()
+
+
+def resolve_access(ceiling: EffectiveAccess, token: AccessToken | None, policy: AccessPolicy) -> EffectiveAccess:
+    """Эффективные права запроса по claim токена, никогда не выше потолка.
+
+    Args:
+        ceiling: Серверный потолок прав.
+        token: Токен запроса; None в stdio и без auth.
+        policy: Политика сужения по claim.
+
+    Returns:
+        Потолок, если политика не включена или токена нет; иначе права по значениям claim.
+    """
+    if token is None or not policy.enforced:
+        return ceiling
+    values = _claim_values(token, policy.claim)
+    full = ceiling.access_mode == AccessMode.FULL and bool(values & set(policy.full_values))
+    return EffectiveAccess(
+        access_mode=AccessMode.FULL if full else AccessMode.BASIC,
+        write_mode=ceiling.write_mode and bool(values & set(policy.write_values)),
+    )
+
+
 def build_resolver(ceiling: EffectiveAccess, policy: AccessPolicy) -> AccessResolver:
-    """Резолвер по политике: сейчас всегда возвращает потолок.
+    """Резолвер токен -> права по политике (``resolve_access`` с зафиксированными потолком и политикой).
 
     Args:
         ceiling: Серверный потолок прав.
@@ -50,15 +96,10 @@ def build_resolver(ceiling: EffectiveAccess, policy: AccessPolicy) -> AccessReso
 
     Returns:
         Резолвер токен -> права.
-
-    Raises:
-        ValueError: Если policy.enforced=True (claim-правила ещё не реализованы).
     """
-    if policy.enforced:
-        raise ValueError(ERROR_POLICY_NOT_SUPPORTED)
 
-    def resolve(_token: AccessToken | None) -> EffectiveAccess:
-        return ceiling
+    def resolve(token: AccessToken | None) -> EffectiveAccess:
+        return resolve_access(ceiling, token, policy)
 
     return resolve
 

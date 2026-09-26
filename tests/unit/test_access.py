@@ -12,6 +12,7 @@ from postgres_fastmcp.access import (
     bounded_resolver,
     build_resolver,
     full_access_check,
+    resolve_access,
 )
 from postgres_fastmcp.shared.enums import AccessMode
 
@@ -50,11 +51,98 @@ def test_default_resolver_returns_ceiling(ceiling: EffectiveAccess, token: Acces
     assert build_resolver(ceiling, AccessPolicy())(token) == ceiling
 
 
-def test_enforced_policy_is_rejected_until_claims_are_supported() -> None:
-    """enforced=True без реализации claim-правил молча дал бы полный потолок: отказываем явно."""
-    ceiling = EffectiveAccess(AccessMode.FULL, write_mode=True)
-    with pytest.raises(ValueError, match="AccessPolicy.enforced"):
-        build_resolver(ceiling, AccessPolicy(enforced=True))
+_FULL_WRITE = EffectiveAccess(AccessMode.FULL, write_mode=True)
+_READ_ONLY = EffectiveAccess(AccessMode.BASIC, write_mode=False)
+_ENFORCED = AccessPolicy(enforced=True)
+
+
+def _claims_token(claims: dict[str, object], scopes: list[str] | None = None) -> AccessToken:
+    return AccessToken(token="t", client_id="c", scopes=scopes or [], claims=claims)
+
+
+@pytest.mark.parametrize(
+    ("scopes", "expected"),
+    [
+        ([], EffectiveAccess(AccessMode.BASIC, write_mode=False)),
+        (["pg:write"], EffectiveAccess(AccessMode.BASIC, write_mode=True)),
+        (["pg:full"], EffectiveAccess(AccessMode.FULL, write_mode=False)),
+        (["pg:full", "pg:write", "other"], EffectiveAccess(AccessMode.FULL, write_mode=True)),
+    ],
+)
+def test_scope_claim_reads_token_scopes(scopes: list[str], expected: EffectiveAccess) -> None:
+    """claim='scope' берётся из token.scopes, а не из claims."""
+    token = _claims_token({"scope": "pg:full pg:write"}, scopes=scopes)
+    assert resolve_access(_FULL_WRITE, token, _ENFORCED) == expected
+
+
+@pytest.mark.parametrize(
+    ("groups", "expected"),
+    [
+        (["analyst"], EffectiveAccess(AccessMode.BASIC, write_mode=False)),
+        (["backend-writers"], EffectiveAccess(AccessMode.BASIC, write_mode=True)),
+        (["dba"], EffectiveAccess(AccessMode.FULL, write_mode=True)),
+        ("dba analyst", EffectiveAccess(AccessMode.FULL, write_mode=True)),
+    ],
+)
+def test_groups_claim_accepts_list_and_space_separated_string(groups: object, expected: EffectiveAccess) -> None:
+    policy = AccessPolicy(enforced=True, claim="groups", write_values=["dba", "backend-writers"], full_values=["dba"])
+    assert resolve_access(_FULL_WRITE, _claims_token({"groups": groups}), policy) == expected
+
+
+def test_nested_claim_path() -> None:
+    policy = AccessPolicy(enforced=True, claim="realm_access.roles", write_values=["writer"], full_values=["admin"])
+    token = _claims_token({"realm_access": {"roles": ["admin", "writer"]}})
+    assert resolve_access(_FULL_WRITE, token, policy) == _FULL_WRITE
+
+
+def test_claim_name_with_dots_is_looked_up_as_a_whole_key_first() -> None:
+    """Auth0 кладёт роли в claim с URL-именем: ключ с точками целиком важнее пути."""
+    policy = AccessPolicy(enforced=True, claim="https://example.com/roles", write_values=["w"], full_values=["f"])
+    token = _claims_token({"https://example.com/roles": ["f", "w"]})
+    assert resolve_access(_FULL_WRITE, token, policy) == _FULL_WRITE
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {},
+        {"groups": None},
+        {"groups": 42},
+        {"groups": {"dba": True}},
+        {"groups": [42, {"x": 1}]},
+        {"realm_access": "dba"},
+    ],
+)
+def test_missing_path_or_other_type_gives_no_values(claims: dict[str, object]) -> None:
+    for claim in ("groups", "realm_access.roles"):
+        policy = AccessPolicy(enforced=True, claim=claim, write_values=["dba"], full_values=["dba"])
+        assert resolve_access(_FULL_WRITE, _claims_token(claims), policy) == _READ_ONLY
+
+
+def test_token_claims_none_gives_no_values() -> None:
+    """SDK AccessToken допускает claims=None."""
+    token = AccessToken(token="t", client_id="c", scopes=[])
+    token.claims = None
+    policy = AccessPolicy(enforced=True, claim="groups", full_values=["dba"])
+    assert resolve_access(_FULL_WRITE, token, policy) == _READ_ONLY
+
+
+@pytest.mark.parametrize("ceiling", _ALL_ACCESS)
+def test_token_never_exceeds_ceiling(ceiling: EffectiveAccess) -> None:
+    token = _token(["pg:full", "pg:write"])
+    assert resolve_access(ceiling, token, _ENFORCED) == ceiling
+
+
+@pytest.mark.parametrize("ceiling", _ALL_ACCESS)
+def test_no_token_or_policy_off_gives_ceiling(ceiling: EffectiveAccess) -> None:
+    assert resolve_access(ceiling, None, _ENFORCED) == ceiling
+    assert resolve_access(ceiling, _token([]), AccessPolicy()) == ceiling
+
+
+def test_build_resolver_applies_the_policy() -> None:
+    resolver = build_resolver(_FULL_WRITE, _ENFORCED)
+    assert resolver(_token(["pg:write"])) == EffectiveAccess(AccessMode.BASIC, write_mode=True)
+    assert resolver(None) == _FULL_WRITE
 
 
 @pytest.mark.parametrize("ceiling", _ALL_ACCESS)
@@ -90,3 +178,9 @@ def test_full_access_check_follows_resolver(ceiling: EffectiveAccess, *, allowed
     """Проверка full-тула пропускает, только если эффективный режим FULL; токен None — потолок."""
     check = full_access_check(build_resolver(ceiling, AccessPolicy()))
     assert check(AuthContext(token=None, component=MagicMock())) is allowed
+
+
+@pytest.mark.parametrize(("scopes", "allowed"), [([], False), (["pg:write"], False), (["pg:full"], True)])
+def test_full_access_check_reads_the_token_claim(scopes: list[str], *, allowed: bool) -> None:
+    check = full_access_check(build_resolver(_FULL_WRITE, _ENFORCED))
+    assert check(AuthContext(token=_token(scopes), component=MagicMock())) is allowed

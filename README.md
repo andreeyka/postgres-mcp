@@ -472,7 +472,7 @@ mcp.run(transport="http", host="0.0.0.0", port=8000)
 
 - Провайдер владеет пулом соединений: пул открывается при первом запросе и закрывается при остановке сервера.
 - Видимость инструментов задаёт `access_mode` из `DatabaseConfig`: в `basic` доступны четыре инструмента, в `full` — девять.
-- `access_resolver` — функция `AccessToken | None -> EffectiveAccess`, считающая права запроса по токену; результат никогда не превышает потолок из `DatabaseConfig`. Без резолвера права запроса равны потолку. Сужение прав по claim через `AccessPolicy(enforced=True)` пока не поддерживается: провайдер отклоняет такую политику при создании.
+- `access_policy=AccessPolicy(enforced=True, ...)` сужает права запроса по claim токена, как описано в разделе «Права по claim»; токен даёт `AuthProvider` вашего сервера. `access_resolver` — функция `AccessToken | None -> EffectiveAccess` вместо политики, если нужна своя логика; она приоритетнее `access_policy`. Результат обоих никогда не превышает потолок из `DatabaseConfig`. Без политики и резолвера права запроса равны потолку.
 - `create_server` подключает бюджет ответа автоматически. На своём сервере добавьте его сами первым middleware: `mcp.add_middleware(ResponseBudgetMiddleware(20000))`, импорт — `from postgres_fastmcp import ResponseBudgetMiddleware`.
 
 ### Готовый сервер: `create_server`

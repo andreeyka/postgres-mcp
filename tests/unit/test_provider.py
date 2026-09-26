@@ -150,13 +150,31 @@ async def test_resolver_narrowing_to_basic_hides_full_tools() -> None:
     assert await _tool_names(FastMCP("t", providers=[provider])) == _BASIC_TOOLS
 
 
-def test_enforced_policy_without_resolver_is_rejected() -> None:
-    with pytest.raises(ValueError, match="AccessPolicy.enforced"):
-        PostgresProvider(_database(), access_policy=AccessPolicy(enforced=True))
+async def test_enforced_policy_without_token_gives_the_ceiling(fake_service: type[FakeService]) -> None:
+    """In-memory Client и stdio не несут токена: enforced-политика отдаёт потолок, full-тулы видны."""
+    ceiling = EffectiveAccess(AccessMode.FULL, write_mode=True)
+    provider = PostgresProvider(_database(AccessMode.FULL, write_mode=True), access_policy=AccessPolicy(enforced=True))
+    server = FastMCP("t", providers=[provider])
+    assert await _tool_names(server) == _BASIC_TOOLS | _FULL_TOOLS
+    async with Client(server) as client:
+        await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+    assert fake_service.instances[0].views == [ceiling]
+
+
+async def test_enforced_policy_narrows_access_by_the_request_token(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_db берёт токен запроса и сужает права по claim политики."""
+    token = AccessToken(token="t", client_id="c", scopes=["pg:write"])
+    monkeypatch.setattr("postgres_fastmcp.provider.get_access_token", lambda: token)
+    provider = PostgresProvider(_database(AccessMode.FULL, write_mode=True), access_policy=AccessPolicy(enforced=True))
+    async with Client(FastMCP("t", providers=[provider])) as client:
+        await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+    assert fake_service.instances[0].views == [EffectiveAccess(AccessMode.BASIC, write_mode=True)]
 
 
 async def test_access_resolver_takes_priority_over_policy(fake_service: type[FakeService]) -> None:
-    """access_resolver не просто не отвергается вместе с enforced policy: тул реально его вызывает."""
+    """access_resolver приоритетнее enforced-политики: тул вызывает именно его."""
     narrowed = EffectiveAccess(AccessMode.BASIC, write_mode=False)
     provider = PostgresProvider(
         _database(),
