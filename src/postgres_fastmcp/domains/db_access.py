@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from postgres_fastmcp.access import EffectiveAccess
+from postgres_fastmcp.access import EffectiveAccess, clamp_to_ceiling
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.ports import SqlDriverPort
@@ -94,17 +94,22 @@ class DbAccessService:
             min_size=config.pool_min_size,
             max_size=config.pool_max_size,
         )
+        self._ceiling = EffectiveAccess(config.access_mode, write_mode=config.write_mode)
         self._executors: dict[EffectiveAccess, SqlDriverPort] = {}
 
     def view(self, access: EffectiveAccess) -> DbAccess:
         """Доступ к БД для одного запроса с заданными правами.
 
+        Права запроса дополнительно ограничиваются потолком из конфигурации сервиса,
+        независимо от резолвера: запрос не может получить больше, чем разрешено сервису.
+
         Args:
-            access: Эффективные права запроса (не выше серверного потолка).
+            access: Эффективные права запроса.
 
         Returns:
-            DbAccess с исполнителем под эти права.
+            DbAccess с исполнителем под права, приведённые к потолку.
         """
+        access = clamp_to_ceiling(access, self._ceiling)
         return DbAccess(
             sql_driver=self._executor(access),
             access_mode=access.access_mode,
@@ -129,7 +134,8 @@ class DbAccessService:
 
         base = SqlExecutor(conn=self._pool)
         executor: SqlDriverPort
-        if access.access_mode == AccessMode.FULL and access.write_mode:
+        # Без ограничений — только явная запись (is True) в FULL; всё остальное через SafeSqlExecutor.
+        if access.access_mode == AccessMode.FULL and access.write_mode is True:
             logger.debug("Using unrestricted SqlExecutor (access_mode=full, write_mode=True)")
             executor = base
         else:

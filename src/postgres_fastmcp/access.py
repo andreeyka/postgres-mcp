@@ -63,6 +63,19 @@ def build_resolver(ceiling: EffectiveAccess, policy: AccessPolicy) -> AccessReso
     return resolve
 
 
+def clamp_to_ceiling(wanted: EffectiveAccess, ceiling: EffectiveAccess) -> EffectiveAccess:
+    """Покомпонентный минимум прав: результат никогда не превышает потолок.
+
+    FULL — только если FULL и в потолке, и в запросе; запись — только если
+    ``write_mode is True`` в обоих (небулево «истинное» значение записью не считается).
+    """
+    full = ceiling.access_mode == AccessMode.FULL and wanted.access_mode == AccessMode.FULL
+    return EffectiveAccess(
+        access_mode=AccessMode.FULL if full else AccessMode.BASIC,
+        write_mode=ceiling.write_mode is True and wanted.write_mode is True,
+    )
+
+
 def bounded_resolver(resolver: AccessResolver, ceiling: EffectiveAccess) -> AccessResolver:
     """Обернуть резолвер так, чтобы результат никогда не превышал потолок.
 
@@ -71,12 +84,7 @@ def bounded_resolver(resolver: AccessResolver, ceiling: EffectiveAccess) -> Acce
     """
 
     def resolve(token: AccessToken | None) -> EffectiveAccess:
-        wanted = resolver(token)
-        full = ceiling.access_mode == AccessMode.FULL and wanted.access_mode == AccessMode.FULL
-        return EffectiveAccess(
-            access_mode=AccessMode.FULL if full else AccessMode.BASIC,
-            write_mode=ceiling.write_mode and wanted.write_mode,
-        )
+        return clamp_to_ceiling(resolver(token), ceiling)
 
     return resolve
 

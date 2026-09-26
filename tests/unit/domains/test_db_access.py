@@ -26,7 +26,7 @@ def _service(**overrides: object) -> DbAccessService:
 
 
 def test_view_carries_request_access_and_config_fields() -> None:
-    service = _service(table_prefix="app_")
+    service = _service(access_mode=AccessMode.FULL, write_mode=True, table_prefix="app_")
     view = service.view(EffectiveAccess(AccessMode.BASIC, write_mode=True))
     assert isinstance(view, DbAccess)
     assert view.access_mode == AccessMode.BASIC
@@ -36,7 +36,7 @@ def test_view_carries_request_access_and_config_fields() -> None:
 
 
 def test_only_full_write_gets_the_unrestricted_executor() -> None:
-    service = _service()
+    service = _service(access_mode=AccessMode.FULL, write_mode=True)
     for access in _ALL_ACCESS:
         driver = service.view(access).sql_driver
         unrestricted = access == EffectiveAccess(AccessMode.FULL, write_mode=True)
@@ -67,7 +67,7 @@ def test_safe_executor_is_built_from_access_not_config(
 
 
 def test_executors_are_cached_per_access_and_share_one_pool() -> None:
-    service = _service()
+    service = _service(access_mode=AccessMode.FULL, write_mode=True)
     first = {access: service.view(access).sql_driver for access in _ALL_ACCESS}
     again = {access: service.view(access).sql_driver for access in _ALL_ACCESS}
     assert first == again
@@ -89,3 +89,28 @@ async def test_close_closes_the_pool() -> None:
 def test_service_has_no_sql_driver() -> None:
     """Исполнитель выдаётся только через view(access): у сервиса нет «общего» sql_driver."""
     assert not hasattr(_service(), "sql_driver")
+
+
+def test_view_clamps_request_access_to_configured_ceiling() -> None:
+    """Сервис с потолком BASIC read-only не выдаёт больше прав, даже если запрос просит FULL+write."""
+    service = _service(access_mode=AccessMode.BASIC, write_mode=False, table_prefix="app_")
+    view = service.view(EffectiveAccess(AccessMode.FULL, write_mode=True))
+    assert view.access_mode == AccessMode.BASIC
+    assert view.write_mode is False
+    driver = view.sql_driver
+    assert isinstance(driver, SafeSqlExecutor)
+    assert driver._config.allowed_schema == "public"
+    assert driver._config.read_only is True
+    assert driver._config.table_prefix == "app_"
+    assert driver._validator.allow_explain_analyze is False
+
+
+def test_truthy_non_bool_write_mode_never_gets_unrestricted_executor() -> None:
+    """Небулево «истинное» write_mode не считается явной записью: только write_mode is True."""
+    service = _service(access_mode=AccessMode.FULL, write_mode=True)
+    crafted = EffectiveAccess(AccessMode.FULL, write_mode=True)
+    object.__setattr__(crafted, "write_mode", "yes")
+    driver = service.view(crafted).sql_driver
+    assert not isinstance(driver, SqlExecutor)
+    assert isinstance(driver, SafeSqlExecutor)
+    assert driver._config.read_only is True
