@@ -7,6 +7,7 @@ import pytest
 
 from postgres_fastmcp.domains.health.database_health import HealthType
 from postgres_fastmcp.domains.querying import SUCCESS_NO_ROWS
+from postgres_fastmcp.shared.errors import ObjectNotFoundError
 from postgres_fastmcp.tools import definitions as defs
 
 
@@ -157,6 +158,52 @@ async def test_get_object_details_sequence_is_header_only(monkeypatch, db_mock, 
     assert _text(result) == (
         "schema: public\nname: users_id_seq\ntype: sequence\ndata_type: bigint\nstart_value: 1\nincrement: 1"
     )
+
+
+@pytest.mark.parametrize("output", ["table", "json"])
+@pytest.mark.parametrize(
+    ("object_type", "details"),
+    [
+        (
+            "table",
+            {
+                "basic": {"schema": "public", "name": "ghost", "type": "table"},
+                "columns": [],
+                "constraints": [],
+                "indexes": [],
+            },
+        ),
+        ("sequence", {}),
+        ("extension", {}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_object_details_missing_object_raises(
+    monkeypatch, db_mock, make_ctx, object_type: str, details: dict, output: str
+) -> None:
+    """Каталог вернул только то, что тул добавляет сам, и пустые разделы: объекта нет."""
+    fake_service = mock.AsyncMock()
+    fake_service.get_object_details.return_value = details
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
+
+    with pytest.raises(ObjectNotFoundError, match=rf"Object not found: public\.ghost \({object_type}\)\. Use list_objects"):
+        await defs.get_object_details(
+            schema_name="public", object_name="ghost", object_type=object_type, output=output, ctx=make_ctx(db_mock)
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_object_details_extension_found(monkeypatch, db_mock, make_ctx) -> None:
+    """Расширение с версией — найдено, хотя разделов нет."""
+    fake_service = mock.AsyncMock()
+    fake_service.get_object_details.return_value = {"name": "hypopg", "version": "1.4", "relocatable": True}
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
+
+    result = await defs.get_object_details(
+        schema_name="public", object_name="hypopg", object_type="extension", ctx=make_ctx(db_mock)
+    )
+
+    assert "version: 1.4" in _text(result)
 
 
 @pytest.mark.asyncio

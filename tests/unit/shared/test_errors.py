@@ -42,6 +42,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "QueryTimeoutError": lambda: errors.QueryTimeoutError(5.0),
     "QueryCancelledError": errors.QueryCancelledError,
     "ResponseTooLargeError": lambda: errors.ResponseTooLargeError(25000, 20000),
+    "ObjectNotFoundError": lambda: errors.ObjectNotFoundError("public", "ghost", "table"),
 }
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -87,6 +88,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("PgStatStatementsNotInstalledError", "CREATE EXTENSION pg_stat_statements"),
         ("ResponseTooLargeError", "Refine the request: add WHERE or LIMIT"),
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
+        ("ObjectNotFoundError", "Use list_objects to see existing objects."),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:

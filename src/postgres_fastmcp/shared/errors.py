@@ -275,6 +275,25 @@ class UnsupportedObjectTypeError(UserFacingError):
         self.object_type = object_type
 
 
+class ObjectNotFoundError(UserFacingError):
+    """Объект каталога не найден: get_object_details не должен выглядеть как успешный поиск."""
+
+    def __init__(self, schema_name: str, object_name: str, object_type: str) -> None:
+        """Инициализация со схемой, именем и типом объекта.
+
+        Args:
+            schema_name: Имя схемы.
+            object_name: Имя объекта.
+            object_type: Тип объекта (table, view, sequence, extension).
+        """
+        super().__init__(
+            f"Object not found: {schema_name}.{object_name} ({object_type}). Use list_objects to see existing objects."
+        )
+        self.schema_name = schema_name
+        self.object_name = object_name
+        self.object_type = object_type
+
+
 class ExplainPlanError(BaseApplicationError):
     """Ошибка при генерации или обработке плана EXPLAIN."""
 
