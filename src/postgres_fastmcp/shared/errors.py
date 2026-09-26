@@ -286,9 +286,9 @@ class ObjectNotFoundError(UserFacingError):
             object_name: Имя объекта.
             object_type: Тип объекта (table, view, sequence, extension).
         """
-        super().__init__(
-            f"Object not found: {schema_name}.{object_name} ({object_type}). Use list_objects to see existing objects."
-        )
+        # Расширения не принадлежат схеме: схему в тексте не показываем
+        qualified = object_name if object_type == "extension" else f"{schema_name}.{object_name}"
+        super().__init__(f"Object not found: {qualified} ({object_type}). Use list_objects to see existing objects.")
         self.schema_name = schema_name
         self.object_name = object_name
         self.object_type = object_type

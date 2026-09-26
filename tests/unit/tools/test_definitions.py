@@ -174,7 +174,6 @@ async def test_get_object_details_sequence_is_header_only(monkeypatch, db_mock, 
             },
         ),
         ("sequence", {}),
-        ("extension", {}),
     ],
 )
 @pytest.mark.asyncio
@@ -192,6 +191,22 @@ async def test_get_object_details_missing_object_raises(
         await defs.get_object_details(
             schema_name="public", object_name="ghost", object_type=object_type, output=output, ctx=make_ctx(db_mock)
         )
+
+
+@pytest.mark.parametrize("output", ["table", "json"])
+@pytest.mark.asyncio
+async def test_get_object_details_missing_extension_has_no_schema(monkeypatch, db_mock, make_ctx, output: str) -> None:
+    """Расширения не принадлежат схеме: в сообщении только имя."""
+    fake_service = mock.AsyncMock()
+    fake_service.get_object_details.return_value = {}
+    monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
+
+    with pytest.raises(ObjectNotFoundError) as exc_info:
+        await defs.get_object_details(
+            schema_name="public", object_name="ghost", object_type="extension", output=output, ctx=make_ctx(db_mock)
+        )
+
+    assert str(exc_info.value) == "Object not found: ghost (extension). Use list_objects to see existing objects."
 
 
 @pytest.mark.asyncio
