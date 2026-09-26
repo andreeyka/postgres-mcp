@@ -4,7 +4,18 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from psycopg.errors import AdminShutdown, QueryCanceled, UndefinedTable
+from psycopg import InterfaceError, OperationalError
+from psycopg.errors import (
+    AdminShutdown,
+    ConnectionFailure,
+    DeadlockDetected,
+    LockNotAvailable,
+    ObjectNotInPrerequisiteState,
+    QueryCanceled,
+    SerializationFailure,
+    UndefinedTable,
+)
+from psycopg_pool import PoolTimeout
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
@@ -80,8 +91,22 @@ class TestSqlExecutorExecuteWithPool:
 
     @pytest.mark.parametrize(
         "error",
-        [UndefinedTable('relation "t" does not exist'), QueryCanceled("canceling statement due to statement timeout")],
-        ids=["programming-error", "statement-timeout"],
+        [
+            UndefinedTable('relation "t" does not exist'),
+            QueryCanceled("canceling statement due to statement timeout"),
+            ObjectNotInPrerequisiteState('pg_stat_statements must be loaded via "shared_preload_libraries"'),
+            DeadlockDetected("deadlock detected"),
+            SerializationFailure("could not serialize access due to concurrent update"),
+            LockNotAvailable('could not obtain lock on relation "t"'),
+        ],
+        ids=[
+            "programming-error",
+            "statement-timeout",
+            "object-not-in-prerequisite-state",
+            "deadlock",
+            "serialization-failure",
+            "lock-not-available",
+        ],
     )
     async def test_sql_errors_do_not_invalidate_pool(self, error: Exception) -> None:
         """A failed statement is the client's problem, not the pool's: the pool stays valid."""
@@ -93,12 +118,23 @@ class TestSqlExecutorExecuteWithPool:
                 await executor.execute("SELECT 1", readonly=True)
             mock_pool.mark_invalid.assert_not_called()
 
-    async def test_connection_errors_invalidate_pool(self) -> None:
-        """A server shutdown (OperationalError that is not QueryCanceled) invalidates the pool."""
+    @pytest.mark.parametrize(
+        "error",
+        [
+            AdminShutdown("terminating connection due to administrator command"),
+            ConnectionFailure("connection failure"),
+            InterfaceError("the connection is closed"),
+            OperationalError("server closed the connection unexpectedly"),
+            PoolTimeout("couldn't get a connection after 30.00 sec"),
+        ],
+        ids=["admin-shutdown", "class-08", "interface-error", "operational-without-sqlstate", "pool-timeout"],
+    )
+    async def test_connection_errors_invalidate_pool(self, error: Exception) -> None:
+        """Real connection failures invalidate the pool."""
         mock_pool = self._mock_pool_for_execute()
         executor = SqlExecutor(conn=mock_pool)
         with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
-            mock_exec.side_effect = AdminShutdown("terminating connection due to administrator command")
-            with pytest.raises(AdminShutdown):
+            mock_exec.side_effect = error
+            with pytest.raises(type(error)):
                 await executor.execute("SELECT 1", readonly=True)
             mock_pool.mark_invalid.assert_called_once()

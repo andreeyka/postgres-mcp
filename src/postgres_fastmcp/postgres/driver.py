@@ -9,9 +9,9 @@ from psycopg import (
     InterfaceError,
     OperationalError,
 )
-from psycopg.errors import QueryCanceled
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Composable, Literal
+from psycopg_pool import PoolClosed, PoolTimeout, TooManyRequests
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.models import RowResult
@@ -21,18 +21,27 @@ from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 logger = logging.getLogger(__name__)
 
 
+# SQLSTATE, означающие, что сервер рвёт или не принимает соединение (кроме класса 08).
+_CONNECTION_SQLSTATES = frozenset({"57P01", "57P02", "57P03"})  # admin/crash shutdown, cannot connect now
+
+
 def _is_connection_error(error: Exception) -> bool:
     """Отличить ошибку соединения (пул надо пересоздать) от ошибки самого SQL (пул исправен).
 
-    Не-psycopg исключения считаем проблемой соединения (консервативно). Среди psycopg-ошибок
-    только InterfaceError/OperationalError говорят о соединении, но QueryCanceled наследует
-    OperationalError и означает лишь statement_timeout или pg_cancel_backend.
+    psycopg относит к OperationalError и обычные ошибки выполнения (55000, 40P01, 40001,
+    55P03, 53xxx, 57014), поэтому решаем по SQLSTATE, а не по классу исключения.
+    Соединением считаем: не-psycopg исключения (консервативно), InterfaceError, ошибки
+    psycopg_pool, SQLSTATE класса 08, 57P01/57P02/57P03 и OperationalError без SQLSTATE
+    (клиент потерял соединение, кода от сервера нет).
     """
     if not isinstance(error, PsycopgError):
         return True
-    if isinstance(error, QueryCanceled):
-        return False
-    return isinstance(error, (InterfaceError, OperationalError))
+    if isinstance(error, (InterfaceError, PoolTimeout, PoolClosed, TooManyRequests)):
+        return True
+    sqlstate = error.sqlstate
+    if sqlstate is None:
+        return isinstance(error, OperationalError)
+    return sqlstate.startswith("08") or sqlstate in _CONNECTION_SQLSTATES
 
 
 class SqlExecutor:
@@ -74,7 +83,7 @@ class SqlExecutor:
         composables = [p if isinstance(p, Composable) else Literal(p) for p in params]
         return SQL(query).format(*composables).as_string()
 
-    async def execute(  # noqa: C901
+    async def execute(
         self,
         query: str | LiteralString,
         params: list[Any] | None = None,
@@ -113,13 +122,16 @@ class SqlExecutor:
                 return await self._execute_with_connection(self.conn, query, params, readonly=readonly)
             _fail()
         except Exception as e:
-            if not _is_connection_error(e):
-                raise
-            if self.conn and self._is_pool and isinstance(self.conn, DbConnPool):
-                self.conn.mark_invalid(str(e))
-            elif self.conn and not self._is_pool:
-                self.conn = None
+            if _is_connection_error(e):
+                self._invalidate(e)
             raise
+
+    def _invalidate(self, error: Exception) -> None:
+        """Пометить пул невалидным или сбросить одиночное подключение после ошибки соединения."""
+        if self.conn and self._is_pool and isinstance(self.conn, DbConnPool):
+            self.conn.mark_invalid(str(error))
+        elif self.conn and not self._is_pool:
+            self.conn = None
 
     async def _execute_with_connection(
         self,
