@@ -8,8 +8,8 @@ Covers all tools and main call variants:
 - get_object_details
 - explain_query (default, analyze=True)
 - analyze_db_health (all, single type)
-- analyze_workload_indexes (method=dta)
-- analyze_query_indexes (method=dta)
+- analyze_workload_indexes
+- analyze_query_indexes
 - get_top_queries (sort_by: total_time, mean_time, resources)
 """
 
@@ -271,12 +271,12 @@ async def test_tools_analyze_db_health_single(integration_settings: Settings) ->
 
 @pytest.mark.asyncio
 async def test_tools_analyze_workload_indexes_dta(integration_settings: Settings) -> None:
-    """analyze_workload_indexes with method=dta returns dict (may contain error if hypopg missing)."""
+    """analyze_workload_indexes returns dict (may contain error if hypopg missing)."""
     mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "analyze_workload_indexes",
-            {"max_index_size_mb": 100, "method": "dta"},
+            {"max_index_size_mb": 100},
         )
     assert result.is_error is False
     content = _tool_content(result)
@@ -288,12 +288,12 @@ async def test_tools_analyze_workload_indexes_dta(integration_settings: Settings
 
 @pytest.mark.asyncio
 async def test_tools_analyze_query_indexes_dta(integration_settings: Settings) -> None:
-    """analyze_query_indexes with method=dta returns dict for given queries."""
+    """analyze_query_indexes returns dict for given queries."""
     mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         result = await client.call_tool(
             "analyze_query_indexes",
-            {"queries": ["SELECT 1", "SELECT 2"], "max_index_size_mb": 100, "method": "dta"},
+            {"queries": ["SELECT 1", "SELECT 2"], "max_index_size_mb": 100},
         )
     assert result.is_error is False
     content = _tool_content(result)

@@ -3,12 +3,12 @@
 
 import pytest
 
-from postgres_fastmcp.shared.errors import SchemaNotAllowedError, TablePrefixAccessError
 from postgres_fastmcp.app.config.database import DatabaseConfig
-from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.catalog.service import CatalogService
+from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
+from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.shared.errors import SchemaNotAllowedError, TablePrefixAccessError
 
 
 async def setup_test_tables(driver: DbAccessService) -> None:

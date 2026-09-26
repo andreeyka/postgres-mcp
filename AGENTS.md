@@ -1000,7 +1000,6 @@ else:
     - `candidates.py` — `CandidateGenerator`: candidate enumeration and filtering (existing indexes, condition columns, long text columns), hypopg batch sizing
     - `index_compare.py` — structural comparison of index definitions via pglast (pure functions)
     - `condition_collector.py` — `ConditionColumnCollector` AST visitor
-    - `llm_opt.py` — `LLMOptimizerTool`: LLM-driven search via MCP context sampling
     - `presentation.py` — `TextPresentation`: result rendering; `service.py` — `IndexAnalysisService` facade consumed by `tools/`
 - **Infrastructure** (`postgres/`): SQL driver, connection pool, safe execution and validation (`postgres/security/`), param substitution, AST utils. Domains type against `postgres/ports.py` protocols (`SqlDriverPort` / `QueryExecutorPort`), never against concrete executors
 - **Shared kernel** (`shared/`): errors, utils, enums, logger — importable from any layer

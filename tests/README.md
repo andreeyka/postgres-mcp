@@ -44,8 +44,8 @@ uv run pytest tests/unit/test_db_conn_pool.py::test_pool_connect_success
 | `get_object_details` | table/sequence from public or information_schema.tables view |
 | `explain_query` | default (plain), analyze=True |
 | `analyze_db_health` | health_type=all, health_type=connection |
-| `analyze_workload_indexes` | method=dta, max_index_size_mb |
-| `analyze_query_indexes` | queries list, method=dta |
+| `analyze_workload_indexes` | max_index_size_mb |
+| `analyze_query_indexes` | queries list |
 | `get_top_queries` | sort_by: total_time, mean_time, resources; limit |
 
 ## Testing Conventions
