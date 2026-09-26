@@ -95,6 +95,18 @@ async def test_lifespan_closes_the_service(fake_service: type[FakeService]) -> N
     assert fake_service.instances[0].closed == 1
 
 
+async def test_lifespan_closes_the_service_even_if_the_client_body_raises(
+    fake_service: type[FakeService],
+) -> None:
+    """close() должен сработать и когда тело ``async with Client(...)`` падает исключением."""
+    server = FastMCP("t", providers=[PostgresProvider(_database())])
+    with pytest.raises(RuntimeError, match="boom"):
+        async with Client(server) as client:
+            await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+            raise RuntimeError("boom")
+    assert fake_service.instances[0].closed == 1
+
+
 async def test_tool_call_gets_access_from_resolver_and_token(fake_service: type[FakeService]) -> None:
     """get_db: токен текущего запроса (None без auth) -> резолвер -> view(права)."""
     tokens: list[AccessToken | None] = []
@@ -143,12 +155,17 @@ def test_enforced_policy_without_resolver_is_rejected() -> None:
         PostgresProvider(_database(), access_policy=AccessPolicy(enforced=True))
 
 
-def test_access_resolver_takes_priority_over_policy() -> None:
-    PostgresProvider(
+async def test_access_resolver_takes_priority_over_policy(fake_service: type[FakeService]) -> None:
+    """access_resolver не просто не отвергается вместе с enforced policy: тул реально его вызывает."""
+    narrowed = EffectiveAccess(AccessMode.BASIC, write_mode=False)
+    provider = PostgresProvider(
         _database(),
         access_policy=AccessPolicy(enforced=True),
-        access_resolver=lambda _token: EffectiveAccess(AccessMode.BASIC, write_mode=False),
+        access_resolver=lambda _token: narrowed,
     )
+    async with Client(FastMCP("t", providers=[provider])) as client:
+        await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+    assert fake_service.instances[0].views == [narrowed]
 
 
 async def test_two_databases_in_one_host_via_namespace() -> None:

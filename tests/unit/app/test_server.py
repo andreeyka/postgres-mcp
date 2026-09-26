@@ -2,6 +2,7 @@
 
 import pytest
 from fastmcp import FastMCP
+from fastmcp.server.auth import AuthProvider
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
@@ -66,8 +67,9 @@ def test_create_server_attaches_extra_middleware() -> None:
 
 
 def test_create_server_passes_auth_to_fastmcp() -> None:
-    server = create_server(_settings(), auth=None)
-    assert server is not None
+    stub = AuthProvider()
+    server = create_server(_settings(), auth=stub)
+    assert server.auth is stub
 
 
 def test_create_server_builds_on_postgres_provider() -> None:
