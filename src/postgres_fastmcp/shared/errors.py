@@ -129,15 +129,14 @@ class StatementTypeNotAllowedError(UserFacingError):
         """
         if read_only:
             message = (
-                "Only SELECT, ANALYZE, VACUUM, EXPLAIN, SHOW and other "
-                "read-only statements are allowed. "
-                f"Received: {stmt_type_name}"
+                "Only SELECT, EXPLAIN, SHOW and other read-only statements are allowed "
+                f"in read-only mode. Received: {stmt_type_name}"
             )
         else:
             message = (
-                "Only SELECT, INSERT, UPDATE, DELETE, ANALYZE, VACUUM, EXPLAIN, "
-                "SHOW and other allowed statements are permitted. "
-                "DDL operations (CREATE, DROP, ALTER) are not allowed. "
+                "Only SELECT, INSERT, UPDATE, DELETE, EXPLAIN, SHOW and CREATE EXTENSION "
+                "(hypopg, pg_stat_statements) are allowed. "
+                "DDL operations (CREATE, DROP, ALTER), VACUUM and ANALYZE are not allowed. "
                 f"Received: {stmt_type_name}"
             )
         super().__init__(message)

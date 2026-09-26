@@ -73,7 +73,6 @@ from pglast.ast import (
 ALLOWED_STMT_TYPES: set[type] = {
     SelectStmt,
     ExplainStmt,
-    CreateExtensionStmt,
     VariableShowStmt,
     PrepareStmt,
     DeallocateStmt,
@@ -139,7 +138,10 @@ ALLOWED_NODE_TYPES: set[type] = ALLOWED_STMT_TYPES | {
     ScalarArrayOpExpr,
 }
 
-DML_STMT_TYPES: set[type] = {InsertStmt, UpdateStmt, DeleteStmt}
+# Statements that are allowed only when read_only=False. CreateExtensionStmt is here on purpose:
+# in a READ ONLY transaction it fails anyway, and in write mode the extension name is checked
+# against ALLOWED_EXTENSIONS (see query_validator).
+WRITE_STMT_TYPES: set[type] = {InsertStmt, UpdateStmt, DeleteStmt, CreateExtensionStmt}
 
 # Note: VACUUM/ANALYZE (VacuumStmt) are intentionally NOT allowed in any mode — they write
 # to disk and cannot run inside the executor's wrapped transaction block. They are rejected

@@ -143,14 +143,28 @@ class TestQueryValidatorExplainAnalyze:
 
 
 class TestQueryValidatorCreateExtension:
-    """CREATE EXTENSION whitelist."""
+    """CREATE EXTENSION: only in write mode, only hypopg / pg_stat_statements."""
 
-    def test_create_extension_disallowed_raises(self) -> None:
-        """CREATE EXTENSION with non-whitelisted name raises CreateExtensionNotSupportedError."""
+    @pytest.mark.parametrize("extname", ["hypopg", "pg_stat_statements", "dblink"])
+    def test_read_only_rejects_any_create_extension(self, extname: str) -> None:
+        """In read-only mode CREATE EXTENSION is rejected by statement type before touching the DB."""
         v = QueryValidator(read_only=True)
+        with pytest.raises(StatementTypeNotAllowedError):
+            v.validate(f"CREATE EXTENSION {extname}")
+
+    @pytest.mark.parametrize("extname", ["hypopg", "pg_stat_statements"])
+    def test_write_mode_allows_whitelisted_extension(self, extname: str) -> None:
+        """Write mode allows the two extensions the server itself relies on."""
+        v = QueryValidator(read_only=False)
+        v.validate(f"CREATE EXTENSION IF NOT EXISTS {extname}")
+
+    @pytest.mark.parametrize("extname", ["dblink", "file_fdw", "plpython3u", "unknown_ext"])
+    def test_write_mode_rejects_other_extensions(self, extname: str) -> None:
+        """Any other extension is rejected with CreateExtensionNotSupportedError."""
+        v = QueryValidator(read_only=False)
         with pytest.raises(CreateExtensionNotSupportedError) as exc_info:
-            v.validate("CREATE EXTENSION unknown_ext")
-        assert "unknown_ext" in str(exc_info.value) or "not supported" in str(exc_info.value).lower()
+            v.validate(f"CREATE EXTENSION {extname}")
+        assert extname in str(exc_info.value)
 
 
 class TestQueryValidatorDmlMode:
