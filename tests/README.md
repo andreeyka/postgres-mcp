@@ -32,6 +32,7 @@ uv run pytest tests/unit/test_db_conn_pool.py::test_pool_connect_success
   - `test_tools_integration.py`: All MCP tools via `Client(mcp).call_tool` (see coverage below)
   - `test_table_prefix.py`: Table prefix and access_mode behavior
   - `test_top_queries_integration.py`: Top queries service and pg_stat_statements
+  - `test_sql_hardening.py`: server-side statement_timeout and CREATE EXTENSION policy
   - `dta/test_dta_calc_integration.py`: DTA (hypopg) and index analysis service
 
 ### Integration coverage: tools and variants
