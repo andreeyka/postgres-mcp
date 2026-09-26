@@ -11,7 +11,13 @@ from fastmcp import Client, FastMCP
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.tools.registry import DESTRUCTIVE, READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, register_tools
+from postgres_fastmcp.tools.registry import (
+    DESTRUCTIVE,
+    READ_ONLY_IDEMPOTENT,
+    READ_ONLY_NON_IDEMPOTENT,
+    WRITE_NON_DESTRUCTIVE,
+    register_tools,
+)
 
 
 def _registered_tool_names(mcp: FastMCP) -> set[str]:
@@ -62,7 +68,7 @@ def test_register_tools_unique_names_total_nine() -> None:
 def test_annotation_presets_use_snake_case_keys() -> None:
     """Пресеты аннотаций задают snake_case-поля SDK v2, а не camelCase-алиасы v1."""
     expected = {"read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"}
-    for preset in (READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, DESTRUCTIVE):
+    for preset in (READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, WRITE_NON_DESTRUCTIVE, DESTRUCTIVE):
         assert set(preset) == expected
 
 
@@ -83,6 +89,31 @@ async def test_registered_tools_expose_snake_case_annotations() -> None:
     assert execute_sql is not None and execute_sql.annotations is not None
     assert execute_sql.annotations.read_only_hint is True  # FULL без write_mode: read-only
     assert execute_sql.annotations.idempotent_hint is False
+
+
+@pytest.mark.parametrize(
+    ("access_mode", "write_mode", "read_only", "destructive"),
+    [
+        (AccessMode.BASIC, False, True, False),
+        (AccessMode.FULL, False, True, False),
+        (AccessMode.BASIC, True, False, False),
+        (AccessMode.FULL, True, False, True),
+    ],
+)
+async def test_execute_sql_annotations_follow_write_mode(
+    access_mode: AccessMode, *, write_mode: bool, read_only: bool, destructive: bool
+) -> None:
+    """С write_mode execute_sql пишет в любом режиме: read_only_hint=False; destructive только FULL+write."""
+    mcp = FastMCP(name="test")
+    register_tools(mcp, _build_settings(access_mode, write_mode=write_mode))
+
+    execute_sql = await mcp.get_tool("execute_sql")
+
+    assert execute_sql is not None and execute_sql.annotations is not None
+    assert execute_sql.annotations.read_only_hint is read_only
+    assert execute_sql.annotations.destructive_hint is destructive
+    assert execute_sql.annotations.idempotent_hint is False
+    assert execute_sql.annotations.open_world_hint is True
 
 
 # Таймауты тулов до выравнивания со statement_timeout: ни один не должен стать короче.

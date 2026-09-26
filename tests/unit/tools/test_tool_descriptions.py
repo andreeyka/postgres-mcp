@@ -11,9 +11,7 @@ from postgres_fastmcp.tools.registry import register_tools
 
 def _make_settings(*, access_mode: AccessMode, write_mode: bool = False) -> Settings:
     s = Settings()
-    s.database = s.database.model_copy(
-        update={"access_mode": access_mode, "write_mode": write_mode}
-    )
+    s.database = s.database.model_copy(update={"access_mode": access_mode, "write_mode": write_mode})
     return s
 
 
@@ -29,6 +27,17 @@ def test_execute_sql_description_restricted_in_basic_mode() -> None:
     register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC))
     desc = _descriptions(mcp)["execute_sql"]
     assert "read-only" in desc.lower()
+
+
+def test_execute_sql_description_allows_dml_in_basic_write_mode() -> None:
+    """BASIC + write_mode: DML разрешён и коммитится, DDL отклоняется — описание не называет тул read-only."""
+    mcp = FastMCP(name="t")
+    register_tools(mcp, _make_settings(access_mode=AccessMode.BASIC, write_mode=True))
+    desc = _descriptions(mcp)["execute_sql"]
+    assert "read-only" not in desc.lower()
+    assert "INSERT, UPDATE and DELETE" in desc
+    assert "DDL is rejected" in desc
+    assert "public schema" in desc
 
 
 def test_execute_sql_description_restricted_in_full_without_write_mode() -> None:

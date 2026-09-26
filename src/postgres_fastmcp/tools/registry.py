@@ -52,6 +52,13 @@ READ_ONLY_NON_IDEMPOTENT: dict[str, bool] = {
     "idempotent_hint": False,
     "open_world_hint": True,
 }
+# BASIC + write_mode: DML в public коммитится, но DDL отклоняется — запись без разрушения схемы.
+WRITE_NON_DESTRUCTIVE: dict[str, bool] = {
+    "read_only_hint": False,
+    "destructive_hint": False,
+    "idempotent_hint": False,
+    "open_world_hint": True,
+}
 DESTRUCTIVE: dict[str, bool] = {
     "read_only_hint": False,
     "destructive_hint": True,
@@ -101,13 +108,18 @@ def _tool_timeout(base: float, settings: Settings) -> float:
 def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
     db = settings.database
     unrestricted = db.access_mode == AccessMode.FULL and db.write_mode
-    execute_preset = DESTRUCTIVE if unrestricted else READ_ONLY_NON_IDEMPOTENT
+    if unrestricted:
+        execute_preset = DESTRUCTIVE
+    elif db.write_mode:
+        execute_preset = WRITE_NON_DESTRUCTIVE
+    else:
+        execute_preset = READ_ONLY_NON_IDEMPOTENT
     return [
         {
             "fn": execute_sql,
             "name": "execute_sql",
             "output_schema": None,
-            "description": _execute_sql_desc(unrestricted=unrestricted),
+            "description": _execute_sql_desc(unrestricted=unrestricted, write_mode=db.write_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Execute SQL", execute_preset),
             "timeout": 30.0,
@@ -218,12 +230,18 @@ def _full_specs() -> list[dict[str, Any]]:
     ]
 
 
-def _execute_sql_desc(*, unrestricted: bool) -> str:
+def _execute_sql_desc(*, unrestricted: bool, write_mode: bool) -> str:
     if unrestricted:
         return (
             "Execute ANY SQL statement (DDL, DML, DCL). Server is in FULL access with write_mode=True. "
             "Use with caution; prefer explain_query first for non-trivial SELECTs. "
             "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
+        )
+    if write_mode:
+        return (
+            "Execute a SQL statement in the public schema. SELECT, EXPLAIN and SHOW are allowed, "
+            "and so are INSERT, UPDATE and DELETE (changes are committed); DDL is rejected. "
+            "Workflow: list_objects → get_object_details → execute_sql."
         )
     return (
         "Execute a read-only SELECT query. DDL/DML/DCL statements are blocked. "
