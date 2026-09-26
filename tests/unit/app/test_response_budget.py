@@ -21,7 +21,7 @@ from postgres_fastmcp.app.middleware.response_budget import (
 from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import ResponseTooLargeError
+from postgres_fastmcp.shared.errors import ResponseTooLargeAfterWriteError, ResponseTooLargeError
 
 
 def _result(text: str, structured: dict | None = None) -> ToolResult:
@@ -68,12 +68,19 @@ def test_response_max_tokens_default_and_bounds(monkeypatch: pytest.MonkeyPatch)
         ServerSettings(response_max_tokens=999)
 
 
-def _server_with_rows(monkeypatch: pytest.MonkeyPatch, rows: list[RowResult], max_tokens: int):  # noqa: ANN202
+def _server_with_rows(  # noqa: ANN202
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[RowResult],
+    max_tokens: int,
+    *,
+    access_mode: AccessMode = AccessMode.FULL,
+    write_mode: bool = False,
+):
     """create_server с подменённым DbAccessService: execute_sql получает заданные строки."""
 
     class FakeDb:
         def __init__(self, cfg: object) -> None:
-            self.write_mode = False
+            self.write_mode = write_mode
             self.sql_driver = MagicMock()
             self.sql_driver.execute = AsyncMock(return_value=rows)
 
@@ -82,7 +89,7 @@ def _server_with_rows(monkeypatch: pytest.MonkeyPatch, rows: list[RowResult], ma
 
     monkeypatch.setattr("postgres_fastmcp.app.lifespan.DbAccessService", FakeDb)
     settings = Settings()
-    settings.database = settings.database.model_copy(update={"access_mode": AccessMode.FULL})
+    settings.database = settings.database.model_copy(update={"access_mode": access_mode, "write_mode": write_mode})
     settings.server = settings.server.model_copy(update={"response_max_tokens": max_tokens})
     return create_server(settings)
 
@@ -90,7 +97,9 @@ def _server_with_rows(monkeypatch: pytest.MonkeyPatch, rows: list[RowResult], ma
 async def test_create_server_rejects_large_execute_sql_result(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = [RowResult(cells={"id": i, "name": f"row-{i:04d}-" + "x" * 40}) for i in range(200)]
     async with Client(_server_with_rows(monkeypatch, rows, max_tokens=1000)) as client:
-        with pytest.raises(ToolError, match=r"Response is too large: ~\d+ tokens, the limit is 1000\. Refine the request"):
+        with pytest.raises(
+            ToolError, match=r"Response is too large: ~\d+ tokens, the limit is 1000\. Refine the request"
+        ):
             await client.call_tool("execute_sql", {"sql": "SELECT id, name FROM t"})
 
 
@@ -99,3 +108,39 @@ async def test_create_server_passes_small_execute_sql_result(monkeypatch: pytest
     async with Client(_server_with_rows(monkeypatch, rows, max_tokens=1000)) as client:
         result = await client.call_tool("execute_sql", {"sql": "SELECT id, name FROM t"})
     assert result.content[0].text == "| id | name |\n| --- | --- |\n| 1 | a |\n\n1 rows."
+
+
+def _large_rows() -> list[RowResult]:
+    return [RowResult(cells={"id": i, "name": f"row-{i:04d}-" + "x" * 40}) for i in range(200)]
+
+
+@pytest.mark.parametrize("access_mode", [AccessMode.BASIC, AccessMode.FULL])
+async def test_read_only_server_asks_to_refine(monkeypatch: pytest.MonkeyPatch, access_mode: AccessMode) -> None:
+    """Без write_mode execute_sql ничего не записал: обычная ошибка «уточните запрос»."""
+    server = _server_with_rows(monkeypatch, _large_rows(), max_tokens=1000, access_mode=access_mode)
+    async with Client(server) as client:
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool("execute_sql", {"sql": "SELECT id, name FROM t"})
+    assert "Refine the request" in str(exc_info.value)
+    assert "do not re-run" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("access_mode", [AccessMode.BASIC, AccessMode.FULL])
+async def test_write_server_warns_not_to_rerun(monkeypatch: pytest.MonkeyPatch, access_mode: AccessMode) -> None:
+    """С write_mode изменения уже закоммичены: агент не должен повторять запрос."""
+    server = _server_with_rows(monkeypatch, _large_rows(), max_tokens=1000, access_mode=access_mode, write_mode=True)
+    async with Client(server) as client:
+        with pytest.raises(
+            ToolError,
+            match=r"Response is too large: ~\d+ tokens, the limit is 1000\. The statement was executed "
+            r"and its changes are applied — do not re-run it\.",
+        ):
+            await client.call_tool("execute_sql", {"sql": "UPDATE t SET name = name RETURNING id, name"})
+
+
+async def test_unresolved_tool_falls_back_to_refine_error() -> None:
+    """Без fastmcp_context тул не найти: обычная ошибка, а не «не повторяйте»."""
+    middleware = ResponseBudgetMiddleware(max_tokens=10)
+    with pytest.raises(ResponseTooLargeError) as exc_info:
+        await middleware.on_call_tool(_context(), AsyncMock(return_value=_result("x" * 31)))
+    assert not isinstance(exc_info.value, ResponseTooLargeAfterWriteError)

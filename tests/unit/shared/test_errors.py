@@ -42,6 +42,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "QueryTimeoutError": lambda: errors.QueryTimeoutError(5.0),
     "QueryCancelledError": errors.QueryCancelledError,
     "ResponseTooLargeError": lambda: errors.ResponseTooLargeError(25000, 20000),
+    "ResponseTooLargeAfterWriteError": lambda: errors.ResponseTooLargeAfterWriteError(25000, 20000),
     "ObjectNotFoundError": lambda: errors.ObjectNotFoundError("public", "ghost", "table"),
     "ExtensionStatusUnavailableError": lambda: errors.ExtensionStatusUnavailableError(
         "pg_stat_statements", "Unable to determine extension status."
@@ -90,6 +91,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("InvalidOutputFormatError", "Did you mean 'json'?"),
         ("PgStatStatementsNotInstalledError", "CREATE EXTENSION pg_stat_statements"),
         ("ResponseTooLargeError", "Refine the request: add WHERE or LIMIT"),
+        ("ResponseTooLargeAfterWriteError", "query the affected rows with a narrower SELECT"),
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
         ("ObjectNotFoundError", "Use list_objects to see existing objects."),
         ("ExtensionStatusUnavailableError", "then retry"),

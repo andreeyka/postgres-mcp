@@ -507,9 +507,32 @@ class ResponseTooLargeError(UserFacingError):
             "add WHERE or LIMIT, select only the needed columns, aggregate (count, group by), "
             "or narrow the schema/object filter."
         )
-        super().__init__(message)
+        self._init(message, tokens, max_tokens)
+
+    def _init(self, message: str, tokens: int, max_tokens: int) -> None:
+        """Общая инициализация для подклассов с другим текстом."""
+        UserFacingError.__init__(self, message)
         self.tokens = tokens
         self.max_tokens = max_tokens
+
+
+class ResponseTooLargeAfterWriteError(ResponseTooLargeError):
+    """Ответ пишущего тула больше бюджета: изменения уже применены, повтор запишет их дважды."""
+
+    def __init__(self, tokens: int, max_tokens: int) -> None:
+        """Инициализация с оценкой размера ответа и лимитом.
+
+        Args:
+            tokens: Оценка размера ответа в токенах.
+            max_tokens: Лимит ответа в токенах.
+        """
+        message = (
+            f"Response is too large: ~{tokens} tokens, the limit is {max_tokens}. "
+            "The statement was executed and its changes are applied — do not re-run it. "
+            "Only the returned rows were too large; to inspect the result, "
+            "query the affected rows with a narrower SELECT."
+        )
+        self._init(message, tokens, max_tokens)
 
 
 class ConnectionFailedError(BaseApplicationError):
