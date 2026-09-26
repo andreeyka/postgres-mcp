@@ -230,9 +230,10 @@ def test_tokens_are_excluded_from_model_dump() -> None:
 def test_tokens_file_bad_encoding_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "tokens.json"
     path.write_bytes(b"\xff\xfe\x00\x01")
-    with pytest.raises(ValidationError, match="cannot be read") as exc_info:
+    with pytest.raises(ValidationError, match="cannot be read: invalid UTF-8 at byte 0") as exc_info:
         AuthSettings(mode="static", tokens_file=path)
     assert _SECRET not in str(exc_info.value)
+    assert "0xff" not in str(exc_info.value)
 
 
 def test_blank_token_key_is_rejected() -> None:

@@ -122,9 +122,12 @@ class AuthSettings(BaseSettings):
             return {}
         try:
             raw = json.loads(self.tokens_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError) as exc:
-            reason = exc.strerror if isinstance(exc, OSError) else str(exc)
-            msg = f"tokens_file {self.tokens_file} cannot be read: {reason}"
+        except OSError as exc:
+            msg = f"tokens_file {self.tokens_file} cannot be read: {exc.strerror}"
+            raise ValueError(msg) from None
+        except UnicodeDecodeError as exc:
+            # exc.start — позиция байта, не его значение: значение может быть частью секрета в файле
+            msg = f"tokens_file {self.tokens_file} cannot be read: invalid UTF-8 at byte {exc.start}"
             raise ValueError(msg) from None
         except json.JSONDecodeError as exc:
             msg = f"tokens_file {self.tokens_file} is not valid JSON (line {exc.lineno}, column {exc.colno})"
