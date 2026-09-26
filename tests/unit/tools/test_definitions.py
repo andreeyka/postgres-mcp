@@ -186,7 +186,9 @@ async def test_get_object_details_missing_object_raises(
     fake_service.get_object_details.return_value = details
     monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
-    with pytest.raises(ObjectNotFoundError, match=rf"Object not found: public\.ghost \({object_type}\)\. Use list_objects"):
+    with pytest.raises(
+        ObjectNotFoundError, match=rf"Object not found: public\.ghost \({object_type}\)\. Use list_objects"
+    ):
         await defs.get_object_details(
             schema_name="public", object_name="ghost", object_type=object_type, output=output, ctx=make_ctx(db_mock)
         )
