@@ -34,6 +34,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "InvalidSortCriteriaError": lambda: errors.InvalidSortCriteriaError("mean"),
     "InvalidHealthTypeError": lambda: errors.InvalidHealthTypeError("indx", ["all", "index", "vacuum"]),
     "InvalidOutputFormatError": lambda: errors.InvalidOutputFormatError("jsn"),
+    "PgStatStatementsNotInstalledError": errors.PgStatStatementsNotInstalledError,
     "HypopgNotInstalledError": lambda: errors.HypopgNotInstalledError("The hypopg extension is not installed."),
     "QueryTimeoutError": lambda: errors.QueryTimeoutError(5.0),
     "QueryCancelledError": errors.QueryCancelledError,
@@ -79,6 +80,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("InvalidSortCriteriaError", "Did you mean 'mean_time'?"),
         ("InvalidHealthTypeError", "Did you mean 'index'?"),
         ("InvalidOutputFormatError", "Did you mean 'json'?"),
+        ("PgStatStatementsNotInstalledError", "CREATE EXTENSION pg_stat_statements"),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:

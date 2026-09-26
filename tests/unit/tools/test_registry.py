@@ -1,11 +1,15 @@
 """Тесты для tools/registry.py: проверка регистрации 9 тулов через add_tool."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
 
 from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.tools.registry import DESTRUCTIVE, READ_ONLY_IDEMPOTENT, READ_ONLY_NON_IDEMPOTENT, register_tools
 
@@ -136,3 +140,39 @@ def test_unrestricted_mode_keeps_existing_tool_timeouts() -> None:
     """FULL + write_mode идёт мимо SafeSqlExecutor: таймауты тулов остаются прежними."""
     timeouts = _registered_timeouts(_build_timeout_settings(AccessMode.FULL, write_mode=True, safe_sql_timeout=120))
     assert timeouts == _PRE_CHANGE_TIMEOUTS
+
+
+_ROW_TOOLS = ("execute_sql", "list_objects", "get_object_details", "list_schemas", "get_top_queries")
+
+
+async def test_row_tools_have_no_output_schema() -> None:
+    """Тулы со строками отдают ToolResult сами: FastMCP не должен заворачивать ответ в {'result': ...}."""
+    mcp = FastMCP(name="test")
+    register_tools(mcp, _build_settings(AccessMode.FULL))
+    for name in _ROW_TOOLS:
+        tool = await mcp.get_tool(name)
+        assert tool is not None
+        assert tool.output_schema is None, name
+        assert "output" in tool.parameters["properties"], name
+
+
+async def test_execute_sql_output_over_mcp() -> None:
+    """По MCP: 'table' — только Markdown, 'JSON' (любой регистр) — JSON-текст и structured_content."""
+
+    @asynccontextmanager
+    async def lifespan(server: object) -> AsyncIterator[dict[str, object]]:  # noqa: ARG001
+        db = MagicMock()
+        db.write_mode = False
+        db.sql_driver.execute = AsyncMock(return_value=[RowResult(cells={"n": 1})])
+        yield {"db": db}
+
+    mcp = FastMCP(name="test", lifespan=lifespan)
+    register_tools(mcp, _build_settings(AccessMode.FULL))
+    async with Client(mcp) as client:
+        table = await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+        as_json = await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n", "output": "JSON"})
+
+    assert [block.text for block in table.content] == ["| n |\n| --- |\n| 1 |\n\n1 rows."]
+    assert table.structured_content is None
+    assert [block.text for block in as_json.content] == ['{"rows": [{"n": 1}], "row_count": 1}']
+    assert as_json.structured_content == {"rows": [{"n": 1}], "row_count": 1}

@@ -385,6 +385,18 @@ class InvalidOutputFormatError(UserFacingError):
         self.output = output
 
 
+class PgStatStatementsNotInstalledError(UserFacingError):
+    """Расширение pg_stat_statements не установлено: топ запросов недоступен."""
+
+    def __init__(self) -> None:
+        """Инициализация с фиксированным сообщением и подсказкой по установке."""
+        super().__init__(
+            "The pg_stat_statements extension is not installed, so query statistics are unavailable. "
+            "Ask a database administrator to add pg_stat_statements to shared_preload_libraries "
+            "and run CREATE EXTENSION pg_stat_statements."
+        )
+
+
 class HypopgNotInstalledError(UserFacingError):
     """Расширение HypoPG не установлено или недоступно."""
 

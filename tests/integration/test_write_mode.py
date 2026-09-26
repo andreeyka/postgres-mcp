@@ -39,11 +39,14 @@ async def test_execute_sql_write_persists(integration_settings: Settings) -> Non
             {"sql": "INSERT INTO wm_write_test (id, v) VALUES (1, 'alpha')"},
         )
         assert insert.is_error is False
-        assert "success" in str(_content(insert)).lower()
+        assert "success" in insert.content[0].text.lower()
 
-        select = await client.call_tool("execute_sql", {"sql": "SELECT v FROM wm_write_test WHERE id = 1"})
+        select = await client.call_tool(
+            "execute_sql",
+            {"sql": "SELECT v FROM wm_write_test WHERE id = 1", "output": "json"},
+        )
         assert select.is_error is False
-        assert "alpha" in str(_content(select))
+        assert select.structured_content == {"rows": [{"v": "alpha"}], "row_count": 1}
 
         await client.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS wm_write_test"})
 

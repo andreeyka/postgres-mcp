@@ -106,6 +106,7 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
         {
             "fn": execute_sql,
             "name": "execute_sql",
+            "output_schema": None,
             "description": _execute_sql_desc(unrestricted=unrestricted),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Execute SQL", execute_preset),
@@ -115,6 +116,7 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
         {
             "fn": list_objects,
             "name": "list_objects",
+            "output_schema": None,
             "description": _list_objects_desc(db.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("List Objects", READ_ONLY_IDEMPOTENT),
@@ -124,6 +126,7 @@ def _basic_specs(settings: Settings) -> list[dict[str, Any]]:
         {
             "fn": get_object_details,
             "name": "get_object_details",
+            "output_schema": None,
             "description": _get_object_details_desc(db.access_mode),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Get Object Details", READ_ONLY_IDEMPOTENT),
@@ -147,6 +150,7 @@ def _full_specs() -> list[dict[str, Any]]:
         {
             "fn": list_schemas,
             "name": "list_schemas",
+            "output_schema": None,
             "description": (
                 "Lists all schemas in the PostgreSQL database. Use this first to discover "
                 "available namespaces before listing objects in a specific schema."
@@ -173,6 +177,7 @@ def _full_specs() -> list[dict[str, Any]]:
         {
             "fn": get_top_queries,
             "name": "get_top_queries",
+            "output_schema": None,
             "description": (
                 "Report the slowest or most resource-intensive queries from pg_stat_statements. "
                 "The pg_stat_statements extension must be enabled. Workflow: get_top_queries -> "
