@@ -1,22 +1,16 @@
 """Фабрика MCP-сервера: create_server(settings, *, auth, extra_providers, extra_middleware) -> FastMCP."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
+from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.lifespan import build_lifespan
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.registry import register_tools
-
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from postgres_fastmcp.app.config import Settings
 
 
 def create_server(

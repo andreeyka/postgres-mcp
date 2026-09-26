@@ -4,17 +4,17 @@
 поэтому модуль `tools/definitions` может импортироваться без инициализации конфига.
 """
 
-from __future__ import annotations
-
 from importlib.metadata import (
     PackageNotFoundError,
     version as _pkg_version,
 )
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from fastmcp import FastMCP
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
+from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
     HEALTH_TYPE_VALUES,
@@ -28,12 +28,6 @@ from postgres_fastmcp.tools.definitions import (
     list_objects,
     list_schemas,
 )
-
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
-
-    from postgres_fastmcp.app.config import Settings
 
 
 try:
