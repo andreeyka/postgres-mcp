@@ -220,7 +220,7 @@ class ExtensionInspectorAdapter:
                 return False, (
                     "The **hypopg** extension is required to test hypothetical indexes, "
                     "but it is not currently installed."
-                    "\n\nYou can ask me to install 'hypopg' using the 'execute_query' tool.\n\n"
+                    "\n\nYou can ask me to install 'hypopg' using the 'execute_sql' tool.\n\n"
                     "**Is it safe?** Installing 'hypopg' is generally safe and a standard practice for index testing. "
                     "It adds a virtual layer that simulates indexes without actually creating them in the database. "
                     "It requires database privileges (often superuser) to install.\n\n"
@@ -230,7 +230,7 @@ class ExtensionInspectorAdapter:
                 )
             return False, (
                 "The hypopg extension is required to test hypothetical indexes, but it is not currently installed.\n"
-                "You can ask me to install it using the 'execute_query' tool.\n"
+                "You can ask me to install it using the 'execute_sql' tool.\n"
                 "It is generally safe to install and allows testing indexes without creating them."
             )
         pg_version = await self.get_postgres_version()
