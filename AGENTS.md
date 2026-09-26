@@ -946,6 +946,11 @@ Suppress the linter warning with `# noqa: B008`.
 
 ## Tool Definitions
 
+Rules for the MCP tools layer (English-only agent-facing text, parameter types and normalization,
+`output` and `ToolResult`, the response budget) live in
+[`src/postgres_fastmcp/tools/AGENTS.md`](src/postgres_fastmcp/tools/AGENTS.md); they take precedence
+over the generic examples below.
+
 All tools use `@mcp.tool()` (or `@provider.tool()`) with:
 
 - `annotations` dict (e.g. `{"readOnlyHint": True}`)
