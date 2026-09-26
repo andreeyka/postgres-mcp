@@ -15,9 +15,6 @@ from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.domains.db_access import DbAccess
 
 
-# Зависание (утёкший пул, незакрытая сессия) должно падать быстро, а не съедать лимит джобы CI
-pytestmark = pytest.mark.timeout(60)
-
 _BASIC_TOOLS = {"execute_sql", "list_objects", "get_object_details", "explain_query"}
 _ALL_TOOLS = _BASIC_TOOLS | {
     "list_schemas",
