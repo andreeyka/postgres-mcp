@@ -3,6 +3,8 @@
 import pytest
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
+from fastmcp.server.auth.oidc_proxy import OIDCProxy
+from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
@@ -148,11 +150,47 @@ def test_no_warning_when_exposed_http_has_auth(caplog: pytest.LogCaptureFixture)
     assert _auth_warnings(caplog) == []
 
 
-def test_warns_that_auth_does_not_apply_to_stdio(caplog: pytest.LogCaptureFixture) -> None:
-    create_server(_auth_settings(transport="stdio", auth=_STATIC_AUTH))
+def test_stdio_skips_building_the_configured_auth_provider(caplog: pytest.LogCaptureFixture) -> None:
+    """settings.auth.mode=static в stdio не должен строить провайдер: discovery/mkdir не должны выполняться."""
+    server = create_server(_auth_settings(transport="stdio", auth=_STATIC_AUTH))
+    assert server.auth is None
+    [message] = _auth_warnings(caplog)
+    assert "mode=static" in message
+    assert "stdio" in message
+    assert "tok-secret-value" not in caplog.text
+
+
+def test_stdio_skips_oidc_discovery_for_an_unreachable_idp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Регрессия: недоступный IdP не должен мешать stdio-серверу стартовать (discovery не вызывается)."""
+
+    def discovery(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("OIDC discovery must not run when the provider is skipped for stdio")
+
+    monkeypatch.setattr(OIDCProxy, "get_oidc_configuration", discovery)
+    oidc_auth = AuthSettings(
+        mode="oidc",
+        oidc_config_url="https://sso.example.com/.well-known/openid-configuration",
+        oidc_client_id="postgres-mcp",
+        oidc_client_secret="oidc-client-secret",
+        base_url="https://mcp.example.com",
+    )
+    server = create_server(_auth_settings(transport="stdio", auth=oidc_auth))
+    assert server.auth is None
+
+
+def test_explicit_auth_in_stdio_still_warns_as_before(caplog: pytest.LogCaptureFixture) -> None:
+    """auth= явно передан в stdio: провайдер не строится из настроек, но предупреждение — как раньше."""
+    explicit = StaticTokenVerifier(tokens={"tok-secret-value": {"client_id": "c"}})
+    server = create_server(_auth_settings(transport="stdio"), auth=explicit)
+    assert server.auth is explicit
     [message] = _auth_warnings(caplog)
     assert "Authentication (StaticTokenVerifier) applies only to the HTTP transport" in message
     assert "tok-secret-value" not in caplog.text
+
+
+def test_http_still_builds_the_auth_provider_from_settings() -> None:
+    server = create_server(_auth_settings(auth=_STATIC_AUTH))
+    assert isinstance(server.auth, StaticTokenVerifier)
 
 
 def test_no_warning_for_stdio_without_auth(caplog: pytest.LogCaptureFixture) -> None:
