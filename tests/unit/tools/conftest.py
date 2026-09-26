@@ -16,7 +16,7 @@ class FakeCtx:
 
 @pytest.fixture
 def make_ctx() -> Callable[..., FakeCtx]:
-    """Фабрика FakeCtx с подставленным DbAccessService-моком."""
+    """Фабрика FakeCtx с подставленным моком DbAccessPort (доступ к БД на запрос)."""
 
     def factory(db: Any | None = None) -> FakeCtx:  # noqa: ANN401
         return FakeCtx(db=db if db is not None else mock.AsyncMock())
@@ -26,5 +26,5 @@ def make_ctx() -> Callable[..., FakeCtx]:
 
 @pytest.fixture
 def db_mock() -> mock.AsyncMock:
-    """Готовый AsyncMock на роль DbAccessService."""
+    """Готовый AsyncMock на роль DbAccessPort (доступ к БД на запрос)."""
     return mock.AsyncMock()

@@ -15,7 +15,7 @@ class CatalogService:
     """Фасад каталога БД: схемы, объекты и их детали (делегирует профильным сервисам)."""
 
     def __init__(self, db: DbAccessPort) -> None:
-        """Инициализация сервиса с подключением к базе данных."""
+        """Инициализация сервиса с доступом к БД для текущего запроса (DbAccessPort)."""
         self.db = db
         self._tables = TablesService(db)
         self._sequences = SequencesService(db)

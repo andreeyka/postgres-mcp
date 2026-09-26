@@ -15,7 +15,7 @@ class SequencesService:
         """Инициализация с сервисом доступа к БД.
 
         Args:
-            db: Сервис доступа к БД.
+            db: Доступ к БД для текущего запроса (DbAccessPort).
         """
         self.db = db
 

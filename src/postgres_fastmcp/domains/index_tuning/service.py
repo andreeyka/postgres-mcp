@@ -13,7 +13,7 @@ class IndexAnalysisService:
     """Сервис для анализа нагрузки и индексов запросов."""
 
     def __init__(self, db: DbAccessPort) -> None:
-        """Инициализация сервиса с подключением к базе данных."""
+        """Инициализация сервиса с доступом к БД для текущего запроса (DbAccessPort)."""
         self.db = db
 
     async def analyze_workload_indexes(self, *, max_index_size_mb: int = 10000) -> dict[str, Any]:

@@ -195,7 +195,7 @@ async def get_top_queries(
     """Самые медленные или ресурсоёмкие запросы из pg_stat_statements.
 
     Args:
-        db: Сервис доступа к базе данных.
+        db: Доступ к БД для текущего запроса (DbAccessPort).
         sort_by: Критерий: 'resources', 'mean_time' или 'total_time'.
         limit: Максимум строк (по умолчанию 10).
 
