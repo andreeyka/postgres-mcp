@@ -27,7 +27,13 @@ from postgres_fastmcp.tools.registry import register_tools
 
 
 class PostgresProvider(LocalProvider):
-    """Тулы одной базы PostgreSQL с правами не выше потолка из ``database``."""
+    """Тулы одной базы PostgreSQL с правами не выше потолка из ``database``.
+
+    ``database`` (``DatabaseConfig``) — pydantic ``BaseSettings``: любое поле, не переданное
+    явно, включая ``access_mode``, ``write_mode`` и ``table_prefix``, читается из переменных
+    окружения ``MCP_DATABASE_*`` и файла ``.env``. В коде библиотеки передавайте
+    ``access_mode``/``write_mode`` явно — иначе оставшийся ``.env`` молча поднимет потолок прав.
+    """
 
     def __init__(
         self,

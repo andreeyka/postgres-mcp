@@ -447,14 +447,24 @@ from postgres_fastmcp import (
 
 ### Свой сервер: `PostgresProvider`
 
+**⚠️ Важно:** `DatabaseConfig` — это pydantic `BaseSettings` (`env_prefix="MCP_DATABASE_"`, `env_file=".env"`). Любое поле, не переданное явно, — включая `access_mode`, `write_mode` и `table_prefix`, то есть серверный потолок прав, — молча читается из переменных окружения `MCP_DATABASE_*` и файла `.env` в текущей директории. Библиотечный хост с оставшимся от другого проекта `.env` может незаметно получить провайдер `full` с записью. В коде библиотеки всегда передавайте `access_mode` и `write_mode` явно, не полагаясь на окружение.
+
 ```python
 from fastmcp import FastMCP
 from postgres_fastmcp import DatabaseConfig, PostgresProvider
 
 mcp = FastMCP("my-app")
-mcp.add_provider(PostgresProvider(DatabaseConfig(host="db", port=5432, user="u", password="p", name="orders")))
 mcp.add_provider(
-    PostgresProvider(DatabaseConfig(host="db", user="u", password="p", name="analytics", access_mode="full")),
+    PostgresProvider(
+        DatabaseConfig(
+            host="db", port=5432, user="u", password="p", name="orders", access_mode="basic", write_mode=False
+        )
+    )
+)
+mcp.add_provider(
+    PostgresProvider(
+        DatabaseConfig(host="db", user="u", password="p", name="analytics", access_mode="full", write_mode=False)
+    ),
     namespace="analytics",  # инструменты analytics_execute_sql, analytics_list_schemas, ...
 )
 mcp.run(transport="http", host="0.0.0.0", port=8000)
