@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from psycopg.errors import ObjectNotInPrerequisiteState
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.ports import SqlDriverPort
 from postgres_fastmcp.shared.errors import (
@@ -188,14 +188,14 @@ class TopQueriesCalc:
 
 
 async def get_top_queries(
-    db: DbAccessService,
+    db: DbAccessPort,
     sort_by: str = "resources",
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Самые медленные или ресурсоёмкие запросы из pg_stat_statements.
 
     Args:
-        db: Сервис доступа к базе данных.
+        db: Доступ к БД для текущего запроса (DbAccessPort).
         sort_by: Критерий: 'resources', 'mean_time' или 'total_time'.
         limit: Максимум строк (по умолчанию 10).
 

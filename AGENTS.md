@@ -929,73 +929,44 @@ Do **not** use `from __future__ import annotations` anywhere in the codebase.
 
 - Move `TYPE_CHECKING`-guarded imports to regular imports unless they cause circular dependencies.
 
-## Context Access — `CurrentContext()`
-
-Use `CurrentContext()` directly in argument defaults as recommended by FastMCP 3:
-
-```python
-from fastmcp.dependencies import CurrentContext
-from fastmcp.server.context import Context
-
-@mcp.tool
-async def my_tool(ctx: Context = CurrentContext()) -> str:  # noqa: B008
-    ...
-```
-
-Suppress the linter warning with `# noqa: B008`.
-
 ## Tool Definitions
 
 Rules for the MCP tools layer (English-only agent-facing text, parameter types and normalization,
-`output` and `ToolResult`, the response budget) live in
-[`src/postgres_fastmcp/tools/AGENTS.md`](src/postgres_fastmcp/tools/AGENTS.md); they take precedence
-over the generic examples below.
+`output` and `ToolResult`, the response budget, adding a tool) live in
+[`src/postgres_fastmcp/tools/AGENTS.md`](src/postgres_fastmcp/tools/AGENTS.md).
 
-All tools use `@mcp.tool()` (or `@provider.tool()`) with:
-
-- `annotations` dict (e.g. `{"readOnlyHint": True}`)
-- `tags` set (e.g. `{ToolTag.BASIC}`)
-- `Annotated[..., Field(description="...")]` for parameters
-- `Depends(get_service)` for dependency injection
-
-```python
-@provider.tool(
-    description="...",
-    tags={ToolTag.BASIC},
-    annotations={"readOnlyHint": True},
-)
-async def list_schemas(
-    schema_service: SchemaService = SchemaServiceProvider,  # type: ignore[assignment]
-) -> ToolResult:
-    ...
-```
-
-Use FastMCP’s `ToolResult` for tool return values ([ToolResult and metadata](https://gofastmcp.com/servers/tools#toolresult-and-metadata)):
-
-```python
-from fastmcp.tools.tool import ToolResult
-
-return ToolResult(content=await some_service.call())
-```
+In short: tools are async methods of `ToolSet` (`tools/definitions.py`); they take no FastMCP
+`Context` and get database access through `self._get_db()`, which returns a `DbAccessPort` with the
+current request's access. `tools/registry.py` registers them on a `LocalProvider` with
+`Tool.from_function` (description, tags, annotations, timeout, `auth` for `full` tools).
+`PostgresProvider` (`provider.py`) owns the registration, the connection pool and tool visibility.
 
 ## Server Startup
 
-Use `mcp.run(transport=...)` for both stdio and HTTP:
+`app/main.py` builds the server with `create_server(settings)` and runs it with
+`mcp.run(transport=...)` for both stdio and HTTP:
 
 ```python
-mcp = create_mcp(settings)
+mcp = create_server(settings)
 
-if args.http:
-    mcp.run(transport="http", host=args.host, port=args.port)
+if actual_transport == "http":
+    mcp.run(
+        transport="http",
+        host=settings.server.host,
+        port=settings.server.port,
+        uvicorn_config={"ws": "websockets-sansio", "log_config": None},
+    )
 else:
     mcp.run(transport="stdio")
 ```
 
 ## Layered Architecture
 
-- **App / composition root** (`app/`): config, server assembly, lifespan, entry point (`app/main.py`)
-- **Presentation** (`tools/`): MCP tool functions (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)
-- **Domains** (`domains/`): one package or module per feature — `catalog`, `querying`, `explain`, `health`, `index_tuning`, `top_queries`, plus `db_access` (executor wiring)
+- **App / composition root** (`app/`): config, server assembly (`app/server.py::create_server`), middleware, entry point (`app/main.py`)
+- **Provider** (`provider.py`): `PostgresProvider(LocalProvider)` — owns `DbAccessService` (pool closed in the provider `lifespan`), resolves the request's access and registers the tools
+- **Access** (`access.py`): `EffectiveAccess`, `AccessPolicy`, `AccessResolver`, `full_access_check`; depends only on `shared/` and `fastmcp.server.auth`
+- **Presentation** (`tools/`): `ToolSet` with the tool methods (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)
+- **Domains** (`domains/`): one package or module per feature — `catalog`, `querying`, `explain`, `health`, `index_tuning`, `top_queries`, plus `db_access` (pool, executors per `EffectiveAccess`, `DbAccessPort`). Domain services take a `DbAccessPort`, never `DbAccessService`
   - `index_tuning` is the largest domain package and is split by responsibility:
     - `models.py` — dataclasses (`IndexRecommendation`, `IndexRecommendationAnalysis`, `IndexTuningResult`) and string helpers
     - `workload.py` — workload sources (SQL file, `pg_stat_statements`, explicit query list), validation/parsing, query weights — plain functions
@@ -1011,10 +982,11 @@ else:
 
 Dependency rules:
 
-- No upward imports (`postgres/` must not import from `domains/`, `domains/` must not import from `tools/` or `app/`).
+- Direction: `app -> provider -> tools -> domains -> postgres -> shared`; `access.py` is imported by `provider`, `app` and `domains/db_access`. The one upward import: `provider.py` takes the `DatabaseConfig` model from `app/config/database.py` (plain data, no app logic).
+- No upward imports (`postgres/` must not import from `domains/`, `domains/` must not import from `tools/`, `provider` or `app/`).
 - Domains must not import each other. The single allowed exception: `index_tuning` -> `explain` (index tuning consumes explain plans).
 - A module earns a separate file at roughly >100 lines of own logic or a distinct dependency set; a package needs >=3 substantive modules; a stateless one-method class should be a function.
 
 ## Library Documentation
 
-When implementing changes, verify all library APIs via MCP tools (especially FastMCP 3 docs).
+When implementing changes, verify all library APIs via MCP tools (especially FastMCP 4 docs).

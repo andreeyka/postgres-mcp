@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
 from postgres_fastmcp.domains.index_tuning.models import MAX_NUM_INDEX_TUNING_QUERIES
 from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
@@ -12,8 +12,8 @@ from postgres_fastmcp.shared.errors import EmptyQueriesError, QueriesLimitError
 class IndexAnalysisService:
     """Сервис для анализа нагрузки и индексов запросов."""
 
-    def __init__(self, db: DbAccessService) -> None:
-        """Инициализация сервиса с подключением к базе данных."""
+    def __init__(self, db: DbAccessPort) -> None:
+        """Инициализация сервиса с доступом к БД для текущего запроса (DbAccessPort)."""
         self.db = db
 
     async def analyze_workload_indexes(self, *, max_index_size_mb: int = 10000) -> dict[str, Any]:

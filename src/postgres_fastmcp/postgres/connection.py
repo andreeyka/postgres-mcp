@@ -1,5 +1,6 @@
 """Пул подключений к базе данных (только жизненный цикл)."""
 
+import asyncio
 import logging
 
 from psycopg_pool import AsyncConnectionPool
@@ -33,12 +34,22 @@ class DbConnPool:
         self.pool: AsyncConnectionPool | None = None
         self._is_valid = False
         self._last_error: str | None = None
+        # Сериализует открытие пула: без неё параллельные первые вызовы (asyncio.gather
+        # в одном туле) создают несколько пулов и закрывают пул друг у друга.
+        self._connect_lock = asyncio.Lock()
 
     async def pool_connect(self, connection_url: str | None = None) -> AsyncConnectionPool:
         """Инициализация пула подключений; возвращает существующий пул, если он уже действителен."""
         if self.pool and self._is_valid:
             return self.pool
+        async with self._connect_lock:
+            # Повторная проверка: пока ждали блокировку, пул мог открыть другой вызов.
+            if self.pool and self._is_valid:
+                return self.pool
+            return await self._open_pool(connection_url)
 
+    async def _open_pool(self, connection_url: str | None) -> AsyncConnectionPool:
+        """Закрыть прежний пул и открыть новый; вызывается только под _connect_lock."""
         url = connection_url or self.connection_url
         self.connection_url = url
         if not url:

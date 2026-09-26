@@ -8,7 +8,7 @@ Everything an agent or an external system sees is written in **English**:
 
 - tool descriptions in `registry.py`;
 - `Field(description=...)` of every tool parameter;
-- docstrings of tool functions in `definitions.py` (FastMCP may show them to the client);
+- docstrings of `ToolSet` methods in `definitions.py` (FastMCP shows them to the client);
 - error messages and log messages.
 
 Russian is allowed only for comments and module/helper docstrings that never reach the agent.
@@ -25,7 +25,20 @@ Russian is allowed only for comments and module/helper docstrings that never rea
   instead of redeclaring a parameter.
 - Shared aliases are plain assignments (`X = Annotated[...]`), not PEP 695 `type X = ...`: with a
   `type` alias the function docstring overrides the `Field` description.
-- Do not put `Field` on dependency-injected parameters (`ctx: Context = CurrentContext()`).
+
+## Tool methods and registration
+
+- A tool is an async method of `ToolSet` in `definitions.py`. It takes no FastMCP `Context`: it gets
+  database access with `self._get_db()`, which returns a `DbAccessPort` carrying the current
+  request's access (executor, `access_mode`, `write_mode`). Call it once per tool call and pass the
+  result to the domain; never store it on `self`.
+- Register the tool in `registry.py` (`_basic_specs` or `_full_specs`) with `"fn": toolset.<method>`,
+  an explicit `name`, a description, `tags`, `annotations`, `timeout` and `meta`. A `full` tool also
+  gets `"auth": full_tool_auth`: `PostgresProvider` passes `full_access_check(...)` there, so the
+  tool is listed and callable only when the request's effective access is `full`.
+- Descriptions follow the server ceiling (`access_mode`). The exception is `execute_sql`: which
+  statements it accepts depends on the request's access, so it has one description for all modes;
+  its annotations still follow the ceiling.
 
 ## Normalize input instead of rejecting it
 

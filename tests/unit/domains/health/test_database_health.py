@@ -19,19 +19,22 @@ async def test_health_checks_run_in_parallel(mock_db_access) -> None:
         await asyncio.sleep(delay)
         return "ok"
 
-    with patch.multiple(
-        dh.IndexHealthCalc,
-        invalid_index_check=fake_check,
-        duplicate_index_check=fake_check,
-        index_bloat=fake_check,
-        unused_indexes=fake_check,
-    ), patch.object(dh.ConnectionHealthCalc, "connection_health_check", fake_check), \
-         patch.object(dh.VacuumHealthCalc, "transaction_id_danger_check", fake_check), \
-         patch.object(dh.SequenceHealthCalc, "sequence_danger_check", fake_check), \
-         patch.object(dh.ReplicationCalc, "replication_health_check", fake_check), \
-         patch.multiple(dh.BufferHealthCalc, index_hit_rate=fake_check, table_hit_rate=fake_check), \
-         patch.object(dh.ConstraintHealthCalc, "invalid_constraints_check", fake_check):
-        tool = dh.DatabaseHealthAnalyzer(sql_driver=mock_db_access.sql_driver)
+    with (
+        patch.multiple(
+            dh.IndexHealthCalc,
+            invalid_index_check=fake_check,
+            duplicate_index_check=fake_check,
+            index_bloat=fake_check,
+            unused_indexes=fake_check,
+        ),
+        patch.object(dh.ConnectionHealthCalc, "connection_health_check", fake_check),
+        patch.object(dh.VacuumHealthCalc, "transaction_id_danger_check", fake_check),
+        patch.object(dh.SequenceHealthCalc, "sequence_danger_check", fake_check),
+        patch.object(dh.ReplicationCalc, "replication_health_check", fake_check),
+        patch.multiple(dh.BufferHealthCalc, index_hit_rate=fake_check, table_hit_rate=fake_check),
+        patch.object(dh.ConstraintHealthCalc, "invalid_constraints_check", fake_check),
+    ):
+        tool = dh.DatabaseHealthAnalyzer(mock_db_access)
 
         start = time.monotonic()
         result = await tool.health(health_type="all")

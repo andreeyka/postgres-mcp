@@ -1,9 +1,11 @@
 """Тесты общих типов параметров тулов: нормализация ввода агента и отказ с подсказкой."""
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.server.providers import LocalProvider
 from pydantic import TypeAdapter, ValidationError
 
 from postgres_fastmcp.app.config import Settings
@@ -25,6 +27,7 @@ from postgres_fastmcp.tools.params import (
     TopQueriesLimitParam,
     TopQueriesSortByParam,
 )
+from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import register_tools
 
 
@@ -142,10 +145,10 @@ def test_output_rejected_with_hint() -> None:
 )
 async def test_rejected_input_reaches_client_with_hint(tool: str, arguments: dict[str, Any], hint: str) -> None:
     """Ошибка нормализации проходит mask_error_details: агент видит текст с подсказкой, а не 'Error calling tool'."""
-    mcp = FastMCP(name="t", mask_error_details=True)
-    settings = Settings()
-    settings.database = settings.database.model_copy(update={"access_mode": AccessMode.FULL})
-    register_tools(mcp, settings)
+    provider = LocalProvider()
+    database = Settings().database.model_copy(update={"access_mode": AccessMode.FULL})
+    register_tools(provider, ToolSet(get_db=MagicMock), ceiling=database)
+    mcp = FastMCP(name="t", mask_error_details=True, providers=[provider])
     async with Client(mcp) as client:
         result = await client.call_tool(tool, arguments, raise_on_error=False)
     assert result.is_error is True

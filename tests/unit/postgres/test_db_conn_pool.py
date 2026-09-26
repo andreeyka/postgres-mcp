@@ -1,6 +1,7 @@
 # mypy: ignore-errors
 """Unit tests for DbConnPool."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -127,3 +128,36 @@ class TestDbConnPoolConnectFailure:
             await pool_mgr.pool_connect()
         assert pool_mgr.is_valid is False
         assert pool_mgr.last_error is not None
+
+
+class TestDbConnPoolConcurrentConnect:
+    """Concurrent first use (asyncio.gather over one service) must open exactly one pool."""
+
+    @patch("postgres_fastmcp.postgres.connection.AsyncConnectionPool")
+    async def test_concurrent_pool_connect_opens_one_pool(
+        self,
+        mock_pool_cls: MagicMock,
+    ) -> None:
+        """Three callers racing on a fresh DbConnPool share one pool; none is closed under another."""
+        created: list[MagicMock] = []
+
+        def _new_pool(*args: object, **kwargs: object) -> MagicMock:
+            pool = _make_mock_pool()
+
+            async def _slow_open() -> None:
+                # Уступаем цикл событий, как настоящий open() с сетевым подключением.
+                await asyncio.sleep(0.01)
+
+            pool.open = AsyncMock(side_effect=_slow_open)
+            created.append(pool)
+            return pool
+
+        mock_pool_cls.side_effect = _new_pool
+
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        results = await asyncio.gather(*(pool_mgr.pool_connect() for _ in range(3)))
+
+        assert len(created) == 1
+        assert all(result is created[0] for result in results)
+        created[0].close.assert_not_called()
+        assert pool_mgr.is_valid is True

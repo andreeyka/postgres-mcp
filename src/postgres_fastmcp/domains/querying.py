@@ -2,27 +2,27 @@
 
 from typing import Any
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 
 SUCCESS_NO_ROWS = "Statement executed successfully; no rows were returned."
 
 
-async def execute_sql(db: DbAccessService, sql: str) -> list[dict[str, Any]] | None:
+async def execute_sql(db: DbAccessPort, sql: str) -> list[dict[str, Any]] | None:
     """Выполнить SQL запрос к базе данных.
 
-    Режим транзакции (только чтение / чтение-запись) определяется write_mode
-    сервера, а не вызывающим кодом: при write_mode=True транзакция открывается
-    на запись, поэтому DML/DDL реально применяются. В режиме только чтения
-    (write_mode=False) запись блокируется на уровне валидатора и транзакции.
+    Режим транзакции (только чтение / чтение-запись) определяется правами
+    текущего запроса (``db.write_mode``), а не вызывающим кодом: при записи
+    транзакция открывается на запись, поэтому DML/DDL реально применяются.
+    Без права записи запись блокируется на уровне валидатора и транзакции.
 
     Операторы без результирующего набора (INSERT/UPDATE/DELETE/DDL без RETURNING)
     считаются успешно выполненными и возвращают None, а не ошибку; тул выводит
     для них SUCCESS_NO_ROWS.
 
     Args:
-        db: Сервис доступа к базе данных.
+        db: Доступ к БД для текущего запроса (DbAccessPort).
         sql: SQL запрос для выполнения.
 
     Returns:

@@ -261,10 +261,10 @@ uv run postgres-fastmcp \
 
 ### Управление жизненным циклом
 
-Сервер использует механизм lifespan FastMCP для подключений к БД:
+Пулом соединений владеет `PostgresProvider`, его жизненный цикл привязан к lifespan сервера FastMCP:
 
-- Создание пула соединений при старте
-- Корректное закрытие соединений при остановке
+- Пул открывается при первом запросе к БД
+- Соединения закрываются при остановке сервера
 - Обработка сигналов (SIGINT, SIGTERM)
 
 ### Безопасное выполнение SQL
@@ -427,38 +427,74 @@ uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass
 
 ## Использование как библиотека
 
-Пакет экспортирует `create_server`, чтобы его можно было встроить в другой Python-проект как библиотеку. Публичное API:
+Публичное API пакета:
 
 ```python
 from postgres_fastmcp import (
-    create_server,
+    PostgresProvider,  # источник девяти инструментов одной базы
+    DatabaseConfig,  # подключение и серверный потолок прав (access_mode, write_mode)
+    AccessPolicy,  # политика сужения прав по claim токена
+    EffectiveAccess,  # права одного запроса
+    AccessResolver,  # тип резолвера: токен -> EffectiveAccess
+    full_access_check,  # проверка «эффективный режим full» для своих компонентов
+    ResponseBudgetMiddleware,  # бюджет ответа тула в токенах
     Settings,
-    LocalProvider,
-    FileSystemProvider,
-    Middleware,
+    create_server,
 )
+```
 
-settings = Settings()
-# При необходимости переопределите поля:
-# settings.database = settings.database.model_copy(update={"host": "db", "user": "u", "password": "p", "name": "x"})
+`Middleware`, `LocalProvider` и прочие классы FastMCP импортируйте из `fastmcp`.
+
+### Свой сервер: `PostgresProvider`
+
+**⚠️ Важно:** `DatabaseConfig` — это pydantic `BaseSettings` (`env_prefix="MCP_DATABASE_"`, `env_file=".env"`). Любое поле, не переданное явно, — включая `access_mode`, `write_mode` и `table_prefix`, то есть серверный потолок прав, — молча читается из переменных окружения `MCP_DATABASE_*` и файла `.env` в текущей директории. Библиотечный хост с оставшимся от другого проекта `.env` может незаметно получить провайдер `full` с записью. В коде библиотеки всегда передавайте `access_mode` и `write_mode` явно, не полагаясь на окружение.
+
+```python
+from fastmcp import FastMCP
+from postgres_fastmcp import DatabaseConfig, PostgresProvider
+
+mcp = FastMCP("my-app")
+mcp.add_provider(
+    PostgresProvider(
+        DatabaseConfig(
+            host="db", port=5432, user="u", password="p", name="orders", access_mode="basic", write_mode=False
+        )
+    )
+)
+mcp.add_provider(
+    PostgresProvider(
+        DatabaseConfig(host="db", user="u", password="p", name="analytics", access_mode="full", write_mode=False)
+    ),
+    namespace="analytics",  # инструменты analytics_execute_sql, analytics_list_schemas, ...
+)
+mcp.run(transport="http", host="0.0.0.0", port=8000)
+```
+
+- Провайдер владеет пулом соединений: пул открывается при первом запросе и закрывается при остановке сервера.
+- Видимость инструментов задаёт `access_mode` из `DatabaseConfig`: в `basic` доступны четыре инструмента, в `full` — девять.
+- `access_resolver` — функция `AccessToken | None -> EffectiveAccess`, считающая права запроса по токену; результат никогда не превышает потолок из `DatabaseConfig`. Без резолвера права запроса равны потолку. Сужение прав по claim через `AccessPolicy(enforced=True)` пока не поддерживается: провайдер отклоняет такую политику при создании.
+- `create_server` подключает бюджет ответа автоматически. На своём сервере добавьте его сами первым middleware: `mcp.add_middleware(ResponseBudgetMiddleware(20000))`, импорт — `from postgres_fastmcp import ResponseBudgetMiddleware`.
+
+### Готовый сервер: `create_server`
+
+```python
+from postgres_fastmcp import Settings, create_server
 
 server = create_server(
-    settings,
-    # auth: передайте любой экземпляр AuthProvider из FastMCP (BearerAuth, JWT, OAuth, собственный наследник).
-    auth=None,
-    # extra_providers: расширьте сервер собственными tools/resources/prompts.
-    extra_providers=[],
-    # extra_middleware: добавляется после встроенных TimingMiddleware и LoggingMiddleware.
-    extra_middleware=[],
+    Settings(),
+    auth=None,  # любой AuthProvider из fastmcp.server.auth
+    access_resolver=None,  # свой резолвер прав для PostgresProvider
+    extra_providers=[],  # свои источники tools/resources/prompts
+    extra_middleware=[],  # добавляются после встроенных middleware
 )
-
 server.run(transport="http", host="0.0.0.0", port=8000)
 ```
 
 Замечания:
 - `auth=None` означает отсутствие аутентификации. Это безопасно для транспорта `stdio` или доверенного localhost. Для сетевого HTTP-развёртывания подключите `AuthProvider` из `fastmcp.server.auth` или собственный.
-- `extra_providers` смешиваются со встроенными источниками инструментов. Имена инструментов не должны конфликтовать со встроенными (`execute_sql`, `list_objects`, `get_object_details`, `explain_query`, `list_schemas`, `analyze_db_health`, `get_top_queries`, `analyze_query_indexes`, `analyze_workload_indexes`) — установлен режим `on_duplicate="error"`, поэтому коллизии приведут к ошибке на старте.
-- `extra_middleware` выполняется после нашего timing/logging middleware, поэтому замеры времени запроса/ответа покрывают и ваши обработчики.
+- Имена инструментов из `extra_providers` не должны совпадать со встроенными (`execute_sql`, `list_objects`, `get_object_details`, `explain_query`, `list_schemas`, `analyze_db_health`, `get_top_queries`, `analyze_query_indexes`, `analyze_workload_indexes`): при совпадении FastMCP пишет предупреждение и оставляет встроенный инструмент. Чтобы развести имена, подключите свой провайдер через `server.add_provider(provider, namespace="...")`.
+- В `access_mode=basic` скрываются только full-инструменты этого пакета; инструменты из `extra_providers` тегом `full` не фильтруются и остаются видимыми независимо от `access_mode`.
+- Middleware выполняются в порядке: бюджет ответа, timing, logging, затем `extra_middleware`. Бюджет стоит первым и проверяет в том числе результат ваших middleware.
 
 ## Разработка
 

@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import (
     QUERY_GET_COLUMNS,
     QUERY_GET_CONSTRAINTS,
@@ -17,11 +17,11 @@ from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 class TablesService:
     """Сервис списка таблиц/представлений и получения их деталей."""
 
-    def __init__(self, db: DbAccessService) -> None:
+    def __init__(self, db: DbAccessPort) -> None:
         """Инициализация с сервисом доступа к БД.
 
         Args:
-            db: Сервис доступа к БД.
+            db: Доступ к БД для текущего запроса (DbAccessPort).
         """
         self.db = db
 

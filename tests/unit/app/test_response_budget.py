@@ -84,10 +84,13 @@ def _server_with_rows(  # noqa: ANN202
             self.sql_driver = MagicMock()
             self.sql_driver.execute = AsyncMock(return_value=rows)
 
+        def view(self, access: object) -> "FakeDb":
+            return self
+
         async def close(self) -> None:
             return None
 
-    monkeypatch.setattr("postgres_fastmcp.app.lifespan.DbAccessService", FakeDb)
+    monkeypatch.setattr("postgres_fastmcp.provider.DbAccessService", FakeDb)
     settings = Settings()
     settings.database = settings.database.model_copy(update={"access_mode": access_mode, "write_mode": write_mode})
     settings.server = settings.server.model_copy(update={"response_max_tokens": max_tokens})

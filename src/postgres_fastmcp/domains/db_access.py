@@ -1,7 +1,9 @@
-"""Сервис доступа к базе данных: пул, исполнитель и безопасная обертка."""
+"""Доступ к базе данных: один пул на сервис и исполнитель под права конкретного запроса."""
 
+from dataclasses import dataclass
 from typing import Protocol
 
+from postgres_fastmcp.access import EffectiveAccess, clamp_to_ceiling
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.ports import SqlDriverPort
@@ -13,9 +15,7 @@ from postgres_fastmcp.shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-ERROR_DB_NOT_INITIALIZED = "Соединение с базой данных не инициализировано"
-ERROR_DB_URL_NOT_SET = "URL подключения к базе данных не задан"
-LOG_UNRESTRICTED = "Используется SqlExecutor без ограничений (write_mode=True)"
+DEFAULT_QUERY_TAG = "postgres_fastmcp"
 
 
 class DatabaseConfigPort(Protocol):
@@ -39,95 +39,131 @@ class DatabaseConfigPort(Protocol):
         ...
 
 
+class DbAccessPort(Protocol):
+    """То, что домены получают на один запрос: исполнитель и права этого запроса."""
+
+    @property
+    def sql_driver(self) -> SqlDriverPort:
+        """Исполнитель SQL под права запроса."""
+        ...
+
+    @property
+    def access_mode(self) -> AccessMode:
+        """Эффективный уровень доступа запроса."""
+        ...
+
+    @property
+    def write_mode(self) -> bool:
+        """Разрешена ли запись в этом запросе."""
+        ...
+
+    @property
+    def table_prefix(self) -> str | None:
+        """Префикс имён таблиц из конфигурации (действует в BASIC)."""
+        ...
+
+    @property
+    def connection_id(self) -> str:
+        """Устойчивый идентификатор соединения (ключ кэшей версий и расширений)."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class DbAccess:
+    """Реализация DbAccessPort для одного запроса."""
+
+    sql_driver: SqlDriverPort
+    access_mode: AccessMode
+    write_mode: bool
+    table_prefix: str | None
+    connection_id: str
+
+
 class DbAccessService:
-    """Сервис доступа к базе данных: пул и исполнитель (обычный или безопасный)."""
+    """Пул подключений и исполнители, закэшированные по эффективным правам (не больше четырёх)."""
 
     def __init__(self, config: DatabaseConfigPort) -> None:
-        """Инициализация с конфигурацией базы данных.
+        """Инициализация с конфигурацией базы данных; пул открывается лениво при первом запросе.
 
         Args:
             config: Конфигурация базы данных.
         """
-        self.config = config
-        self.write_mode = config.write_mode
-        self.access_mode = config.access_mode
-        self.db_connection = DbConnPool(
+        self._config = config
+        self._pool = DbConnPool(
             connection_url=config.database_uri,
             min_size=config.pool_min_size,
             max_size=config.pool_max_size,
         )
-        self._executor: SqlDriverPort | None = None
+        self._ceiling = EffectiveAccess(config.access_mode, write_mode=config.write_mode)
+        self._executors: dict[EffectiveAccess, SqlDriverPort] = {}
+
+    def view(self, access: EffectiveAccess) -> DbAccess:
+        """Доступ к БД для одного запроса с заданными правами.
+
+        Права запроса дополнительно ограничиваются потолком из конфигурации сервиса,
+        независимо от резолвера: запрос не может получить больше, чем разрешено сервису.
+
+        Args:
+            access: Эффективные права запроса.
+
+        Returns:
+            DbAccess с исполнителем под права, приведённые к потолку.
+        """
+        access = clamp_to_ceiling(access, self._ceiling)
+        return DbAccess(
+            sql_driver=self._executor(access),
+            access_mode=access.access_mode,
+            write_mode=access.write_mode,
+            table_prefix=self._config.table_prefix,
+            connection_id=self._pool.connection_url or "",
+        )
 
     async def close(self) -> None:
-        """Закрывает пул подключений к базе данных. Вызывать при завершении жизненного цикла сервиса."""
-        logger.debug("Закрытие соединений с базой данных DbAccessService")
-        if self.db_connection:
-            try:
-                await self.db_connection.close()
-                logger.debug("Пул подключений к базе данных успешно закрыт")
-            except Exception as e:
-                logger.error("Ошибка при закрытии пула подключений к базе данных: %s", e)
+        """Закрыть пул подключений. Вызывать при завершении жизненного цикла сервиса."""
+        logger.debug("Closing the database connection pool")
+        try:
+            await self._pool.close()
+        except Exception as e:
+            logger.error("Failed to close the database connection pool: %s", e)
 
-    @property
-    def sql_driver(self) -> SqlDriverPort:
-        """Исполнитель для SQL (обычный или безопасный). Создается лениво, переиспользуется."""
-        if self._executor is not None:
-            return self._executor
+    def _executor(self, access: EffectiveAccess) -> SqlDriverPort:
+        """Исполнитель под права: создаётся при первом обращении и переиспользуется."""
+        cached = self._executors.get(access)
+        if cached is not None:
+            return cached
 
-        if self.db_connection is None:
-            raise ValueError(ERROR_DB_NOT_INITIALIZED)
-        if not self.db_connection.connection_url:
-            raise ValueError(ERROR_DB_URL_NOT_SET)
-
-        base = SqlExecutor(conn=self.db_connection)
-
-        if self.access_mode == AccessMode.FULL and self.write_mode:
-            logger.debug(LOG_UNRESTRICTED)
-            self._executor = base
+        base = SqlExecutor(conn=self._pool)
+        executor: SqlDriverPort
+        # Без ограничений — только явная запись (is True) в FULL; всё остальное через SafeSqlExecutor.
+        if access.access_mode == AccessMode.FULL and access.write_mode is True:
+            logger.debug("Using unrestricted SqlExecutor (access_mode=full, write_mode=True)")
+            executor = base
         else:
-            query_tag = self.config.query_tag or "postgres_fastmcp"
+            basic = access.access_mode == AccessMode.BASIC
             safe_config = SafeSqlConfig(
-                timeout=self.config.safe_sql_timeout,
-                allowed_schema=self._allowed_schema(),
-                read_only=self._is_read_only(),
-                query_tag=query_tag,
-                table_prefix=self.config.table_prefix if self.access_mode == AccessMode.BASIC else None,
+                timeout=self._config.safe_sql_timeout,
+                allowed_schema="public" if basic else None,
+                read_only=not access.write_mode,
+                query_tag=self._config.query_tag or DEFAULT_QUERY_TAG,
+                table_prefix=self._config.table_prefix if basic else None,
             )
             validator = QueryValidator(
                 allowed_schema=safe_config.allowed_schema,
                 table_prefix=safe_config.table_prefix,
                 read_only=safe_config.read_only,
-                allow_explain_analyze=(self.access_mode == AccessMode.FULL),
+                allow_explain_analyze=not basic,
             )
             logger.debug(
                 "Using SafeSqlExecutor (access_mode=%s, write_mode=%s, allowed_schema=%s, "
                 "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s)",
-                self.access_mode,
-                self.write_mode,
+                access.access_mode,
+                access.write_mode,
                 safe_config.allowed_schema,
                 safe_config.read_only,
-                self.access_mode == AccessMode.FULL,
+                not basic,
                 safe_config.timeout,
                 safe_config.table_prefix,
             )
-            self._executor = SafeSqlExecutor(delegate=base, validator=validator, config=safe_config)
-
-        return self._executor
-
-    def _is_read_only(self) -> bool:
-        return not self.write_mode
-
-    def _allowed_schema(self) -> str | None:
-        return "public" if self.access_mode == AccessMode.BASIC else None
-
-    @property
-    def table_prefix(self) -> str | None:
-        """Префикс имён таблиц из конфигурации (для access_mode=basic); None, если не задан."""
-        return self.config.table_prefix
-
-    @property
-    def connection_id(self) -> str:
-        """Устойчивый идентификатор для этого соединения (например, для кэша версий/расширений)."""
-        if not self.db_connection or not self.db_connection.connection_url:
-            return ""
-        return self.db_connection.connection_url
+            executor = SafeSqlExecutor(delegate=base, validator=validator, config=safe_config)
+        self._executors[access] = executor
+        return executor
