@@ -9,6 +9,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 from fastmcp.server.providers import LocalProvider
+from fastmcp.utilities.tests import asgi_server
 
 from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config import Settings
@@ -150,21 +151,41 @@ def test_no_warning_when_exposed_http_has_auth(caplog: pytest.LogCaptureFixture)
     assert _auth_warnings(caplog) == []
 
 
-def test_stdio_skips_building_the_configured_auth_provider(caplog: pytest.LogCaptureFixture) -> None:
-    """settings.auth.mode=static в stdio не должен строить провайдер: discovery/mkdir не должны выполняться."""
+async def test_create_server_builds_auth_by_default_regardless_of_configured_transport(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fail-closed: settings.server.transport — конфигурационное значение, не то, чем вызывающий
+    реально запустит сервер (mcp.run(transport=...)). Библиотечный create_server(settings) должен
+    строить провайдер по умолчанию независимо от него, иначе settings.server.transport="stdio" +
+    mcp.run(transport="http") обслуживал бы HTTP вовсе без аутентификации.
+    """
     server = create_server(_auth_settings(transport="stdio", auth=_STATIC_AUTH))
+    assert isinstance(server.auth, StaticTokenVerifier)
+    # Провайдер построен и реально enforce'ится, даже раз конфиг говорит "stdio" (см. запрос ниже);
+    # предупреждение о stdio здесь — не про безопасность, а про то, что over-stdio auth не действует.
+    assert "applies only to the HTTP transport" in _auth_warnings(caplog)[0]
+    async with asgi_server(server) as running, running.http_client() as http:
+        response = await http.post(running.url, json={}, headers={"Accept": "application/json, text/event-stream"})
+    assert response.status_code == 401
+
+
+def test_build_auth_false_skips_the_configured_provider_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """build_auth=False — единственный способ пропустить сборку; предупреждение объясняет, почему."""
+    server = create_server(_auth_settings(transport="stdio", auth=_STATIC_AUTH), build_auth=False)
     assert server.auth is None
     [message] = _auth_warnings(caplog)
     assert "mode=static" in message
-    assert "stdio" in message
+    assert "build_auth=False" in message
     assert "tok-secret-value" not in caplog.text
 
 
-def test_stdio_skips_oidc_discovery_for_an_unreachable_idp(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Регрессия: недоступный IdP не должен мешать stdio-серверу стартовать (discovery не вызывается)."""
+def test_build_auth_false_skips_oidc_discovery_for_an_unreachable_idp(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Регрессия: build_auth=False (CLI stdio) не должен трогать сеть за недоступным IdP, но должен предупредить."""
 
     def discovery(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("OIDC discovery must not run when the provider is skipped for stdio")
+        raise AssertionError("OIDC discovery must not run when build_auth=False")
 
     monkeypatch.setattr(OIDCProxy, "get_oidc_configuration", discovery)
     oidc_auth = AuthSettings(
@@ -174,8 +195,11 @@ def test_stdio_skips_oidc_discovery_for_an_unreachable_idp(monkeypatch: pytest.M
         oidc_client_secret="oidc-client-secret",
         base_url="https://mcp.example.com",
     )
-    server = create_server(_auth_settings(transport="stdio", auth=oidc_auth))
+    server = create_server(_auth_settings(transport="stdio", auth=oidc_auth), build_auth=False)
     assert server.auth is None
+    [message] = _auth_warnings(caplog)
+    assert "mode=oidc" in message
+    assert "build_auth=False" in message
 
 
 def test_explicit_auth_in_stdio_still_warns_as_before(caplog: pytest.LogCaptureFixture) -> None:
@@ -186,6 +210,13 @@ def test_explicit_auth_in_stdio_still_warns_as_before(caplog: pytest.LogCaptureF
     [message] = _auth_warnings(caplog)
     assert "Authentication (StaticTokenVerifier) applies only to the HTTP transport" in message
     assert "tok-secret-value" not in caplog.text
+
+
+@pytest.mark.parametrize("build_auth", [True, False])
+def test_explicit_auth_overrides_build_auth_flag(build_auth: bool) -> None:
+    explicit = StaticTokenVerifier(tokens={"tok-secret-value": {"client_id": "c"}})
+    server = create_server(_auth_settings(transport="stdio"), auth=explicit, build_auth=build_auth)
+    assert server.auth is explicit
 
 
 def test_http_still_builds_the_auth_provider_from_settings() -> None:

@@ -24,13 +24,20 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _warn_about_auth(
-    settings: Settings, auth: AuthProvider | None, *, custom_resolver: bool, explicit_auth: bool
+    settings: Settings,
+    auth: AuthProvider | None,
+    *,
+    custom_resolver: bool,
+    explicit_auth: bool,
+    build_auth: bool,
 ) -> None:
     """Предупредить на старте о конфигурации, где auth не защищает так, как ожидает оператор.
 
     ``explicit_auth`` — вызывающий передал свой ``AuthProvider`` в ``create_server``, а не полагался
-    на ``settings.auth``: тогда провайдер уже построен вызывающим и `create_server` его не строил
-    (сети/диска для этого не касался), в том числе и для stdio.
+    на ``settings.auth``. ``build_auth`` — как вызвали ``create_server``: False означает, что сборка
+    провайдера из ``settings.auth`` была сознательно пропущена вызывающим (см. ``create_server``).
+    ``settings.server.transport`` — только конфигурационное значение для этих сообщений, не гарантия
+    того, каким транспортом вызывающий реально поднимет сервер.
     """
     transport = settings.server.transport
     if transport == TransportConfig.HTTP and auth is None and settings.server.host not in _LOOPBACK_HOSTS:
@@ -39,34 +46,31 @@ def _warn_about_auth(
             "ceiling of the database config. Set MCP_AUTH_MODE or bind to 127.0.0.1.",
             settings.server.host,
         )
-    skipped_for_stdio = False
-    if transport == TransportConfig.STDIO:
-        if auth is not None:
-            logger.warning(
-                "Authentication (%s) applies only to the HTTP transport; over stdio every request gets the access "
-                "ceiling of the database config.",
-                type(auth).__name__,
-            )
-        elif not explicit_auth and settings.auth.mode != AuthMode.NONE:
-            # Провайдер для этого mode сознательно не строился (see create_server): stdio не читает
-            # токены, а для oidc это ещё и сеть/диск, которые незачем трогать в stdio.
-            skipped_for_stdio = True
-            logger.warning(
-                "Authentication (mode=%s) is configured but was not built for the stdio transport: stdio never "
-                "carries a token, so every request gets the access ceiling of the database config.",
-                settings.auth.mode,
-            )
-    if auth is None and settings.auth.access_policy.enforced and not custom_resolver and not skipped_for_stdio:
+    if transport == TransportConfig.STDIO and auth is not None:
+        logger.warning(
+            "Authentication (%s) applies only to the HTTP transport; over stdio every request gets the access "
+            "ceiling of the database config.",
+            type(auth).__name__,
+        )
+    skipped_by_flag = not explicit_auth and not build_auth and settings.auth.mode != AuthMode.NONE
+    if skipped_by_flag:
+        logger.warning(
+            "Authentication (mode=%s) is configured but build_auth=False skipped building the provider for it: "
+            "every request gets the access ceiling of the database config unless the caller enforces auth itself.",
+            settings.auth.mode,
+        )
+    if auth is None and settings.auth.access_policy.enforced and not custom_resolver and not skipped_by_flag:
         logger.warning(
             "auth.access_policy.enforced=true has no effect without authentication: requests carry no token, "
             "so every request gets the access ceiling. Set MCP_AUTH_MODE."
         )
 
 
-def create_server(
+def create_server(  # noqa: PLR0913
     settings: Settings,
     *,
     auth: AuthProvider | None = None,
+    build_auth: bool = True,
     access_resolver: AccessResolver | None = None,
     extra_providers: Sequence[Provider] = (),
     extra_middleware: Sequence[Middleware] = (),
@@ -75,11 +79,18 @@ def create_server(
 
     Args:
         settings: Конфигурация (database, server, fastmcp, auth блоки).
-        auth: Auth-провайдер FastMCP; если не задан и транспорт не stdio, строится из
-            settings.auth (mode=none — без аутентификации). В stdio auth всё равно
-            игнорируется рантаймом, поэтому settings.auth там не собирается вовсе: для
-            oidc это исключает синхронный discovery-запрос и запись в FASTMCP_HOME на
-            старте, так что недоступный IdP не мешает stdio-серверу запуститься.
+        auth: Auth-провайдер FastMCP; если не задан, строится из settings.auth при
+            build_auth=True (по умолчанию); mode=none — без аутентификации.
+        build_auth: Строить ли провайдер из settings.auth, когда auth не передан явно.
+            По умолчанию True: библиотечный вызов всегда fail-closed, независимо от
+            settings.server.transport — это конфигурационное значение и не обязано
+            совпадать с транспортом, которым вызывающий реально поднимет сервер через
+            ``mcp.run(transport=...)``; settings.server.transport="stdio" с последующим
+            ``mcp.run(transport="http")`` обслуживал бы HTTP вовсе без аутентификации,
+            если бы create_server решал по нему. CLI (``app/main.py``) передаёт
+            build_auth=False, только когда сам действительно запускает stdio: тогда
+            oidc не делает синхронный discovery-запрос и не пишет в FASTMCP_HOME на
+            старте, и недоступный IdP не мешает stdio-серверу запуститься.
         access_resolver: Свой резолвер токен -> права для PostgresProvider; приоритетнее
             settings.auth.access_policy (результат ограничивается потолком из settings.database).
         extra_providers: Дополнительные FastMCP-провайдеры от потребителя библиотеки.
@@ -90,9 +101,15 @@ def create_server(
         Готовый FastMCP, на котором можно сразу вызывать `.run(...)`.
     """
     explicit_auth = auth is not None
-    if not explicit_auth and settings.server.transport != TransportConfig.STDIO:
+    if not explicit_auth and build_auth:
         auth = build_auth_provider(settings.auth)
-    _warn_about_auth(settings, auth, custom_resolver=access_resolver is not None, explicit_auth=explicit_auth)
+    _warn_about_auth(
+        settings,
+        auth,
+        custom_resolver=access_resolver is not None,
+        explicit_auth=explicit_auth,
+        build_auth=build_auth,
+    )
     provider = PostgresProvider(
         settings.database,
         access_policy=settings.auth.access_policy,

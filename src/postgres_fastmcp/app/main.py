@@ -65,8 +65,11 @@ def main(  # noqa: PLR0913
         access_mode=access_mode,
     )
     actual_transport = transport if transport is not None else settings.server.transport
-    # Сервер собирается до отключения логов в stdio: предупреждения auth на старте уходят в stderr
-    mcp = create_server(settings)
+    # Сервер собирается до отключения логов в stdio: предупреждения auth на старте уходят в stderr.
+    # build_auth=False только здесь и только для реального stdio-запуска этого же процесса (actual_transport,
+    # а не settings.server.transport — это лишь конфигурация и не обязана совпадать с тем, что ниже уйдёт в
+    # mcp.run(transport=...)): в stdio auth всё равно не действует, и не нужно трогать сеть/диск ради oidc.
+    mcp = create_server(settings, build_auth=actual_transport != "stdio")
     if actual_transport == "stdio":
         configure_logging(disable=True)
 

@@ -5,6 +5,8 @@ from io import StringIO
 from unittest.mock import patch
 
 import pytest
+from fastmcp import FastMCP
+from fastmcp.server.auth.oidc_proxy import OIDCProxy
 from rich.console import Console
 
 from postgres_fastmcp.app.main import app
@@ -52,15 +54,22 @@ class TestMainTransportStdio:
 
 
 def test_stdio_builds_the_server_before_disabling_logs() -> None:
-    """Предупреждения auth пишутся в create_server: логи в stdio отключаются только после него."""
+    """Предупреждения auth пишутся в create_server: логи в stdio отключаются только после него.
+
+    build_auth=False здесь идёт по реальному транспорту запуска (actual_transport), а не по
+    settings.server.transport из конфига — иначе settings.server.transport="stdio" с последующим
+    mcp.run(transport="http") обслуживал бы HTTP вовсе без аутентификации.
+    """
     calls: list[str] = []
+    build_auth_seen: list[bool] = []
     settings = type(
         "Settings", (), {"server": type("Server", (), {"transport": "stdio", "host": "127.0.0.1", "port": 8000})()}
     )()
     mcp = type("MCP", (), {"run": lambda self, **kw: None})()
 
-    def fake_create_server(_settings):
+    def fake_create_server(_settings, *, build_auth=True, **_kwargs):
         calls.append("create_server")
+        build_auth_seen.append(build_auth)
         return mcp
 
     def fake_configure_logging(**kwargs):
@@ -73,6 +82,48 @@ def test_stdio_builds_the_server_before_disabling_logs() -> None:
     ):
         app(tokens=["--transport", "stdio"], result_action="return_value")
     assert calls == ["configure_logging", "create_server", "disable_logging"]
+    assert build_auth_seen == [False]
+
+
+def test_http_passes_build_auth_true_to_create_server() -> None:
+    settings = type(
+        "Settings", (), {"server": type("Server", (), {"transport": "http", "host": "127.0.0.1", "port": 8000})()}
+    )()
+    mcp = type("MCP", (), {"run": lambda self, **kw: None})()
+
+    with (
+        patch("postgres_fastmcp.app.main.build_settings_from_cli", return_value=settings),
+        patch("postgres_fastmcp.app.main.create_server", return_value=mcp) as mock_create_server,
+        patch("postgres_fastmcp.app.main.configure_logging"),
+    ):
+        app(tokens=["--transport", "http"], result_action="return_value")
+    assert mock_create_server.call_args.kwargs["build_auth"] is True
+
+
+def test_stdio_cli_skips_oidc_discovery_and_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Сквозь настоящий main(): --transport stdio с auth.mode=oidc не должен трогать сеть за
+    недоступным IdP (create_server не мокается), но должен предупредить, что провайдер не построен.
+    configure_logging мокается, иначе root_logger.handlers.clear() снял бы и обработчик caplog.
+    """
+
+    def discovery(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("OIDC discovery must not run for the stdio CLI")
+
+    monkeypatch.setattr(OIDCProxy, "get_oidc_configuration", discovery)
+    monkeypatch.setattr(FastMCP, "run", lambda self, **kw: None)
+    monkeypatch.setenv("MCP_AUTH_MODE", "oidc")
+    monkeypatch.setenv("MCP_AUTH_OIDC_CONFIG_URL", "https://sso.example.com/.well-known/openid-configuration")
+    monkeypatch.setenv("MCP_AUTH_OIDC_CLIENT_ID", "postgres-mcp")
+    monkeypatch.setenv("MCP_AUTH_OIDC_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("MCP_AUTH_BASE_URL", "https://mcp.example.com")
+    with patch("postgres_fastmcp.app.main.configure_logging"):
+        app(tokens=["--transport", "stdio"], result_action="return_value")
+    messages = [
+        r.getMessage() for r in caplog.records if r.name == "postgres_fastmcp.app.server" and r.levelname == "WARNING"
+    ]
+    assert any("build_auth=False" in m and "mode=oidc" in m for m in messages)
 
 
 def test_pool_max_size_default_is_10() -> None:
