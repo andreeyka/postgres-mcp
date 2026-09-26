@@ -943,13 +943,19 @@ current request's access. `tools/registry.py` registers them on a `LocalProvider
 
 ## Server Startup
 
-Use `mcp.run(transport=...)` for both stdio and HTTP:
+`app/main.py` builds the server with `create_server(settings)` and runs it with
+`mcp.run(transport=...)` for both stdio and HTTP:
 
 ```python
-mcp = create_mcp(settings)
+mcp = create_server(settings)
 
-if args.http:
-    mcp.run(transport="http", host=args.host, port=args.port)
+if actual_transport == "http":
+    mcp.run(
+        transport="http",
+        host=settings.server.host,
+        port=settings.server.port,
+        uvicorn_config={"ws": "websockets-sansio", "log_config": None},
+    )
 else:
     mcp.run(transport="stdio")
 ```
@@ -983,4 +989,4 @@ Dependency rules:
 
 ## Library Documentation
 
-When implementing changes, verify all library APIs via MCP tools (especially FastMCP 3 docs).
+When implementing changes, verify all library APIs via MCP tools (especially FastMCP 4 docs).
