@@ -9,6 +9,7 @@ from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.ports import SqlDriverPort
 from postgres_fastmcp.shared.errors import (
+    ExtensionStatusUnavailableError,
     InvalidSortCriteriaError,
     PgStatStatementsNotInstalledError,
     UnsupportedServerVersionError,
@@ -47,9 +48,13 @@ class TopQueriesCalc:
         """Мажорная версия PostgreSQL после проверки, что pg_stat_statements установлено.
 
         Raises:
+            ExtensionStatusUnavailableError: Каталог расширений ответил ошибкой, статус неизвестен.
             PgStatStatementsNotInstalledError: Если pg_stat_statements не установлено.
         """
         extension_status = await self._ext_inspector.check_extension(PG_STAT_STATEMENTS, include_messages=False)
+        if extension_status.catalog_error:
+            logger.warning("Extension catalog error while checking %s", PG_STAT_STATEMENTS)
+            raise ExtensionStatusUnavailableError(PG_STAT_STATEMENTS, extension_status.catalog_error)
         if not extension_status.is_installed:
             logger.warning("Extension %s is not installed", PG_STAT_STATEMENTS)
             raise PgStatStatementsNotInstalledError

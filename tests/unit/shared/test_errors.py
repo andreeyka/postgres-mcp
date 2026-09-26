@@ -43,6 +43,9 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "QueryCancelledError": errors.QueryCancelledError,
     "ResponseTooLargeError": lambda: errors.ResponseTooLargeError(25000, 20000),
     "ObjectNotFoundError": lambda: errors.ObjectNotFoundError("public", "ghost", "table"),
+    "ExtensionStatusUnavailableError": lambda: errors.ExtensionStatusUnavailableError(
+        "pg_stat_statements", "Unable to determine extension status."
+    ),
 }
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -89,6 +92,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("ResponseTooLargeError", "Refine the request: add WHERE or LIMIT"),
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
         ("ObjectNotFoundError", "Use list_objects to see existing objects."),
+        ("ExtensionStatusUnavailableError", "then retry"),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:

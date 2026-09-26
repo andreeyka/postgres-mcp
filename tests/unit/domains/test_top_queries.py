@@ -10,19 +10,31 @@ from pglast.visitors import Visitor
 from psycopg.errors import ObjectNotInPrerequisiteState
 
 from postgres_fastmcp.domains.top_queries import TopQueriesCalc, get_top_queries
+from postgres_fastmcp.postgres.extensions import CATALOG_ERROR_MESSAGE, ExtensionStatus
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.errors import (
+    ExtensionStatusUnavailableError,
     InvalidSortCriteriaError,
     PgStatStatementsNotInstalledError,
     UnsupportedServerVersionError,
 )
 
 
-def _calc(mock_executor: MagicMock, *, installed: bool = True, pg_version: int = 16) -> TopQueriesCalc:
+def _calc(
+    mock_executor: MagicMock, *, installed: bool = True, pg_version: int = 16, catalog_error: str | None = None
+) -> TopQueriesCalc:
     """TopQueriesCalc с подменённой проверкой расширения и версией PostgreSQL (по умолчанию 16)."""
     calc = TopQueriesCalc(sql_driver=mock_executor, connection_id="test")
     calc._ext_inspector = MagicMock()
-    calc._ext_inspector.check_extension = AsyncMock(return_value=MagicMock(is_installed=installed))
+    status = ExtensionStatus(
+        is_installed=installed,
+        is_available=installed,
+        name="pg_stat_statements",
+        message="",
+        default_version=None,
+        catalog_error=catalog_error,
+    )
+    calc._ext_inspector.check_extension = AsyncMock(return_value=status)
     calc._ext_inspector.get_postgres_version = AsyncMock(return_value=pg_version)
     return calc
 
@@ -105,6 +117,22 @@ async def test_missing_extension_raises(mock_executor: MagicMock, method: str) -
     """Without pg_stat_statements both rankings raise a user-facing error with the install hint."""
     with pytest.raises(PgStatStatementsNotInstalledError, match="CREATE EXTENSION pg_stat_statements"):
         await getattr(_calc(mock_executor, installed=False), method)()
+    mock_executor.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["get_top_resource_queries", "get_top_queries_by_time"])
+async def test_catalog_error_is_not_reported_as_missing_extension(mock_executor: MagicMock, method: str) -> None:
+    """Каталог расширений упал: агент видит причину и подсказку повторить, а не «не установлено»."""
+    calc = _calc(mock_executor, installed=False, catalog_error=CATALOG_ERROR_MESSAGE)
+
+    with pytest.raises(ExtensionStatusUnavailableError) as exc_info:
+        await getattr(calc, method)()
+
+    message = str(exc_info.value)
+    assert "pg_stat_statements" in message
+    assert CATALOG_ERROR_MESSAGE in message
+    assert "retry" in message
+    assert "CREATE EXTENSION" not in message
     mock_executor.execute.assert_not_called()
 
 

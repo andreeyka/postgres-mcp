@@ -417,6 +417,24 @@ class PgStatStatementsNotInstalledError(UserFacingError):
         )
 
 
+class ExtensionStatusUnavailableError(UserFacingError):
+    """Каталог расширений не ответил: статус расширения неизвестен (не путать с «не установлено»)."""
+
+    def __init__(self, extension_name: str, reason: str) -> None:
+        """Инициализация с именем расширения и причиной сбоя каталога.
+
+        Args:
+            extension_name: Имя расширения, статус которого не удалось проверить.
+            reason: Описание сбоя каталога (английский текст для агента).
+        """
+        super().__init__(
+            f"Could not check whether the {extension_name} extension is installed. {reason} "
+            "Also check the database role's permissions and the connection, then retry."
+        )
+        self.extension_name = extension_name
+        self.reason = reason
+
+
 class UnsupportedServerVersionError(UserFacingError):
     """Возможность недоступна на версии PostgreSQL сервера."""
 
