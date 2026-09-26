@@ -251,4 +251,4 @@ async def get_top_queries(
             limit=limit,
             sort_by="mean" if sort_by == "mean_time" else "total",
         )
-    raise InvalidSortCriteriaError
+    raise InvalidSortCriteriaError(sort_by)
