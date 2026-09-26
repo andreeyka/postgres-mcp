@@ -43,25 +43,25 @@ except PackageNotFoundError:
 
 _META: dict[str, Any] = {"version": _VERSION}
 
-# Annotation presets for Tool.from_function(annotations={...})
-# See https://gofastmcp.com/servers/tools — ToolAnnotations fields.
+# Annotation presets for Tool.from_function(annotations=...)
+# See https://gofastmcp.com/servers/tools — ToolAnnotations fields (snake_case since MCP SDK v2).
 READ_ONLY_IDEMPOTENT: dict[str, bool] = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": True,
-    "openWorldHint": True,
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": True,
+    "open_world_hint": True,
 }
 READ_ONLY_NON_IDEMPOTENT: dict[str, bool] = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": False,
-    "openWorldHint": True,
+    "read_only_hint": True,
+    "destructive_hint": False,
+    "idempotent_hint": False,
+    "open_world_hint": True,
 }
 DESTRUCTIVE: dict[str, bool] = {
-    "readOnlyHint": False,
-    "destructiveHint": True,
-    "idempotentHint": False,
-    "openWorldHint": True,
+    "read_only_hint": False,
+    "destructive_hint": True,
+    "idempotent_hint": False,
+    "open_world_hint": True,
 }
 
 
