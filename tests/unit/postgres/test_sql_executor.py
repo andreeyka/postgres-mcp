@@ -4,11 +4,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg.errors import AdminShutdown, QueryCanceled, UndefinedTable
 
-from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 
 
 class TestSqlExecutorRender:
@@ -76,3 +77,28 @@ class TestSqlExecutorExecuteWithPool:
             call_args = mock_exec.call_args
             assert "10" in str(call_args[0][1])
             assert "{}" not in str(call_args[0][1])
+
+    @pytest.mark.parametrize(
+        "error",
+        [UndefinedTable('relation "t" does not exist'), QueryCanceled("canceling statement due to statement timeout")],
+        ids=["programming-error", "statement-timeout"],
+    )
+    async def test_sql_errors_do_not_invalidate_pool(self, error: Exception) -> None:
+        """A failed statement is the client's problem, not the pool's: the pool stays valid."""
+        mock_pool = self._mock_pool_for_execute()
+        executor = SqlExecutor(conn=mock_pool)
+        with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
+            mock_exec.side_effect = error
+            with pytest.raises(type(error)):
+                await executor.execute("SELECT 1", readonly=True)
+            mock_pool.mark_invalid.assert_not_called()
+
+    async def test_connection_errors_invalidate_pool(self) -> None:
+        """A server shutdown (OperationalError that is not QueryCanceled) invalidates the pool."""
+        mock_pool = self._mock_pool_for_execute()
+        executor = SqlExecutor(conn=mock_pool)
+        with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
+            mock_exec.side_effect = AdminShutdown("terminating connection due to administrator command")
+            with pytest.raises(AdminShutdown):
+                await executor.execute("SELECT 1", readonly=True)
+            mock_pool.mark_invalid.assert_called_once()

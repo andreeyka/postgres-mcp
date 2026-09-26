@@ -3,7 +3,13 @@
 import logging
 from typing import Any, LiteralString, NoReturn
 
-from psycopg import AsyncConnection
+from psycopg import (
+    AsyncConnection,
+    Error as PsycopgError,
+    InterfaceError,
+    OperationalError,
+)
+from psycopg.errors import QueryCanceled
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Composable, Literal
 
@@ -13,6 +19,20 @@ from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_connection_error(error: Exception) -> bool:
+    """Отличить ошибку соединения (пул надо пересоздать) от ошибки самого SQL (пул исправен).
+
+    Не-psycopg исключения считаем проблемой соединения (консервативно). Среди psycopg-ошибок
+    только InterfaceError/OperationalError говорят о соединении, но QueryCanceled наследует
+    OperationalError и означает лишь statement_timeout или pg_cancel_backend.
+    """
+    if not isinstance(error, PsycopgError):
+        return True
+    if isinstance(error, QueryCanceled):
+        return False
+    return isinstance(error, (InterfaceError, OperationalError))
 
 
 class SqlExecutor:
@@ -54,7 +74,7 @@ class SqlExecutor:
         composables = [p if isinstance(p, Composable) else Literal(p) for p in params]
         return SQL(query).format(*composables).as_string()
 
-    async def execute(
+    async def execute(  # noqa: C901
         self,
         query: str | LiteralString,
         params: list[Any] | None = None,
@@ -93,6 +113,8 @@ class SqlExecutor:
                 return await self._execute_with_connection(self.conn, query, params, readonly=readonly)
             _fail()
         except Exception as e:
+            if not _is_connection_error(e):
+                raise
             if self.conn and self._is_pool and isinstance(self.conn, DbConnPool):
                 self.conn.mark_invalid(str(e))
             elif self.conn and not self._is_pool:
