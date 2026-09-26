@@ -15,6 +15,7 @@ from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
 from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.postgres.security.driver import SafeSqlConfig
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import (
     HEALTH_TYPE_VALUES,
@@ -59,6 +60,11 @@ DESTRUCTIVE: dict[str, bool] = {
 }
 
 
+# Запас поверх statement_timeout + клиентской страховки SafeSqlExecutor: первым должен
+# срабатывать Postgres (QueryTimeoutError), а не таймаут тула в FastMCP.
+_TOOL_TIMEOUT_MARGIN = 5.0
+
+
 def _ann(title: str, preset: dict[str, bool]) -> ToolAnnotations:
     return ToolAnnotations(title=title, **preset)
 
@@ -73,7 +79,23 @@ def register_tools(mcp: FastMCP, settings: Settings) -> None:
 
 
 def _all_tool_specs(settings: Settings) -> list[dict[str, Any]]:
-    return _basic_specs(settings) + _full_specs()
+    specs = _basic_specs(settings) + _full_specs()
+    for spec in specs:
+        spec["timeout"] = _tool_timeout(spec["timeout"], settings)
+    return specs
+
+
+def _tool_timeout(base: float, settings: Settings) -> float:
+    """Таймаут тула: не короче базового и строго длиннее statement_timeout + страховки.
+
+    В режиме FULL + write_mode SafeSqlExecutor не используется и statement_timeout нет,
+    поэтому базовое значение остаётся как есть.
+    """
+    db = settings.database
+    if db.access_mode == AccessMode.FULL and db.write_mode:
+        return base
+    derived = db.safe_sql_timeout + SafeSqlConfig().client_timeout_grace + _TOOL_TIMEOUT_MARGIN
+    return max(base, derived)
 
 
 def _basic_specs(settings: Settings) -> list[dict[str, Any]]:

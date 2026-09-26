@@ -271,7 +271,7 @@ uv run postgres-fastmcp \
 1. **Разбор SQL** — библиотека `pglast` анализирует SQL перед выполнением; разрешён только allowlist типов операторов, узлов AST и функций
 2. **Транзакции только для чтения** — в режимах только чтение используются read-only транзакции PostgreSQL
 3. **Проверки COMMIT/ROLLBACK** — блокируются попытки обойти режим только чтение
-4. **Таймауты** — `safe_sql_timeout` выставляется как `statement_timeout` внутри транзакции, запрос отменяет сам PostgreSQL
+4. **Таймауты** — `safe_sql_timeout` выставляется как `statement_timeout` внутри транзакции, запрос отменяет сам PostgreSQL. Таймаут самого тула выводится так, чтобы быть длиннее `statement_timeout` с клиентской страховкой, поэтому первым срабатывает именно PostgreSQL
 5. **Расширения** — `CREATE EXTENSION` допускается только для `hypopg` и `pg_stat_statements` и только при `write_mode=true`
 
 ## MCP API
