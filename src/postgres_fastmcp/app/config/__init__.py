@@ -71,7 +71,9 @@ class Settings(BaseSettings):
     Примеры переменных окружения: MCP_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_AUTH_MODE=static, ...
     """
 
-    # Ошибка валидации вложенного блока иначе печатает весь его ввод: пароль БД, токены, client_secret
+    # Прикрывает только собственные ошибки Settings; ошибка model_validator внутри вложенного
+    # блока (DatabaseConfig, ServerSettings, FastMCPSettings, AuthSettings) несёт input_value
+    # этого блока и печатает его целиком, если у блока нет своего hide_input_in_errors=True
     model_config = SettingsConfigDict(hide_input_in_errors=True)
 
     server: ServerSettings = Field(default_factory=ServerSettings)

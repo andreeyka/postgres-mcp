@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class FastMCPSettings(BaseSettings):
     """Настройки FastMCP."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore", hide_input_in_errors=True)
 
     server_name: str = Field(default="PostgreSQL MCP", description="Имя MCP-сервера (MCP_SERVER_NAME)")
     instructions: str = Field(
