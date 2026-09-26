@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from mcp import types
 
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.domains.health.buffer_health_calc import BufferHealthCalc
 from postgres_fastmcp.domains.health.connection_health_calc import ConnectionHealthCalc
 from postgres_fastmcp.domains.health.constraint_health_calc import ConstraintHealthCalc
@@ -12,7 +13,6 @@ from postgres_fastmcp.domains.health.index_health_calc import IndexHealthCalc
 from postgres_fastmcp.domains.health.replication_calc import ReplicationCalc
 from postgres_fastmcp.domains.health.sequence_health_calc import SequenceHealthCalc
 from postgres_fastmcp.domains.health.vacuum_health_calc import VacuumHealthCalc
-from postgres_fastmcp.postgres.ports import QueryExecutorPort
 
 
 ResponseType = list[types.TextContent | types.ImageContent | types.EmbeddedResource]
@@ -36,13 +36,13 @@ class HealthType(StrEnum):
 class DatabaseHealthAnalyzer:
     """Инструмент для анализа метрик состояния базы данных."""
 
-    def __init__(self, sql_driver: QueryExecutorPort) -> None:
+    def __init__(self, db: DbAccessPort) -> None:
         """Инициализация инструмента проверки состояния базы данных.
 
         Args:
-            sql_driver: Экземпляр SQL драйвера для доступа к базе данных.
+            db: Доступ к БД для текущего запроса.
         """
-        self.sql_driver = sql_driver
+        self.sql_driver = db.sql_driver
 
     def _build_tasks(self, health_types: set[HealthType]) -> list[tuple[str, Awaitable[str]]]:
         """Собирает список (label, coroutine) задач для запрошенных типов проверок."""

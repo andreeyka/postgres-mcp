@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccess
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
 from postgres_fastmcp.domains.index_tuning.models import IndexTuningResult
 from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
@@ -15,7 +15,7 @@ from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
 logger = logging.getLogger(__name__)
 
 
-async def _execute_setup(db: DbAccessService, *statements: str) -> None:
+async def _execute_setup(db: DbAccess, *statements: str) -> None:
     """Run DDL/inserts with full-access executor (readonly=False)."""
     driver = db.sql_driver
     for stmt in statements:
@@ -23,11 +23,11 @@ async def _execute_setup(db: DbAccessService, *statements: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dta_analyze_queries_simple(db_service_with_hypopg: DbAccessService) -> None:
+async def test_dta_analyze_queries_simple(db_with_hypopg: DbAccess) -> None:
     """DTA returns recommendations or message for a simple table and query list."""
-    sql = db_service_with_hypopg.sql_driver
+    sql = db_with_hypopg.sql_driver
     await _execute_setup(
-        db_service_with_hypopg,
+        db_with_hypopg,
         "DROP TABLE IF EXISTS dta_simple CASCADE",
         """
         CREATE TABLE dta_simple (
@@ -46,7 +46,7 @@ async def test_dta_analyze_queries_simple(db_service_with_hypopg: DbAccessServic
         await sql.execute("SELECT hypopg_reset()", readonly=False)
         dta = DatabaseTuningAdvisor(
             sql,
-            connection_id=db_service_with_hypopg.connection_id,
+            connection_id=db_with_hypopg.connection_id,
             budget_mb=100,
             max_runtime_seconds=60,
             max_index_width=3,
@@ -68,11 +68,11 @@ async def test_dta_analyze_queries_simple(db_service_with_hypopg: DbAccessServic
 
 
 @pytest.mark.asyncio
-async def test_dta_pareto_basic(db_service_with_hypopg: DbAccessService) -> None:
+async def test_dta_pareto_basic(db_with_hypopg: DbAccess) -> None:
     """DTA analyze_workload with query_list returns IndexTuningResult (recommendations or empty)."""
-    sql = db_service_with_hypopg.sql_driver
+    sql = db_with_hypopg.sql_driver
     await _execute_setup(
-        db_service_with_hypopg,
+        db_with_hypopg,
         "DROP TABLE IF EXISTS pareto_test CASCADE",
         """
         CREATE TABLE pareto_test (
@@ -94,7 +94,7 @@ async def test_dta_pareto_basic(db_service_with_hypopg: DbAccessService) -> None
         await sql.execute("SELECT hypopg_reset()", readonly=False)
         dta = DatabaseTuningAdvisor(
             sql,
-            connection_id=db_service_with_hypopg.connection_id,
+            connection_id=db_with_hypopg.connection_id,
             budget_mb=100,
             max_runtime_seconds=60,
             max_index_width=3,
@@ -129,13 +129,13 @@ async def test_dta_pareto_basic(db_service_with_hypopg: DbAccessService) -> None
 
 
 @pytest.mark.asyncio
-async def test_dta_analyze_workload_via_service(db_service_with_hypopg: DbAccessService) -> None:
+async def test_dta_analyze_workload_via_service(db_with_hypopg: DbAccess) -> None:
     """IndexAnalysisService.analyze_query_indexes returns dict without error for simple workload."""
     from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
 
-    sql = db_service_with_hypopg.sql_driver
+    sql = db_with_hypopg.sql_driver
     await _execute_setup(
-        db_service_with_hypopg,
+        db_with_hypopg,
         "DROP TABLE IF EXISTS service_test CASCADE",
         """
         CREATE TABLE service_test (
@@ -149,7 +149,7 @@ async def test_dta_analyze_workload_via_service(db_service_with_hypopg: DbAccess
     )
     try:
         await sql.execute("SELECT hypopg_reset()", readonly=False)
-        service = IndexAnalysisService(db_service_with_hypopg)
+        service = IndexAnalysisService(db_with_hypopg)
         result = await service.analyze_query_indexes(
             queries=["SELECT * FROM service_test WHERE a = 1", "SELECT * FROM service_test WHERE b = 'x100'"],
             max_index_size_mb=50,
@@ -164,10 +164,10 @@ async def test_dta_analyze_workload_via_service(db_service_with_hypopg: DbAccess
 
 @pytest.mark.asyncio
 async def test_dta_hypopg_not_installed_returns_error(
-    db_service_full: DbAccessService,
+    db_full: DbAccess,
 ) -> None:
     """When hypopg is not installed, DTA returns session.error (skip if hypopg is present)."""
-    sql = db_service_full.sql_driver
+    sql = db_full.sql_driver
     with contextlib.suppress(Exception):
         await sql.execute("CREATE EXTENSION IF NOT EXISTS hypopg", readonly=False)
     rows = await sql.execute(
@@ -178,7 +178,7 @@ async def test_dta_hypopg_not_installed_returns_error(
         pytest.skip("hypopg is installed; cannot test 'not installed' path on this DB")
     dta = DatabaseTuningAdvisor(
         sql,
-        connection_id=db_service_full.connection_id,
+        connection_id=db_full.connection_id,
         budget_mb=100,
         max_runtime_seconds=10,
     )

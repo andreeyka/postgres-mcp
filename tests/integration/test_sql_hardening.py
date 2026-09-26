@@ -4,6 +4,7 @@
 import pytest
 from fastmcp import Client
 
+from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.app.server import create_server
@@ -29,12 +30,13 @@ async def test_statement_timeout_cancels_long_query(test_postgres_connection_str
         safe_sql_timeout=1,
     )
     service = DbAccessService(config)
+    sql_driver = service.view(EffectiveAccess(AccessMode.FULL, write_mode=False)).sql_driver
     try:
         with pytest.raises(QueryTimeoutError):
-            await service.sql_driver.execute("SELECT count(*) FROM generate_series(1, 10000000000)")
-        # Пул после statement_timeout остаётся валидным (Task 4): следующий запрос идёт без пересоздания.
-        assert service.db_connection.is_valid is True
-        rows = await service.sql_driver.execute("SELECT 1 AS one")
+            await sql_driver.execute("SELECT count(*) FROM generate_series(1, 10000000000)")
+        # Пул после statement_timeout остаётся валидным: следующий запрос идёт без пересоздания.
+        assert service._pool.is_valid is True
+        rows = await sql_driver.execute("SELECT 1 AS one")
         assert rows is not None and rows[0].cells["one"] == 1
     finally:
         await service.close()

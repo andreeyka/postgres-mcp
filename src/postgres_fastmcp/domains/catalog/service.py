@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import QUERY_LIST_SCHEMAS
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import SchemaAccessError, UnsupportedObjectTypeError
@@ -14,7 +14,7 @@ from .tables import TablesService
 class CatalogService:
     """Фасад каталога БД: схемы, объекты и их детали (делегирует профильным сервисам)."""
 
-    def __init__(self, db: DbAccessService) -> None:
+    def __init__(self, db: DbAccessPort) -> None:
         """Инициализация сервиса с подключением к базе данных."""
         self.db = db
         self._tables = TablesService(db)

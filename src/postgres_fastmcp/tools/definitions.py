@@ -120,7 +120,7 @@ async def analyze_db_health(
     ctx: Context = CurrentContext(),
 ) -> str:
     """Run database health checks and return a text report."""
-    health_tool = DatabaseHealthAnalyzer(get_db(ctx).sql_driver)
+    health_tool = DatabaseHealthAnalyzer(get_db(ctx))
     return await health_tool.health(health_type=",".join(health_type))
 
 

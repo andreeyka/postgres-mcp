@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
+from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.context import LifespanContext
 from postgres_fastmcp.domains.db_access import DbAccessService
@@ -20,13 +21,14 @@ def build_lifespan(
 
     Returns:
         Async context manager, который при входе создаёт DbAccessService, выдаёт
-        ``{"db": ..., "settings": ...}`` и при выходе закрывает пул подключений.
+        ``{"db": <доступ с правами потолка>, "settings": ...}`` и при выходе закрывает пул подключений.
     """
 
     @asynccontextmanager
     async def lifespan(server: Any) -> AsyncIterator[LifespanContext]:  # noqa: ARG001, ANN401
         db = DbAccessService(settings.database)
-        context: LifespanContext = {"db": db, "settings": settings}
+        ceiling = EffectiveAccess(settings.database.access_mode, write_mode=settings.database.write_mode)
+        context: LifespanContext = {"db": db.view(ceiling), "settings": settings}
         try:
             yield context
         finally:

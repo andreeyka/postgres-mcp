@@ -2,14 +2,14 @@
 
 from typing import Any
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 
 SUCCESS_NO_ROWS = "Statement executed successfully; no rows were returned."
 
 
-async def execute_sql(db: DbAccessService, sql: str) -> list[dict[str, Any]] | None:
+async def execute_sql(db: DbAccessPort, sql: str) -> list[dict[str, Any]] | None:
     """Выполнить SQL запрос к базе данных.
 
     Режим транзакции (только чтение / чтение-запись) определяется write_mode

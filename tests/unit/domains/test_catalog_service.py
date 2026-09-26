@@ -59,6 +59,22 @@ class TestCatalogServiceListObjects:
         assert result[0]["name"] == "seq1"
         assert result[0]["data_type"] == "bigint"
 
+    async def test_list_objects_sequence_basic_filters_by_table_prefix(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """BASIC: sequences are filtered by the table_prefix of the request's DbAccess."""
+        mock_db_access.access_mode = AccessMode.BASIC
+        mock_db_access.table_prefix = "app_"
+        mock_executor.execute.return_value = [
+            RowResult(cells={"sequence_schema": "public", "sequence_name": "app_seq", "data_type": "bigint"}),
+            RowResult(cells={"sequence_schema": "public", "sequence_name": "other_seq", "data_type": "bigint"}),
+        ]
+        service = CatalogService(db=mock_db_access)
+        result = await service.list_objects(schema_name="public", object_type="sequence")
+        assert [row["name"] for row in result] == ["app_seq"]
+
     async def test_list_objects_extension_returns_list_with_name(
         self,
         mock_db_access: MagicMock,

@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import QUERY_GET_EXTENSION_DETAILS, QUERY_LIST_EXTENSIONS
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
@@ -10,7 +10,7 @@ from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 class ExtensionsService:
     """Сервис списка расширений и получения их деталей."""
 
-    def __init__(self, db: DbAccessService) -> None:
+    def __init__(self, db: DbAccessPort) -> None:
         """Инициализация с сервисом доступа к БД.
 
         Args:

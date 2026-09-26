@@ -1,11 +1,11 @@
 # mypy: ignore-errors
-"""Integration tests for top queries (postgres_fastmcp: DbAccessService, top_queries)."""
+"""Integration tests for top queries (postgres_fastmcp: DbAccess, top_queries)."""
 
 import logging
 
 import pytest
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccess
 from postgres_fastmcp.domains.top_queries import PG_STAT_STATEMENTS, TopQueriesCalc, get_top_queries
 from postgres_fastmcp.shared.errors import PgStatStatementsNotInstalledError
 
@@ -13,7 +13,7 @@ from postgres_fastmcp.shared.errors import PgStatStatementsNotInstalledError
 logger = logging.getLogger(__name__)
 
 
-async def setup_test_data(db: DbAccessService) -> None:
+async def setup_test_data(db: DbAccess) -> None:
     """Ensure pg_stat_statements is available, create test table and run sample queries."""
     sql = db.sql_driver
 
@@ -58,7 +58,7 @@ async def setup_test_data(db: DbAccessService) -> None:
         )
 
 
-async def cleanup_test_data(db: DbAccessService) -> None:
+async def cleanup_test_data(db: DbAccess) -> None:
     """Drop test table and reset pg_stat_statements."""
     try:
         await db.sql_driver.execute("DROP TABLE IF EXISTS test_items", readonly=False)
@@ -68,21 +68,21 @@ async def cleanup_test_data(db: DbAccessService) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_top_queries_integration(db_service_full: DbAccessService) -> None:
+async def test_get_top_queries_integration(db_full: DbAccess) -> None:
     """Integration test for get_top_queries with real database and pg_stat_statements."""
     try:
-        await setup_test_data(db_service_full)
+        await setup_test_data(db_full)
 
-        pg_stats = await db_service_full.sql_driver.execute(
+        pg_stats = await db_full.sql_driver.execute(
             "SELECT query FROM pg_stat_statements WHERE query LIKE '%CROSS JOIN%' LIMIT 1",
             readonly=True,
         )
         if not pg_stats or len(pg_stats) == 0:
             pytest.skip("pg_stat_statements did not capture the CROSS JOIN query")
 
-        total_rows = await get_top_queries(db_service_full, sort_by="total_time", limit=10)
-        mean_rows = await get_top_queries(db_service_full, sort_by="mean_time", limit=10)
-        resource_rows = await get_top_queries(db_service_full, sort_by="resources", limit=2)
+        total_rows = await get_top_queries(db_full, sort_by="total_time", limit=10)
+        mean_rows = await get_top_queries(db_full, sort_by="mean_time", limit=10)
+        resource_rows = await get_top_queries(db_full, sort_by="resources", limit=2)
 
         assert 0 < len(total_rows) <= 10
         assert 0 < len(mean_rows) <= 10
@@ -95,17 +95,17 @@ async def test_get_top_queries_integration(db_service_full: DbAccessService) -> 
         has_count = "COUNT(*)" in total_text
         assert has_cross_join or has_value_gt_500 or has_count, "None of our test queries appeared in the results"
     finally:
-        await cleanup_test_data(db_service_full)
+        await cleanup_test_data(db_full)
 
 
 @pytest.mark.asyncio
-async def test_extension_not_available(db_service_full: DbAccessService) -> None:
+async def test_extension_not_available(db_full: DbAccess) -> None:
     """When pg_stat_statements is not installed, a user-facing error carries installation instructions."""
     from postgres_fastmcp.postgres.extensions import ExtensionStatus
 
     calc = TopQueriesCalc(
-        sql_driver=db_service_full.sql_driver,
-        connection_id=db_service_full.connection_id,
+        sql_driver=db_full.sql_driver,
+        connection_id=db_full.connection_id,
     )
     not_installed_status = ExtensionStatus(
         is_installed=False,

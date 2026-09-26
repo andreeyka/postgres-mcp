@@ -10,16 +10,16 @@ from typing import TypedDict, cast
 from fastmcp.server.context import Context
 
 from postgres_fastmcp.app.config import Settings
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 
 
 class LifespanContext(TypedDict):
     """Форма словаря, который lifespan кладёт в ``ctx.lifespan_context``."""
 
-    db: DbAccessService
+    db: DbAccessPort
     settings: Settings
 
 
-def get_db(ctx: Context) -> DbAccessService:
-    """Вернуть DbAccessService из lifespan-контекста (единый типизированный доступ для всех тулов)."""
-    return cast("DbAccessService", ctx.lifespan_context["db"])
+def get_db(ctx: Context) -> DbAccessPort:
+    """Вернуть доступ к БД из lifespan-контекста (единый типизированный доступ для всех тулов)."""
+    return cast("DbAccessPort", ctx.lifespan_context["db"])

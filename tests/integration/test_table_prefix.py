@@ -1,17 +1,18 @@
 # mypy: ignore-errors
-"""Integration tests for table_prefix (postgres_fastmcp: DbAccessService, AccessMode, SafeSqlExecutor)."""
+"""Integration tests for table_prefix (postgres_fastmcp: DbAccess, AccessMode, SafeSqlExecutor)."""
 
 import pytest
 
+from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.catalog.service import CatalogService
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import SchemaNotAllowedError, TablePrefixAccessError
 
 
-async def setup_test_tables(driver: DbAccessService) -> None:
+async def setup_test_tables(driver: DbAccess) -> None:
     """Create test tables with and without prefix using full-access executor."""
     sql = driver.sql_driver
 
@@ -69,13 +70,13 @@ async def setup_test_tables(driver: DbAccessService) -> None:
 
 @pytest.mark.asyncio
 async def test_table_prefix_allows_prefixed_tables(
-    db_service_full: DbAccessService,
-    db_service_user_prefix: DbAccessService,
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
 ) -> None:
     """Tables with prefix are accessible when table_prefix is set."""
-    await setup_test_tables(db_service_full)
+    await setup_test_tables(db_full)
 
-    sql_driver = db_service_user_prefix.sql_driver
+    sql_driver = db_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
     result = await sql_driver.execute("SELECT * FROM app_users LIMIT 1", readonly=True)
@@ -90,13 +91,13 @@ async def test_table_prefix_allows_prefixed_tables(
 
 @pytest.mark.asyncio
 async def test_table_prefix_blocks_non_prefixed_tables(
-    db_service_full: DbAccessService,
-    db_service_user_prefix: DbAccessService,
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
 ) -> None:
     """Tables without prefix are blocked when table_prefix is set."""
-    await setup_test_tables(db_service_full)
+    await setup_test_tables(db_full)
 
-    sql_driver = db_service_user_prefix.sql_driver
+    sql_driver = db_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
     with pytest.raises(TablePrefixAccessError):
@@ -111,25 +112,25 @@ async def test_table_prefix_blocks_non_prefixed_tables(
 
 @pytest.mark.asyncio
 async def test_table_prefix_is_case_insensitive(
-    db_service_full: DbAccessService,
-    db_service_user_prefix: DbAccessService,
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
 ) -> None:
     """Table prefix matching is case-insensitive (PG lowercases unquoted identifiers)."""
-    await setup_test_tables(db_service_full)
-    await db_service_full.sql_driver.execute(
+    await setup_test_tables(db_full)
+    await db_full.sql_driver.execute(
         "CREATE TABLE IF NOT EXISTS APP_UPPER_TABLE (id INTEGER)",
         readonly=False,
     )
 
-    sql_driver = db_service_user_prefix.sql_driver
+    sql_driver = db_user_prefix.sql_driver
     result = await sql_driver.execute("SELECT * FROM APP_UPPER_TABLE LIMIT 1", readonly=True)
     assert result is not None
 
 
 @pytest.mark.asyncio
-async def test_table_prefix_blocks_system_schemas(db_service_user_prefix: DbAccessService) -> None:
+async def test_table_prefix_blocks_system_schemas(db_user_prefix: DbAccess) -> None:
     """System schemas are blocked in user mode with table_prefix."""
-    sql_driver = db_service_user_prefix.sql_driver
+    sql_driver = db_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
     with pytest.raises(SchemaNotAllowedError):
@@ -138,13 +139,13 @@ async def test_table_prefix_blocks_system_schemas(db_service_user_prefix: DbAcce
 
 @pytest.mark.asyncio
 async def test_list_objects_filters_by_prefix(
-    db_service_full: DbAccessService,
-    db_service_user_prefix: DbAccessService,
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
 ) -> None:
     """list_objects returns only objects with prefix."""
-    await setup_test_tables(db_service_full)
+    await setup_test_tables(db_full)
 
-    objects_service = CatalogService(db_service_user_prefix)
+    objects_service = CatalogService(db_user_prefix)
     tables = await objects_service.list_objects(schema_name="public", object_type="table")
     assert isinstance(tables, list)
 
@@ -159,12 +160,12 @@ async def test_list_objects_filters_by_prefix(
 
 @pytest.mark.asyncio
 async def test_table_prefix_ignored_in_full_access_mode(
-    db_service_full: DbAccessService,
+    db_full: DbAccess,
 ) -> None:
     """table_prefix is ignored for access_mode=full (full executor, no prefix filter)."""
-    await setup_test_tables(db_service_full)
+    await setup_test_tables(db_full)
 
-    sql_driver = db_service_full.sql_driver
+    sql_driver = db_full.sql_driver
     result = await sql_driver.execute("SELECT * FROM test_users LIMIT 1", readonly=True)
     assert result is not None
 
@@ -174,10 +175,10 @@ async def test_table_prefix_ignored_in_full_access_mode(
 
 @pytest.mark.asyncio
 async def test_list_schemas_returns_only_public_in_user_mode(
-    db_service_user_prefix: DbAccessService,
+    db_user_prefix: DbAccess,
 ) -> None:
     """list_schemas returns only public schema in user mode."""
-    schemas = await CatalogService(db_service_user_prefix).list_schemas()
+    schemas = await CatalogService(db_user_prefix).list_schemas()
     assert isinstance(schemas, list)
     assert len(schemas) == 1
     assert schemas[0]["schema_name"] == "public"
@@ -207,15 +208,16 @@ async def test_table_prefix_with_different_prefixes(
 
     full_svc = DbAccessService(full_config)
     try:
-        await full_svc.sql_driver.execute(
+        full_sql = full_svc.view(EffectiveAccess(AccessMode.FULL, write_mode=True)).sql_driver
+        await full_sql.execute(
             "CREATE TABLE IF NOT EXISTS user_data (id INTEGER)",
             readonly=False,
         )
-        await full_svc.sql_driver.execute(
+        await full_sql.execute(
             "CREATE TABLE IF NOT EXISTS user_settings (id INTEGER)",
             readonly=False,
         )
-        await full_svc.sql_driver.execute(
+        await full_sql.execute(
             "CREATE TABLE IF NOT EXISTS admin_logs (id INTEGER)",
             readonly=False,
         )
@@ -224,7 +226,7 @@ async def test_table_prefix_with_different_prefixes(
 
     user_svc = DbAccessService(user_config)
     try:
-        sql_driver = user_svc.sql_driver
+        sql_driver = user_svc.view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).sql_driver
 
         result1 = await sql_driver.execute("SELECT * FROM user_data LIMIT 1", readonly=True)
         assert result1 is not None

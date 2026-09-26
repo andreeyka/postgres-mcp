@@ -84,6 +84,9 @@ def _server_with_rows(  # noqa: ANN202
             self.sql_driver = MagicMock()
             self.sql_driver.execute = AsyncMock(return_value=rows)
 
+        def view(self, access: object) -> "FakeDb":
+            return self
+
         async def close(self) -> None:
             return None
 

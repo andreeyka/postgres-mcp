@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from postgres_fastmcp.domains.db_access import DbAccessService
+from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.shared.errors import (
@@ -16,7 +16,7 @@ from postgres_fastmcp.shared.errors import (
 class ExplainService:
     """Сервис для объяснения планов выполнения SQL запросов."""
 
-    def __init__(self, db: DbAccessService) -> None:
+    def __init__(self, db: DbAccessPort) -> None:
         """Инициализация сервиса с подключением к базе данных.
 
         Args:
