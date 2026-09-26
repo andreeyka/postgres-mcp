@@ -47,9 +47,10 @@ Russian is allowed only for comments and module/helper docstrings that never rea
 - Never return Markdown and a JSON copy of the same data in one response.
 - Do not cut rows or wrap SQL in `LIMIT`: `ResponseBudgetMiddleware` (`app/middleware/response_budget.py`)
   replaces an answer above `MCP_RESPONSE_MAX_TOKENS` with an error that asks the agent to refine the request.
-  If the tool's annotations say `read_only_hint=False` (`execute_sql` with `write_mode`), the error says
-  the changes are already applied and must not be re-run. Keep `read_only_hint` honest: a tool that can
-  write must not be registered with a read-only preset.
+  If the tool's annotations say `read_only_hint=False` (`execute_sql` with `write_mode`), the error is worded
+  conditionally: a write-capable tool can still run a plain SELECT, so the text says *if* the statement
+  modified data, do not re-run it — query the affected rows with a narrower SELECT instead. Keep
+  `read_only_hint` honest: a tool that can write must not be registered with a read-only preset.
 
 ## Errors
 

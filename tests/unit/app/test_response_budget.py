@@ -132,8 +132,8 @@ async def test_write_server_warns_not_to_rerun(monkeypatch: pytest.MonkeyPatch, 
     async with Client(server) as client:
         with pytest.raises(
             ToolError,
-            match=r"Response is too large: ~\d+ tokens, the limit is 1000\. The statement was executed "
-            r"and its changes are applied — do not re-run it\.",
+            match=r"Response is too large: ~\d+ tokens, the limit is 1000\. If the statement modified data, "
+            r"its changes are already applied — do not re-run it;",
         ):
             await client.call_tool("execute_sql", {"sql": "UPDATE t SET name = name RETURNING id, name"})
 

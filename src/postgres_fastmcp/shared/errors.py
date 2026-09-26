@@ -528,9 +528,10 @@ class ResponseTooLargeAfterWriteError(ResponseTooLargeError):
         """
         message = (
             f"Response is too large: ~{tokens} tokens, the limit is {max_tokens}. "
-            "The statement was executed and its changes are applied — do not re-run it. "
-            "Only the returned rows were too large; to inspect the result, "
-            "query the affected rows with a narrower SELECT."
+            "If the statement modified data, its changes are already applied — do not re-run it; "
+            "query the affected rows with a narrower SELECT instead. "
+            "Otherwise refine the request: add WHERE or LIMIT, select only the needed columns, "
+            "aggregate (count, group by)."
         )
         self._init(message, tokens, max_tokens)
 
