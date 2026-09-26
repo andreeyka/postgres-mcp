@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastmcp.server.auth import AccessToken, AuthContext
+from pydantic import ValidationError
 
 from postgres_fastmcp.access import (
     AccessPolicy,
@@ -40,6 +41,19 @@ def test_access_policy_defaults() -> None:
     policy = AccessPolicy()
     assert policy.enforced is False
     assert policy.claim == "scope"
+    assert policy.write_values == ["pg:write"]
+    assert policy.full_values == ["pg:full"]
+
+
+@pytest.mark.parametrize("field", ["write_values", "full_values"])
+@pytest.mark.parametrize("value", ["", "  "])
+def test_access_policy_rejects_empty_or_blank_values(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        AccessPolicy(**{field: [value]})
+
+
+def test_access_policy_defaults_construct_despite_the_non_empty_constraint() -> None:
+    policy = AccessPolicy()
     assert policy.write_values == ["pg:write"]
     assert policy.full_values == ["pg:full"]
 
@@ -100,6 +114,25 @@ def test_claim_name_with_dots_is_looked_up_as_a_whole_key_first() -> None:
     policy = AccessPolicy(enforced=True, claim="https://example.com/roles", write_values=["w"], full_values=["f"])
     token = _claims_token({"https://example.com/roles": ["f", "w"]})
     assert resolve_access(_FULL_WRITE, token, policy) == _FULL_WRITE
+
+
+def test_literal_dotted_key_with_none_value_falls_back_to_the_nested_path() -> None:
+    """Ключ целиком совпал с путём claim, но его значение None: путь через точку берёт верх."""
+    policy = AccessPolicy(enforced=True, claim="realm_access.roles", full_values=["admin"])
+    token = _claims_token({"realm_access.roles": None, "realm_access": {"roles": ["admin"]}})
+    assert resolve_access(_FULL_WRITE, token, policy) == EffectiveAccess(AccessMode.FULL, write_mode=False)
+
+
+def test_string_claim_value_with_surrounding_whitespace_matches() -> None:
+    policy = AccessPolicy(enforced=True, claim="groups", full_values=["dba"])
+    token = _claims_token({"groups": " dba "})
+    assert resolve_access(_FULL_WRITE, token, policy) == EffectiveAccess(AccessMode.FULL, write_mode=False)
+
+
+def test_scope_matching_is_case_sensitive() -> None:
+    """scopes=['PG:FULL'] не совпадает с дефолтным full_values=['pg:full']: регистр важен."""
+    token = _token(["PG:FULL"])
+    assert resolve_access(_FULL_WRITE, token, _ENFORCED) == _READ_ONLY
 
 
 @pytest.mark.parametrize(

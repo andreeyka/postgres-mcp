@@ -8,12 +8,15 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp.server.auth import AccessToken, AuthCheck, AuthContext
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from postgres_fastmcp.shared.enums import AccessMode
+
+
+_NonBlankStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,13 +32,14 @@ class AccessPolicy(BaseModel):
 
     ``claim`` — имя claim или путь через точку (``realm_access.roles``); ``scope`` читается
     из ``AccessToken.scopes``. Запись даёт любое значение из ``write_values``, режим FULL —
-    любое значение из ``full_values``; оба никогда не выше серверного потолка.
+    любое значение из ``full_values``; оба никогда не выше серверного потолка. Значения в
+    ``write_values``/``full_values`` не могут быть пустыми или состоять только из пробелов.
     """
 
     enforced: bool = False
     claim: str = "scope"
-    write_values: list[str] = Field(default_factory=lambda: ["pg:write"])
-    full_values: list[str] = Field(default_factory=lambda: ["pg:full"])
+    write_values: list[_NonBlankStr] = Field(default_factory=lambda: ["pg:write"])
+    full_values: list[_NonBlankStr] = Field(default_factory=lambda: ["pg:full"])
 
 
 AccessResolver = Callable[[AccessToken | None], EffectiveAccess]
