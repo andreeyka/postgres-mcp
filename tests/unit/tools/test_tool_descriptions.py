@@ -18,29 +18,27 @@ def _descriptions(*, access_mode: AccessMode, write_mode: bool = False) -> dict[
     return {t.name: (t.description or "") for t in asyncio.run(provider.list_tools())}
 
 
-def test_execute_sql_description_restricted_in_basic_mode() -> None:
+_MODES = [
+    (AccessMode.BASIC, False),
+    (AccessMode.BASIC, True),
+    (AccessMode.FULL, False),
+    (AccessMode.FULL, True),
+]
+
+
+def test_execute_sql_description_is_the_same_in_every_mode() -> None:
+    """Описание execute_sql не зависит от потолка: права конкретного запроса могут быть уже потолка."""
+    descriptions = {_descriptions(access_mode=mode, write_mode=write)["execute_sql"] for mode, write in _MODES}
+    assert len(descriptions) == 1
+
+
+def test_execute_sql_description_covers_every_mode() -> None:
     desc = _descriptions(access_mode=AccessMode.BASIC)["execute_sql"]
-    assert "read-only" in desc.lower()
-
-
-def test_execute_sql_description_allows_dml_in_basic_write_mode() -> None:
-    """BASIC + write_mode: DML разрешён и коммитится, DDL отклоняется — описание не называет тул read-only."""
-    desc = _descriptions(access_mode=AccessMode.BASIC, write_mode=True)["execute_sql"]
-    assert "read-only" not in desc.lower()
-    assert "INSERT, UPDATE and DELETE" in desc
-    assert "DDL is rejected (except CREATE EXTENSION hypopg / pg_stat_statements)" in desc
-    assert "public schema" in desc
-
-
-def test_execute_sql_description_restricted_in_full_without_write_mode() -> None:
-    desc = _descriptions(access_mode=AccessMode.FULL, write_mode=False)["execute_sql"]
-    assert "read-only" in desc.lower()
-
-
-def test_execute_sql_description_unrestricted_when_full_and_write_mode() -> None:
-    desc = _descriptions(access_mode=AccessMode.FULL, write_mode=True)["execute_sql"]
-    lower = desc.lower()
-    assert "any sql" in lower or "ddl" in lower
+    assert "read-only mode only SELECT, EXPLAIN and SHOW are accepted" in desc
+    assert "INSERT, UPDATE and DELETE on the public schema" in desc
+    assert "DDL is rejected except CREATE EXTENSION hypopg / pg_stat_statements" in desc
+    assert "full write access any statement runs" in desc
+    assert "explicit error" in desc
 
 
 def test_list_objects_description_mentions_public_in_basic() -> None:

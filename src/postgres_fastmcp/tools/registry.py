@@ -110,8 +110,8 @@ def _tool_timeout(base: float, ceiling: DatabaseConfigPort) -> float:
 
 
 def _basic_specs(toolset: ToolSet, ceiling: DatabaseConfigPort) -> list[dict[str, Any]]:
-    unrestricted = ceiling.access_mode == AccessMode.FULL and ceiling.write_mode
-    if unrestricted:
+    # Аннотации execute_sql отражают потолок: клиент решает, спрашивать ли подтверждение.
+    if ceiling.access_mode == AccessMode.FULL and ceiling.write_mode:
         execute_preset = DESTRUCTIVE
     elif ceiling.write_mode:
         execute_preset = WRITE_NON_DESTRUCTIVE
@@ -122,7 +122,7 @@ def _basic_specs(toolset: ToolSet, ceiling: DatabaseConfigPort) -> list[dict[str
             "fn": toolset.execute_sql,
             "name": "execute_sql",
             "output_schema": None,
-            "description": _execute_sql_desc(unrestricted=unrestricted, write_mode=ceiling.write_mode),
+            "description": _execute_sql_desc(),
             "tags": {ToolTag.BASIC.value},
             "annotations": _ann("Execute SQL", execute_preset),
             "timeout": 30.0,
@@ -238,23 +238,15 @@ def _full_specs(toolset: ToolSet, full_tool_auth: AuthCheck | None) -> list[dict
     ]
 
 
-def _execute_sql_desc(*, unrestricted: bool, write_mode: bool) -> str:
-    if unrestricted:
-        return (
-            "Execute ANY SQL statement (DDL, DML, DCL). Server is in FULL access with write_mode=True. "
-            "Use with caution; prefer explain_query first for non-trivial SELECTs. "
-            "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
-        )
-    if write_mode:
-        return (
-            "Execute a SQL statement in the public schema. SELECT, EXPLAIN and SHOW are allowed, "
-            "and so are INSERT, UPDATE and DELETE (changes are committed); DDL is rejected "
-            "(except CREATE EXTENSION hypopg / pg_stat_statements). "
-            "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
-        )
+def _execute_sql_desc() -> str:
+    # Описание не зависит от потолка: права запроса могут быть уже серверных (сужение по токену).
     return (
-        "Execute a read-only SELECT query. DDL/DML/DCL statements are blocked. "
-        "Workflow: 1) list_objects, 2) get_object_details, 3) execute_sql."
+        "Execute a SQL statement. The server enforces the access policy of the current request: "
+        "in read-only mode only SELECT, EXPLAIN and SHOW are accepted; with basic write access "
+        "INSERT, UPDATE and DELETE on the public schema are also accepted and committed, and DDL is "
+        "rejected except CREATE EXTENSION hypopg / pg_stat_statements; with full write access any "
+        "statement runs. A rejected statement returns an explicit error. "
+        "Workflow: list_objects -> get_object_details -> execute_sql."
     )
 
 
