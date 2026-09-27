@@ -23,7 +23,7 @@ def _content(result: object) -> object:
 
 @pytest.mark.asyncio
 async def test_execute_sql_write_persists(integration_settings: Settings) -> None:
-    """Full + write_mode: DDL/DML apply and a successful write reports success (not an error)."""
+    """Full + write_mode: DDL/DML apply and report the Postgres command status, not "0 rows"."""
     mcp = create_server(integration_settings)
     async with Client(mcp) as client:
         await client.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS wm_write_test"})
@@ -33,22 +33,50 @@ async def test_execute_sql_write_persists(integration_settings: Settings) -> Non
             {"sql": "CREATE TABLE wm_write_test (id int PRIMARY KEY, v text)"},
         )
         assert create.is_error is False
+        assert create.content[0].text == "CREATE TABLE: done."
 
         insert = await client.call_tool(
             "execute_sql",
-            {"sql": "INSERT INTO wm_write_test (id, v) VALUES (1, 'alpha')"},
+            {"sql": "INSERT INTO wm_write_test (id, v) VALUES (1, 'alpha'), (2, 'beta')"},
         )
         assert insert.is_error is False
-        assert "success" in insert.content[0].text.lower()
+        assert insert.content[0].text == "INSERT 0 2: 2 rows affected."
+
+        update = await client.call_tool(
+            "execute_sql",
+            {"sql": "UPDATE wm_write_test SET v = upper(v)", "output": "json"},
+        )
+        assert update.structured_content == {"rows": [], "row_count": 0, "status": "UPDATE 2", "affected_rows": 2}
 
         select = await client.call_tool(
             "execute_sql",
             {"sql": "SELECT v FROM wm_write_test WHERE id = 1", "output": "json"},
         )
         assert select.is_error is False
-        assert select.structured_content == {"rows": [{"v": "alpha"}], "row_count": 1}
+        assert select.structured_content == {"rows": [{"v": "ALPHA"}], "row_count": 1}
 
         await client.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS wm_write_test"})
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_status_through_safe_executor(
+    integration_settings: Settings,
+    test_postgres_connection_string: tuple[str, str],
+) -> None:
+    """Basic + write_mode: the SET LOCAL prefix of SafeSqlExecutor does not replace the statement's status."""
+    connection_string, _ = test_postgres_connection_string
+    basic = DatabaseConfig.from_uri(connection_string, access_mode=AccessMode.BASIC, write_mode=True)
+    async with Client(create_server(integration_settings)) as admin:
+        await admin.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS wm_safe_status"})
+        await admin.call_tool("execute_sql", {"sql": "CREATE TABLE wm_safe_status (id int)"})
+        async with Client(create_server(Settings(database=basic))) as client:
+            insert = await client.call_tool("execute_sql", {"sql": "INSERT INTO wm_safe_status VALUES (1), (2), (3)"})
+            delete = await client.call_tool(
+                "execute_sql", {"sql": "DELETE FROM wm_safe_status WHERE id > 1", "output": "json"}
+            )
+        await admin.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS wm_safe_status"})
+    assert insert.content[0].text == "INSERT 0 3: 3 rows affected."
+    assert delete.structured_content == {"rows": [], "row_count": 0, "status": "DELETE 2", "affected_rows": 2}
 
 
 @pytest.mark.asyncio

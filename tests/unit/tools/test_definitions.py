@@ -6,7 +6,7 @@ from unittest import mock
 import pytest
 
 from postgres_fastmcp.domains.health.database_health import HealthType
-from postgres_fastmcp.domains.querying import SUCCESS_NO_ROWS
+from postgres_fastmcp.postgres.models import StatementResult
 from postgres_fastmcp.shared.errors import ObjectNotFoundError
 from postgres_fastmcp.tools import definitions as defs
 
@@ -42,16 +42,31 @@ async def test_execute_sql_json_output(monkeypatch, db_mock, toolset) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_sql_statement_without_rows(monkeypatch, db_mock, toolset) -> None:
+async def test_execute_sql_statement_without_rows_reports_command_status(monkeypatch, db_mock, toolset) -> None:
+    """DML без RETURNING: тег команды и число затронутых строк, а не «0 rows»."""
     fake_querying = mock.AsyncMock()
-    fake_querying.execute_sql.return_value = None
+    fake_querying.execute_sql.return_value = StatementResult(rows=None, status="UPDATE 500", affected_rows=500)
     monkeypatch.setattr(defs, "querying", fake_querying)
 
-    table = await toolset.execute_sql(sql="INSERT INTO t VALUES (1)")
-    as_json = await toolset.execute_sql(sql="INSERT INTO t VALUES (1)", output="json")
+    table = await toolset.execute_sql(sql="UPDATE t SET v = 1")
+    as_json = await toolset.execute_sql(sql="UPDATE t SET v = 1", output="json")
 
-    assert _text(table) == f"{SUCCESS_NO_ROWS}\n\n0 rows."
-    assert as_json.structured_content == {"rows": [], "row_count": 0}
+    assert _text(table) == "UPDATE 500: 500 rows affected."
+    assert as_json.structured_content == {"rows": [], "row_count": 0, "status": "UPDATE 500", "affected_rows": 500}
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_ddl_reports_done(monkeypatch, db_mock, toolset) -> None:
+    """DDL: в теге нет числа, affected_rows — null."""
+    fake_querying = mock.AsyncMock()
+    fake_querying.execute_sql.return_value = StatementResult(rows=None, status="CREATE TABLE", affected_rows=None)
+    monkeypatch.setattr(defs, "querying", fake_querying)
+
+    table = await toolset.execute_sql(sql="CREATE TABLE t ()")
+    as_json = await toolset.execute_sql(sql="CREATE TABLE t ()", output="json")
+
+    assert _text(table) == "CREATE TABLE: done."
+    assert as_json.structured_content == {"rows": [], "row_count": 0, "status": "CREATE TABLE", "affected_rows": None}
 
 
 @pytest.mark.asyncio

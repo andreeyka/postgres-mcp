@@ -20,7 +20,7 @@ from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
-from postgres_fastmcp.domains.querying import SUCCESS_NO_ROWS
+from postgres_fastmcp.postgres.models import StatementResult
 from postgres_fastmcp.shared.errors import ObjectNotFoundError
 from postgres_fastmcp.tools.params import (
     HealthTypesParam,
@@ -30,7 +30,7 @@ from postgres_fastmcp.tools.params import (
     TopQueriesLimitParam,
     TopQueriesSortByParam,
 )
-from postgres_fastmcp.tools.rendering import rows_result, sections_result
+from postgres_fastmcp.tools.rendering import rows_result, sections_result, statement_result
 
 
 # Поля заголовка, которые get_object_details добавляет сам, без данных каталога.
@@ -57,10 +57,10 @@ class ToolSet:
         output: OutputParam = "table",
     ) -> ToolResult:
         """Execute a SQL statement and return the result rows."""
-        rows = await querying.execute_sql(self._get_db(), sql)
-        if rows is None:
-            return rows_result([], output, title=SUCCESS_NO_ROWS)
-        return rows_result(rows, output)
+        result = await querying.execute_sql(self._get_db(), sql)
+        if isinstance(result, StatementResult):
+            return statement_result(result.status, result.affected_rows, output)
+        return rows_result(result, output)
 
     async def explain_query(
         self,

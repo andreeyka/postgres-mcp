@@ -15,22 +15,37 @@ from mcp.types import TextContent
 OutputFormat = Literal["table", "json"]
 
 
-def rows_result(rows: list[dict[str, Any]], output: OutputFormat, *, title: str | None = None) -> ToolResult:
+def rows_result(rows: list[dict[str, Any]], output: OutputFormat) -> ToolResult:
     """Результат тула из списка строк.
 
     Args:
         rows: Строки результата (одинаковые или разные наборы ключей).
         output: 'table' — Markdown-таблица, 'json' — {"rows": [...], "row_count": N}.
-        title: Строка над таблицей (только для 'table').
 
     Returns:
         ToolResult с Markdown-текстом или с JSON-текстом и structured_content.
     """
     if output == "json":
         return _json_result({"rows": rows, "row_count": len(rows)})
-    parts = [title] if title else []
-    parts.append(f"{_table(rows)}\n\n{len(rows)} rows." if rows else "0 rows.")
-    return _text_result("\n\n".join(parts))
+    return _text_result(f"{_table(rows)}\n\n{len(rows)} rows." if rows else "0 rows.")
+
+
+def statement_result(status: str | None, affected_rows: int | None, output: OutputFormat) -> ToolResult:
+    """Результат оператора без результирующего набора (DML без RETURNING, DDL): тег команды Postgres.
+
+    Args:
+        status: Тег команды, например "UPDATE 3" или "CREATE TABLE".
+        affected_rows: Число строк из тега; None, если в теге нет числа.
+        output: 'table' — одна строка "UPDATE 3: 3 rows affected." или "CREATE TABLE: done.";
+            'json' — {"rows": [], "row_count": 0, "status": ..., "affected_rows": ...}.
+
+    Returns:
+        ToolResult с текстом или с JSON-текстом и structured_content.
+    """
+    if output == "json":
+        return _json_result({"rows": [], "row_count": 0, "status": status, "affected_rows": affected_rows})
+    outcome = "done." if affected_rows is None else f"{affected_rows} rows affected."
+    return _text_result(f"{status or 'Statement executed'}: {outcome}")
 
 
 def sections_result(
