@@ -3,7 +3,7 @@ from typing import Any, cast
 from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import QUERY_LIST_SCHEMAS
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import SchemaAccessError, UnsupportedObjectTypeError
+from postgres_fastmcp.shared.errors import ObjectNotFoundError, SchemaAccessError, UnsupportedObjectTypeError
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 from .extensions import ExtensionsService
@@ -108,9 +108,11 @@ class CatalogService:
         Raises:
             SchemaAccessError: Если доступ к запрошенной схеме запрещен.
             UnsupportedObjectTypeError: Если тип объекта не поддерживается.
+            ObjectNotFoundError: Если объекта такого типа нет в каталоге.
         """
         schema_name = self._resolve_schema(schema_name)
 
+        result: dict[str, Any] | None
         if object_type in ("table", "view"):
             result = await self._tables.get_details(schema_name, object_name, object_type)
         elif object_type == "sequence":
@@ -120,4 +122,6 @@ class CatalogService:
         else:
             raise UnsupportedObjectTypeError(object_type)
 
+        if result is None:
+            raise ObjectNotFoundError(schema_name, object_name, object_type)
         return cast("dict[str, Any]", decode_bytes_to_utf8(result))

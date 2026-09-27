@@ -9,9 +9,14 @@ from postgres_fastmcp.postgres.catalog import (
     QUERY_GET_CONSTRAINTS,
     QUERY_GET_INDEXES,
     QUERY_LIST_TABLES_VIEWS,
+    QUERY_TABLE_EXISTS,
 )
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
+
+
+# object_type тула -> information_schema.tables.table_type
+_TABLE_TYPES = {"table": "BASE TABLE", "view": "VIEW"}
 
 
 class TablesService:
@@ -39,11 +44,10 @@ class TablesService:
         Returns:
             Список словарей с полями schema, name, type.
         """
-        table_type = "BASE TABLE" if object_type == "table" else "VIEW"
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(
             QUERY_LIST_TABLES_VIEWS,
-            params=[schema_name, table_type],
+            params=[schema_name, _TABLE_TYPES[object_type]],
             readonly=True,
         )
         objects = (
@@ -68,8 +72,13 @@ class TablesService:
         schema_name: str,
         object_name: str,
         object_type: str = "table",
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Получить столбцы, ограничения и индексы таблицы или представления.
+
+        Существование решает каталог (QUERY_TABLE_EXISTS), а не пустые разделы: таблица
+        без столбцов (CREATE TABLE t()) существует. Запрос существования идёт в том же
+        gather, поэтому ошибка валидатора у остальных запросов (BASIC с table_prefix)
+        остаётся той же, что до проверки существования.
 
         Args:
             schema_name: Имя схемы объекта.
@@ -77,15 +86,20 @@ class TablesService:
             object_type: Тип объекта — "table" или "view" (по умолчанию "table").
 
         Returns:
-            Словарь с ключами basic, columns, constraints, indexes.
+            Словарь с ключами basic, columns, constraints, indexes; None, если объекта такого типа нет.
         """
         sql_driver = self.db.sql_driver
 
-        col_rows, con_rows, idx_rows = await asyncio.gather(
+        col_rows, con_rows, idx_rows, found = await asyncio.gather(
             sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True),
             sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True),
             sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True),
+            sql_driver.execute(
+                QUERY_TABLE_EXISTS, params=[schema_name, object_name, _TABLE_TYPES[object_type]], readonly=True
+            ),
         )
+        if not found:
+            return None
         columns = (
             [
                 {

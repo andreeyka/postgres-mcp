@@ -170,53 +170,41 @@ async def test_get_object_details_sequence_is_header_only(monkeypatch, db_mock, 
     )
 
 
-@pytest.mark.parametrize("output", ["table", "json"])
-@pytest.mark.parametrize(
-    ("object_type", "details"),
-    [
-        (
-            "table",
-            {
-                "basic": {"schema": "public", "name": "ghost", "type": "table"},
-                "columns": [],
-                "constraints": [],
-                "indexes": [],
-            },
-        ),
-        ("sequence", {}),
-    ],
-)
 @pytest.mark.asyncio
-async def test_get_object_details_missing_object_raises(
-    monkeypatch, db_mock, toolset, object_type: str, details: dict, output: str
-) -> None:
-    """Каталог вернул только то, что тул добавляет сам, и пустые разделы: объекта нет."""
+async def test_get_object_details_empty_table_is_found(monkeypatch, db_mock, toolset) -> None:
+    """Таблица без столбцов (CREATE TABLE t()): заголовок и пустые разделы, а не «не найдено»."""
     fake_service = mock.AsyncMock()
-    fake_service.get_object_details.return_value = details
+    fake_service.get_object_details.return_value = {
+        "basic": {"schema": "public", "name": "t_empty", "type": "table"},
+        "columns": [],
+        "constraints": [],
+        "indexes": [],
+    }
     monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
-    with pytest.raises(
-        ObjectNotFoundError, match=rf"Object not found: public\.ghost \({object_type}\)\. Use list_objects"
-    ):
-        await toolset.get_object_details(
-            schema_name="public", object_name="ghost", object_type=object_type, output=output
-        )
+    table = await toolset.get_object_details(schema_name="public", object_name="t_empty")
+    as_json = await toolset.get_object_details(schema_name="public", object_name="t_empty", output="json")
+
+    assert _text(table) == "schema: public\nname: t_empty\ntype: table"
+    assert as_json.structured_content == {
+        "schema": "public",
+        "name": "t_empty",
+        "type": "table",
+        "columns": [],
+        "constraints": [],
+        "indexes": [],
+    }
 
 
-@pytest.mark.parametrize("output", ["table", "json"])
 @pytest.mark.asyncio
-async def test_get_object_details_missing_extension_has_no_schema(monkeypatch, db_mock, toolset, output: str) -> None:
-    """Расширения не принадлежат схеме: в сообщении только имя."""
+async def test_get_object_details_not_found_comes_from_the_catalog(monkeypatch, db_mock, toolset) -> None:
+    """Тул не выводит «не найдено» сам: ObjectNotFoundError бросает каталог, тул его пропускает."""
     fake_service = mock.AsyncMock()
-    fake_service.get_object_details.return_value = {}
+    fake_service.get_object_details.side_effect = ObjectNotFoundError("public", "ghost", "table")
     monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
-    with pytest.raises(ObjectNotFoundError) as exc_info:
-        await toolset.get_object_details(
-            schema_name="public", object_name="ghost", object_type="extension", output=output
-        )
-
-    assert str(exc_info.value) == "Object not found: ghost (extension). Use list_objects to see existing objects."
+    with pytest.raises(ObjectNotFoundError, match=r"Object not found: public\.ghost \(table\)\. Use list_objects"):
+        await toolset.get_object_details(schema_name="public", object_name="ghost")
 
 
 @pytest.mark.asyncio

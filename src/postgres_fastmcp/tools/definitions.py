@@ -21,7 +21,6 @@ from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.domains.health.database_health import DatabaseHealthAnalyzer, HealthType
 from postgres_fastmcp.domains.index_tuning.service import IndexAnalysisService
 from postgres_fastmcp.postgres.models import StatementResult
-from postgres_fastmcp.shared.errors import ObjectNotFoundError
 from postgres_fastmcp.tools.params import (
     HealthTypesParam,
     IndexQueriesParam,
@@ -31,10 +30,6 @@ from postgres_fastmcp.tools.params import (
     TopQueriesSortByParam,
 )
 from postgres_fastmcp.tools.rendering import rows_result, sections_result, statement_result
-
-
-# Поля заголовка, которые get_object_details добавляет сам, без данных каталога.
-_TOOL_HEADER_KEYS = frozenset({"schema", "name", "type"})
 
 
 class ToolSet:
@@ -110,10 +105,6 @@ class ToolSet:
                 header.update(value)
             else:
                 header[key] = value
-        # Каталог не бросает на отсутствующий объект: таблица приходит с пустыми разделами,
-        # последовательность и расширение — пустым словарём. Кроме полей самого тула ничего нет — объекта нет.
-        if header.keys() <= _TOOL_HEADER_KEYS and not any(sections.values()):
-            raise ObjectNotFoundError(header["schema"], object_name, object_type)
         return sections_result(sections, output, header=header)
 
     async def list_schemas(self, output: OutputParam = "table") -> ToolResult:

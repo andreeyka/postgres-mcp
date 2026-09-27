@@ -115,6 +115,60 @@ async def test_tools_get_object_details(integration_settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_get_object_details_empty_table(integration_settings: Settings) -> None:
+    """A table without columns exists: header and empty sections, not "Object not found"."""
+    mcp = create_server(integration_settings)
+    async with Client(mcp) as client:
+        await client.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS od_empty"})
+        await client.call_tool("execute_sql", {"sql": "CREATE TABLE od_empty ()"})
+        table = await client.call_tool("get_object_details", {"schema_name": "public", "object_name": "od_empty"})
+        as_json = await client.call_tool(
+            "get_object_details", {"schema_name": "public", "object_name": "od_empty", "output": "json"}
+        )
+        as_view = await client.call_tool(
+            "get_object_details",
+            {"schema_name": "public", "object_name": "od_empty", "object_type": "view"},
+            raise_on_error=False,
+        )
+        await client.call_tool("execute_sql", {"sql": "DROP TABLE IF EXISTS od_empty"})
+    assert table.content[0].text == "schema: public\nname: od_empty\ntype: table"
+    assert as_json.structured_content == {
+        "schema": "public",
+        "name": "od_empty",
+        "type": "table",
+        "columns": [],
+        "constraints": [],
+        "indexes": [],
+    }
+    assert as_view.is_error is True
+    assert as_view.content[0].text == (
+        "Object not found: public.od_empty (view). Use list_objects to see existing objects."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("object_type", "message"),
+    [
+        ("table", "Object not found: public.od_ghost (table)."),
+        ("sequence", "Object not found: public.od_ghost (sequence)."),
+        ("extension", "Object not found: od_ghost (extension)."),
+    ],
+)
+async def test_tools_get_object_details_missing(integration_settings: Settings, object_type: str, message: str) -> None:
+    """A missing object is an error with a hint; an extension is named without a schema."""
+    mcp = create_server(integration_settings)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "get_object_details",
+            {"schema_name": "public", "object_name": "od_ghost", "object_type": object_type},
+            raise_on_error=False,
+        )
+    assert result.is_error is True
+    assert result.content[0].text == f"{message} Use list_objects to see existing objects."
+
+
+@pytest.mark.asyncio
 async def test_tools_explain_query(integration_settings: Settings) -> None:
     """explain_query tool returns plan for SELECT 1 (default plain)."""
     mcp = create_server(integration_settings)

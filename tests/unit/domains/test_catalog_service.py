@@ -1,14 +1,37 @@
 # mypy: ignore-errors
 """Unit tests for CatalogService (facade: list_schemas, list_objects, get_object_details)."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from postgres_fastmcp.domains.catalog.service import CatalogService
+from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.postgres.catalog import QUERY_TABLE_EXISTS
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
+from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import SchemaAccessError, UnsupportedObjectTypeError
+from postgres_fastmcp.shared.errors import (
+    ObjectNotFoundError,
+    SchemaAccessError,
+    TablePrefixAccessError,
+    UnsupportedObjectTypeError,
+)
+
+
+_PRESENT = [RowResult(cells={"present": 1})]
+
+
+def _catalog_rows(*, exists: bool):
+    """Подмена execute для деталей таблицы: запрос существования отвечает exists, остальные — пусто."""
+
+    async def execute(query, params=None, *, readonly=True):
+        if query is QUERY_TABLE_EXISTS:
+            return _PRESENT if exists else []
+        return []
+
+    return execute
 
 
 class TestCatalogServiceListObjects:
@@ -138,6 +161,7 @@ class TestCatalogServiceGetObjectDetails:
             ],
             [],
             [],
+            _PRESENT,
         ]
         service = CatalogService(db=mock_db_access)
         result = await service.get_object_details("public", "users", "table")
@@ -149,18 +173,18 @@ class TestCatalogServiceGetObjectDetails:
         assert result["constraints"] == []
         assert result["indexes"] == []
 
-    async def test_get_object_details_table_runs_three_queries_in_parallel(
+    async def test_get_object_details_table_runs_four_queries_in_parallel(
         self,
         mock_db_access: MagicMock,
         mock_executor: MagicMock,
     ) -> None:
-        """columns/constraints/indexes queries must run concurrently via asyncio.gather."""
+        """columns/constraints/indexes and the existence query run concurrently via asyncio.gather."""
         import asyncio
         import time
 
-        async def slow_execute(*args, **kwargs):
+        async def slow_execute(query, *args, **kwargs):
             await asyncio.sleep(0.15)
-            return []
+            return _PRESENT if query is QUERY_TABLE_EXISTS else []
 
         mock_executor.execute.side_effect = slow_execute
         service = CatalogService(db=mock_db_access)
@@ -168,6 +192,74 @@ class TestCatalogServiceGetObjectDetails:
         await service.get_object_details("public", "users", "table")
         elapsed = time.perf_counter() - start
         assert elapsed < 0.3, f"Expected parallel execution (<0.3s), got {elapsed:.3f}s"
+
+    async def test_empty_table_exists(self, mock_db_access: MagicMock, mock_executor: MagicMock) -> None:
+        """CREATE TABLE t(): каталог знает таблицу, разделы пустые — это не «не найдено»."""
+        mock_executor.execute.side_effect = _catalog_rows(exists=True)
+        service = CatalogService(db=mock_db_access)
+
+        result = await service.get_object_details("public", "t_empty", "table")
+
+        assert result == {
+            "basic": {"schema": "public", "name": "t_empty", "type": "table"},
+            "columns": [],
+            "constraints": [],
+            "indexes": [],
+        }
+
+    @pytest.mark.parametrize(("object_type", "table_type"), [("table", "BASE TABLE"), ("view", "VIEW")])
+    async def test_missing_table_or_view_raises_not_found(
+        self, mock_db_access: MagicMock, mock_executor: MagicMock, object_type: str, table_type: str
+    ) -> None:
+        """Нет строки в information_schema.tables с нужным table_type — ObjectNotFoundError."""
+        mock_executor.execute.side_effect = _catalog_rows(exists=False)
+        service = CatalogService(db=mock_db_access)
+
+        with pytest.raises(ObjectNotFoundError) as exc_info:
+            await service.get_object_details("public", "ghost", object_type)
+
+        assert str(exc_info.value) == (
+            f"Object not found: public.ghost ({object_type}). Use list_objects to see existing objects."
+        )
+        exists_call = next(c for c in mock_executor.execute.await_args_list if c.args[0] is QUERY_TABLE_EXISTS)
+        assert exists_call.kwargs["params"] == ["public", "ghost", table_type]
+
+    async def test_missing_sequence_raises_not_found(self, mock_db_access: MagicMock, mock_executor: MagicMock) -> None:
+        mock_executor.execute.return_value = []
+        service = CatalogService(db=mock_db_access)
+
+        with pytest.raises(ObjectNotFoundError, match=r"Object not found: public\.ghost \(sequence\)"):
+            await service.get_object_details("public", "ghost", "sequence")
+
+    async def test_missing_extension_message_has_no_schema(
+        self, mock_db_access: MagicMock, mock_executor: MagicMock
+    ) -> None:
+        """Расширения не принадлежат схеме: в сообщении только имя."""
+        mock_executor.execute.return_value = []
+        service = CatalogService(db=mock_db_access)
+
+        with pytest.raises(ObjectNotFoundError) as exc_info:
+            await service.get_object_details("public", "ghost", "extension")
+
+        assert str(exc_info.value) == "Object not found: ghost (extension). Use list_objects to see existing objects."
+
+    @pytest.mark.parametrize("object_name", ["app_orders", "other_users", "ghost"])
+    async def test_basic_table_prefix_error_is_unchanged(self, object_name: str) -> None:
+        """BASIC с table_prefix: как и до проверки существования, валидатор отклоняет pg_indexes для любой таблицы."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=[])
+        config = SafeSqlConfig(query_tag="t", allowed_schema="public", table_prefix="app_")
+        validator = QueryValidator(allowed_schema="public", table_prefix="app_", read_only=True)
+        db = DbAccess(
+            sql_driver=SafeSqlExecutor(delegate=delegate, validator=validator, config=config),
+            access_mode=AccessMode.BASIC,
+            write_mode=False,
+            table_prefix="app_",
+            connection_id="fake",
+        )
+
+        with pytest.raises(TablePrefixAccessError, match="pg_indexes"):
+            await CatalogService(db=db).get_object_details("public", object_name, "table")
 
     async def test_get_object_details_unsupported_type_raises(
         self,
