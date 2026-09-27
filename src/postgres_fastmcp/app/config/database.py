@@ -1,7 +1,7 @@
 """Конфигурация базы данных: DatabaseConfig для кода библиотеки, DatabaseSettings для env/.env."""
 
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -174,8 +174,9 @@ class DatabaseConfig(BaseModel):
         """
         if self.user is None or self.password is None or self.host is None or self.port is None or self.name is None:
             return None
-        user = quote_plus(self.user)
-        password = quote_plus(self.password.get_secret_value())
+        # Percent-encoding, а не quote_plus: libpq не декодирует '+' как пробел
+        user = quote(self.user, safe="")
+        password = quote(self.password.get_secret_value(), safe="")
         query = urlencode(self._connection_query_params())
         return f"postgresql://{user}:{password}@{self.host}:{self.port}/{self.name}?{query}"
 

@@ -167,3 +167,30 @@ def test_cli_database_uri_sslmode_beats_env(monkeypatch: pytest.MonkeyPatch, tmp
         database_uri="postgresql://u:p@h/n?sslmode=disable", config_path=tmp_path / "missing.json"
     )
     assert settings.database.sslmode == "disable"
+
+
+_TRICKY_CREDENTIALS = [
+    ("user name", "pa ss"),
+    ("a+b", "p+w"),
+    ("me@corp", "p@ss:w/rd"),
+    ("u%41", "100%"),
+    ("пользователь", "пароль€"),
+    ("u", "a b+c@d/e%f:g?h#i&j=k"),
+]
+
+
+@pytest.mark.parametrize(("user", "password"), _TRICKY_CREDENTIALS)
+def test_database_uri_round_trips_credentials(user: str, password: str) -> None:
+    """database_uri -> from_uri возвращает те же user и password, что были в конфиге."""
+    config = DatabaseConfig(host="h", user=user, password=password, name="d")
+    restored = DatabaseConfig.from_uri(config.database_uri)
+    assert (restored.user, restored.password.get_secret_value()) == (user, password)
+
+
+@pytest.mark.parametrize(("user", "password"), _TRICKY_CREDENTIALS)
+def test_libpq_reads_the_raw_credentials_from_database_uri(user: str, password: str) -> None:
+    """Libpq не декодирует '+' как пробел: креды кодируются percent-encoding, а не quote_plus."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    params = conninfo_to_dict(DatabaseConfig(host="h", user=user, password=password, name="d").database_uri)
+    assert (params["user"], params["password"]) == (user, password)
