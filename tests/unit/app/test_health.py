@@ -281,28 +281,26 @@ async def test_health_cache_is_per_server(monkeypatch: pytest.MonkeyPatch) -> No
     assert calls == 2
 
 
-async def test_health_needs_no_token_while_mcp_does(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_health_lives_at_the_root_without_a_token_while_mcp_needs_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP-стек с server.endpoint=/api/mcp и static auth: /health в корне без токена, MCP без токена — 401."""
+
     async def ping(_self: PostgresProvider) -> None:
         return None
 
     monkeypatch.setattr(PostgresProvider, "ping", ping)
-    settings = _settings()
+    settings = _settings(endpoint="/api/mcp")
     settings.auth = AuthSettings(mode="static", tokens={"tok-secret": {"client_id": "c"}})
-    async with asgi_server(create_server(settings)) as running, running.http_client() as http:
+    async with (
+        asgi_server(create_server(settings), path=settings.server.endpoint) as running,
+        running.http_client() as http,
+    ):
         health = await http.get(_HEALTH_URL)
         mcp = await http.post(running.url, json={}, headers={"Accept": "application/json, text/event-stream"})
-    assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert running.url == "http://127.0.0.1/api/mcp"
+    assert (health.status_code, health.json()) == (200, {"status": "ok"})
     assert mcp.status_code == 401
 
 
 async def test_health_can_be_disabled() -> None:
     status, _ = await _get_health(_settings(health_endpoint_enabled=False))
     assert status == 404
-
-
-async def test_health_follows_the_http_app_path() -> None:
-    """/health живёт в корне, а не под server.endpoint."""
-    server = create_server(_settings(endpoint="/api/mcp"))
-    paths = {getattr(route, "path", None) for route in server.http_app(path="/api/mcp").routes}
-    assert {"/api/mcp", "/health"} <= paths
