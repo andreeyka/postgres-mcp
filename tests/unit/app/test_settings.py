@@ -235,3 +235,23 @@ def test_uri_with_unknown_sslmode_fails() -> None:
 def test_cli_database_uri_with_unknown_sslmode_fails(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requre"):
         build_settings_from_cli(database_uri="postgresql://u:pw@h/d?sslmode=requre", config_path=tmp_path / "x.json")
+
+
+@pytest.mark.parametrize(
+    ("host", "name"),
+    [("::1", "d"), ("h", "my db"), ("h", "what?db"), ("::1", "a b?c/d%e#f")],
+)
+def test_database_uri_round_trips_ipv6_host_and_database_name(host: str, name: str) -> None:
+    """IPv6-хост в скобках, имя БД в percent-encoding: from_uri и libpq видят исходные значения."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    uri = DatabaseConfig(host=host, user="u", password="pw", name=name).database_uri
+    restored = DatabaseConfig.from_uri(uri)
+    assert (restored.host, restored.port, restored.name) == (host, 5432, name)
+    params = conninfo_to_dict(uri)
+    assert (params["host"], params["port"], params["dbname"]) == (host, "5432", name)
+
+
+def test_database_uri_keeps_an_already_bracketed_ipv6_host() -> None:
+    uri = DatabaseConfig(host="[::1]", user="u", password="pw", name="d").database_uri
+    assert uri.startswith("postgresql://u:pw@[::1]:5432/d?")

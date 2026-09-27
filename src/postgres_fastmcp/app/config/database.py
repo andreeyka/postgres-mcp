@@ -116,7 +116,7 @@ class DatabaseConfig(BaseModel):
             "port": parsed.port or 5432,
             "user": unquote(parsed.username) if parsed.username else None,
             "password": SecretStr(unquote(parsed.password)) if parsed.password else None,
-            "name": (parsed.path or "").lstrip("/") or None,
+            "name": unquote((parsed.path or "").lstrip("/")) or None,
         }
         fields = {key: value for key, value in candidates.items() if value is not None}
         # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
@@ -182,8 +182,11 @@ class DatabaseConfig(BaseModel):
         # Percent-encoding, а не quote_plus: libpq не декодирует '+' как пробел
         user = quote(self.user, safe="")
         password = quote(self.password.get_secret_value(), safe="")
+        # IPv6-адрес без скобок libpq прочитал бы как host:port
+        host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        name = quote(self.name, safe="")
         query = urlencode(self._connection_query_params())
-        return f"postgresql://{user}:{password}@{self.host}:{self.port}/{self.name}?{query}"
+        return f"postgresql://{user}:{password}@{host}:{self.port}/{name}?{query}"
 
     @model_validator(mode="after")
     def _check_database_uri(self) -> "DatabaseConfig":
