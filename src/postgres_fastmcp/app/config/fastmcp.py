@@ -5,22 +5,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class FastMCPSettings(BaseSettings):
-    """Настройки FastMCP."""
+    """Настройки FastMCP: env ``MCP_FASTMCP_*``, секция ``fastmcp``."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore", hide_input_in_errors=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="MCP_FASTMCP_", extra="ignore", hide_input_in_errors=True
+    )
 
-    server_name: str = Field(default="PostgreSQL MCP", description="Имя MCP-сервера (MCP_SERVER_NAME)")
+    server_name: str = Field(default="PostgreSQL MCP", description="Имя MCP-сервера (MCP_FASTMCP_SERVER_NAME)")
     instructions: str = Field(
         default=(
-            "MCP-сервер для PostgreSQL: обнаружение схемы, выполнение запросов, "
-            "анализ EXPLAIN, рекомендации по индексам и проверка состояния базы данных."
+            "PostgreSQL MCP server: schema discovery, SQL execution, EXPLAIN analysis, "
+            "index recommendations and database health checks."
         ),
-        description="Инструкции, описывающие назначение сервера для LLM-клиентов (MCP_INSTRUCTIONS)",
-    )
-    return_errors_as_strings: bool = Field(
-        default=True,
-        description="Возвращает ошибки как строки в ответах LLM вместо стандартных ошибок MCP",
-    )
-    error_traceback_in_strings: bool = Field(
-        default=False, description="Включает traceback в строках ошибок при return_errors_as_strings=True"
+        description="Инструкции о назначении сервера для LLM-клиентов (MCP_FASTMCP_INSTRUCTIONS)",
     )

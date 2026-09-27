@@ -8,7 +8,7 @@
 Этот форк оригинального проекта [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) переписан на FastMCP и даёт:
 
 - **🚀 Высокая производительность** — FastMCP оптимизирован для быстрой работы
-- **🔧 Гибкая настройка** — `config.json`, переменные окружения (например `MCP_SERVER_*`, `MCP_DATABASE_*`) или CLI
+- **🔧 Гибкая настройка** — `config.json`, переменные окружения (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*`) или CLI
 - **🌐 HTTP и STDIO** — запуск как HTTP-сервер или через stdio для настольных MCP-клиентов
 - **🔐 Детальный контроль доступа** — access_mode (basic/full) и write_mode (true/false)
 - **📌 Одна БД на сервер** — один экземпляр MCP-сервера обслуживает одну базу PostgreSQL
@@ -68,8 +68,7 @@ uv run postgres-fastmcp \
         "host": "0.0.0.0",
         "port": 8000,
         "transport": "http",
-        "endpoint": "mcp",
-        "workers": 1
+        "endpoint": "/mcp"
     },
     "fastmcp": {
         "server_name": "postgres-fastmcp"
@@ -98,7 +97,7 @@ uv run postgres-fastmcp
 
 #### 3. Переменные окружения
 
-Используйте префиксы `MCP_SERVER_*`, `MCP_DATABASE_*` и `MCP_FASTMCP_*` (см. [env.example](env.example)):
+Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются.
 
 ```bash
 export MCP_SERVER_HOST=0.0.0.0
@@ -111,7 +110,7 @@ export MCP_DATABASE_PASSWORD=password
 export MCP_DATABASE_NAME=dbname
 export MCP_DATABASE_ROLE=admin
 export MCP_DATABASE_WRITE_MODE=false
-export MCP_RESPONSE_MAX_TOKENS=20000
+export MCP_SERVER_RESPONSE_MAX_TOKENS=20000
 
 uv run postgres-fastmcp
 ```
@@ -193,7 +192,7 @@ uv run postgres-fastmcp \
 
 - **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--access-mode`, `--write-mode` / `--no-write-mode`. Вывод версии: `--version`. Каждая заданная опция переопределяет `config.json` и переменные окружения на этот запуск.
 - **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
-- **Переменные окружения / .env:** Префиксы `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
+- **Переменные окружения / .env:** `MCP_<СЕКЦИЯ>_<ПОЛЕ>`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
 
 ### Подключение MCP-клиентов
 
@@ -328,7 +327,7 @@ MCP_AUTH_JWT_AUDIENCE=postgres-mcp
 4. IdP возвращает пользователя на `<base_url>/auth/callback` — этот адрес нужно добавить в разрешённые redirect URI клиента в IdP.
 5. Сервер выдаёт MCP-клиенту свой токен и на каждом запросе проверяет токен IdP за ним.
 
-Сервер читает `oidc_config_url` при запуске: если IdP недоступен, сервер не стартует. Исключение — CLI этого пакета при реальном запуске с `--transport stdio` (или `MCP_TRANSPORT=stdio`): он знает, каким транспортом запускается, и в этом случае сознательно не строит провайдер и не обращается к IdP, поскольку в `stdio` аутентификация всё равно не действует. Библиотечный `create_server()` от этого не зависит и всегда пытается построить провайдер (см. начало раздела). Регистрации MCP-клиентов хранятся зашифрованными в каталоге данных FastMCP (`FASTMCP_HOME`, по умолчанию `~/.local/share/fastmcp`); в контейнере вынесите его в volume, иначе после перезапуска клиентам придётся войти заново. `FASTMCP_HOME` должен указывать на доступный для записи volume — с read-only корневой файловой системой контейнера `oidc` не заработает.
+Сервер читает `oidc_config_url` при запуске: если IdP недоступен, сервер не стартует. Исключение — CLI этого пакета при реальном запуске с `--transport stdio` (или `MCP_SERVER_TRANSPORT=stdio`): он знает, каким транспортом запускается, и в этом случае сознательно не строит провайдер и не обращается к IdP, поскольку в `stdio` аутентификация всё равно не действует. Библиотечный `create_server()` от этого не зависит и всегда пытается построить провайдер (см. начало раздела). Регистрации MCP-клиентов хранятся зашифрованными в каталоге данных FastMCP (`FASTMCP_HOME`, по умолчанию `~/.local/share/fastmcp`); в контейнере вынесите его в volume, иначе после перезапуска клиентам придётся войти заново. `FASTMCP_HOME` должен указывать на доступный для записи volume — с read-only корневой файловой системой контейнера `oidc` не заработает.
 
 ### Подключение клиентов с токеном
 
@@ -475,7 +474,7 @@ MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
 ### Формат ответа и бюджет
 
 - `execute_sql`, `list_schemas`, `list_objects`, `get_object_details` и `get_top_queries` принимают `output`: `table` (по умолчанию) — Markdown-таблица, в которой колонки перечислены один раз, и строка `N rows.`; `json` — `{"rows": [...], "row_count": N}` в `structuredContent` и тот же JSON текстом. `get_object_details` в `json` отдаёт поля объекта и разделы (`columns`, `constraints`, `indexes`) одним объектом.
-- Ответ инструмента больше `response_max_tokens` (переменная `MCP_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3. Если инструмент мог записать данные (аннотация `readOnlyHint=false`, то есть `execute_sql` при `write_mode=true`), текст другой и не утверждает, что запись точно произошла — это мог быть и обычный `SELECT`: `... If the statement modified data, its changes are already applied — do not re-run it; query the affected rows with a narrower SELECT instead. Otherwise refine the request: ...`.
+- Ответ инструмента больше `response_max_tokens` (переменная `MCP_SERVER_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3. Если инструмент мог записать данные (аннотация `readOnlyHint=false`, то есть `execute_sql` при `write_mode=true`), текст другой и не утверждает, что запись точно произошла — это мог быть и обычный `SELECT`: `... If the statement modified data, its changes are already applied — do not re-run it; query the affected rows with a narrower SELECT instead. Otherwise refine the request: ...`.
 - Ввод нормализуется: `object_type` понимает `Tables`, `VIEW`, `sequences`; `health_type` — список или строку через запятую в любом регистре; `sort_by` — синонимы `total`, `mean`, `avg`, `resource`; `limit` больше 100 урезается до 100 и действует для всех `sort_by`, включая `resources`. Неверное значение даёт ошибку, в которой всегда перечислены допустимые значения; если есть похожее, добавляется подсказка `Did you mean ...?`.
 
 ### Ограничения по доступу
@@ -758,7 +757,7 @@ uv run mypy src/
 | Стандартная реализация MCP | Фреймворк FastMCP |
 | Режимы                        | access_mode (`basic` / `full`) + write_mode (true/false)                      |
 | Только транспорт SSE   | HTTP и stdio |
-| Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*`) и CLI |
+| Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*`) и CLI |
 | —                      | Опциональный `table_prefix` для роли `user`; endpoint здоровья `/health` |
 
 ## Технические заметки

@@ -14,7 +14,9 @@ from pydantic import ValidationError
 
 from postgres_fastmcp.app.config import Settings, build_settings_from_cli
 from postgres_fastmcp.app.config.database import DatabaseConfig, DatabaseSettings
-from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.app.config.fastmcp import FastMCPSettings
+from postgres_fastmcp.app.config.server import ServerSettings
+from postgres_fastmcp.shared.enums import AccessMode, TransportConfig
 
 
 _SECRET_PASSWORD = "S3CRETPW"
@@ -194,3 +196,30 @@ def test_libpq_reads_the_raw_credentials_from_database_uri(user: str, password: 
 
     params = conninfo_to_dict(DatabaseConfig(host="h", user=user, password=password, name="d").database_uri)
     assert (params["user"], params["password"]) == (user, password)
+
+
+def test_server_block_reads_the_mcp_server_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Префикс блока = MCP_<СЕКЦИЯ>_, как у MCP_DATABASE_ и MCP_AUTH_; старые MCP_PORT и т.п. не читаются."""
+    monkeypatch.setenv("MCP_SERVER_PORT", "9100")
+    monkeypatch.setenv("MCP_SERVER_TRANSPORT", "stdio")
+    monkeypatch.setenv("MCP_SERVER_RESPONSE_MAX_TOKENS", "5000")
+    monkeypatch.setenv("MCP_HOST", "0.0.0.0")
+    server = ServerSettings()
+    assert (server.port, server.transport, server.response_max_tokens) == (9100, TransportConfig.STDIO, 5000)
+    assert server.host == "127.0.0.1"
+
+
+def test_fastmcp_block_reads_the_mcp_fastmcp_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_FASTMCP_SERVER_NAME", "orders-db")
+    monkeypatch.setenv("MCP_SERVER_NAME", "ignored")
+    assert FastMCPSettings().server_name == "orders-db"
+
+
+def test_dead_fields_are_gone() -> None:
+    assert "workers" not in ServerSettings.model_fields
+    assert {"return_errors_as_strings", "error_traceback_in_strings"}.isdisjoint(FastMCPSettings.model_fields)
+
+
+def test_default_instructions_are_english() -> None:
+    """Инструкции сервера видит агент: только английский текст."""
+    assert FastMCPSettings().instructions.isascii()

@@ -7,9 +7,11 @@ from postgres_fastmcp.shared.enums import TransportConfig
 
 
 class ServerSettings(BaseSettings):
-    """Настройки сервера."""
+    """Настройки сервера: env ``MCP_SERVER_*``, секция ``server``."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MCP_", extra="ignore", hide_input_in_errors=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="MCP_SERVER_", extra="ignore", hide_input_in_errors=True
+    )
 
     host: str = Field(default="127.0.0.1", description="Хост для привязки сервера")
     port: int = Field(default=8000, description="Порт для привязки сервера")
@@ -17,14 +19,13 @@ class ServerSettings(BaseSettings):
         default=TransportConfig.HTTP, description="Глобальный тип транспорта: 'http' или 'stdio'"
     )
     endpoint: str = Field(default="/mcp", description="Путь MCP endpoint для HTTP (ведущий '/' добавляется сам)")
-    workers: int = Field(default=1, description="Количество запускаемых рабочих процессов")
     health_endpoint_enabled: bool = Field(
         default=True, description="Включает endpoint проверки состояния /health (авторизация не требуется)"
     )
     response_max_tokens: int = Field(
         default=20000,
         ge=1000,
-        description="Предел ответа тула в токенах (MCP_RESPONSE_MAX_TOKENS); больший ответ заменяется ошибкой",
+        description="Предел ответа тула в токенах (MCP_SERVER_RESPONSE_MAX_TOKENS); больший ответ заменяется ошибкой",
     )
 
     @field_validator("endpoint")

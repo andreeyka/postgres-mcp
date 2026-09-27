@@ -60,9 +60,9 @@ async def test_large_response_raises_with_numbers() -> None:
 
 
 def test_response_max_tokens_default_and_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MCP_RESPONSE_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("MCP_SERVER_RESPONSE_MAX_TOKENS", raising=False)
     assert ServerSettings().response_max_tokens == 20000
-    monkeypatch.setenv("MCP_RESPONSE_MAX_TOKENS", "5000")
+    monkeypatch.setenv("MCP_SERVER_RESPONSE_MAX_TOKENS", "5000")
     assert ServerSettings().response_max_tokens == 5000
     with pytest.raises(ValidationError):
         ServerSettings(response_max_tokens=999)

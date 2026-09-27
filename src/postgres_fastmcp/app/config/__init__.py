@@ -8,15 +8,12 @@
     "port": 8000,
     "transport": "http",
     "endpoint": "/mcp",
-    "workers": 1,
     "health_endpoint_enabled": true,
     "response_max_tokens": 20000
   },
   "fastmcp": {
     "server_name": "PostgreSQL MCP",
-    "instructions": "...",
-    "return_errors_as_strings": true,
-    "error_traceback_in_strings": false
+    "instructions": "..."
   },
   "database": {
     "host": "localhost",
@@ -68,7 +65,8 @@ class Settings(BaseSettings):
     Потребители используют вложенную конфигурацию через DI или прямой доступ:
     settings.server, settings.fastmcp, settings.database, settings.auth.
 
-    Примеры переменных окружения: MCP_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_AUTH_MODE=static, ...
+    Переменные окружения — MCP_<СЕКЦИЯ>_<ПОЛЕ>: MCP_SERVER_HOST=0.0.0.0, MCP_FASTMCP_SERVER_NAME=...,
+    MCP_DATABASE_HOST=localhost, MCP_AUTH_MODE=static, ...
     """
 
     # Прикрывает только собственные ошибки Settings; ошибка model_validator внутри вложенного
