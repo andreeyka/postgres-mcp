@@ -30,6 +30,12 @@ class ServerSettings(BaseSettings):
     @field_validator("endpoint")
     @classmethod
     def _leading_slash(cls, value: str) -> str:
-        """Starlette принимает только путь с ведущим '/': 'mcp' из старых конфигов становится '/mcp'."""
+        """Starlette принимает только путь с ведущим '/': 'mcp' из старых конфигов становится '/mcp'.
+
+        Путь '/health' (в любом написании: 'health', '/health/') занят проверкой состояния — ошибка.
+        """
         value = value.strip()
+        if value.strip("/") == "health":
+            msg = "server.endpoint must not be /health: that path is reserved for the health check"
+            raise ValueError(msg)
         return value if value.startswith("/") else f"/{value}"

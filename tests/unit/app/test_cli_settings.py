@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 from rich.console import Console
 
 from postgres_fastmcp.app.config import build_settings_from_cli
@@ -183,6 +184,18 @@ def test_from_uri_accepts_a_connection_field_override() -> None:
 def test_endpoint_gets_a_leading_slash(configured: str, expected: str) -> None:
     """Starlette требует путь с '/': значение 'mcp' из старых конфигов не должно ронять HTTP-старт."""
     assert ServerSettings(endpoint=configured).endpoint == expected
+
+
+@pytest.mark.parametrize("configured", ["health", "/health", "/health/", " health/ ", "//health"])
+def test_endpoint_cannot_shadow_the_health_route(configured: str) -> None:
+    """MCP endpoint на /health перекрыл бы проверку состояния (или она — MCP): такой конфиг — ошибка."""
+    with pytest.raises(ValidationError, match=r"server\.endpoint must not be /health"):
+        ServerSettings(endpoint=configured)
+
+
+@pytest.mark.parametrize("configured", ["/healthz", "/api/health", "/health/mcp"])
+def test_endpoint_may_contain_health_elsewhere(configured: str) -> None:
+    assert ServerSettings(endpoint=configured).endpoint == configured
 
 
 def test_http_run_uses_the_configured_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
