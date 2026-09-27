@@ -71,6 +71,13 @@ class PostgresProvider(LocalProvider):
         """Доступ к БД с правами текущего запроса (токен None в stdio и без auth)."""
         return self._db.view(self._resolve(get_access_token()))
 
+    async def ping(self) -> None:
+        """Проверить, что база отвечает на SELECT 1 (для /health); бросает ошибку psycopg, если нет.
+
+        Своего общего таймаута нет: вызывающий оборачивает вызов в ``asyncio.timeout``.
+        """
+        await self._db.ping()
+
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
         """Закрыть пул подключений при остановке сервера."""

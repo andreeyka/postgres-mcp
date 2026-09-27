@@ -3,8 +3,11 @@
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.utilities.tests import asgi_server
 
+from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.provider import PostgresProvider
 from postgres_fastmcp.shared.enums import AccessMode
 
@@ -33,3 +36,13 @@ async def test_host_server_with_basic_and_namespaced_full_provider(
     assert basic.structured_content == {"rows": [{"n": 1}], "row_count": 1}
     assert "public" in {row["schema_name"] for row in schemas.structured_content["rows"]}
     assert blocked.is_error is True
+
+
+@pytest.mark.asyncio
+async def test_health_is_ok_on_a_real_database(test_postgres_connection_string: tuple[str, str]) -> None:
+    """GET /health по настоящему HTTP-стеку: SELECT 1 на реальной БД даёт 200."""
+    connection_string, _ = test_postgres_connection_string
+    settings = Settings(database=DatabaseConfig.from_uri(connection_string))
+    async with asgi_server(create_server(settings)) as running, running.http_client() as http:
+        response = await http.get("http://127.0.0.1/health")
+    assert (response.status_code, response.json()) == (200, {"status": "ok"})
