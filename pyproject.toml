@@ -1,6 +1,6 @@
 [project]
 name = "postgres-fastmcp"
-version = "0.0.4"
+version = "0.1.0"
 description = "PostgreSQL Tuning and Analysis Tool"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -32,7 +32,7 @@ packages = ["src/postgres_fastmcp"]
 include = ["src/postgres_fastmcp", "README.md", "pyproject.toml"]
 
 [project.scripts]
-postgres-mcp = "postgres_fastmcp.app.main:app"
+postgres-fastmcp = "postgres_fastmcp.app.main:app"
 
 [dependency-groups]
 dev = [

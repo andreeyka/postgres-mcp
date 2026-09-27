@@ -2,7 +2,7 @@
 .DEFAULT_GOAL := help
 
 # Переменные для Docker
-NAME ?= postgres-mcp
+NAME ?= postgres-fastmcp
 REPO ?=
 TAG ?= latest
 DOCKER_FULL_IMAGE := $(if $(REPO),$(REPO)/$(NAME),$(NAME)):$(TAG)
