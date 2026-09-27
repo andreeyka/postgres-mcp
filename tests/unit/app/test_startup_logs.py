@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastmcp import FastMCP
 
-from postgres_fastmcp.app.config import LEGACY_ENV_NAMES, Settings, warn_about_legacy_env
+from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.auth import AuthSettings
 from postgres_fastmcp.app.main import app
 from postgres_fastmcp.app.server import create_server
@@ -64,37 +64,3 @@ def test_stdio_logs_no_listen_address_and_writes_nothing_to_stdout(
     assert not any("Serving MCP" in m for m in caplog.messages)
     assert any("Database ceiling" in m for m in caplog.messages)
     assert capsys.readouterr().out == ""
-
-
-def test_legacy_env_names_warn_once_each_without_values(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    for name in LEGACY_ENV_NAMES:
-        monkeypatch.setenv(name, f"value-of-{name}")
-    with caplog.at_level(logging.WARNING):
-        warn_about_legacy_env()
-    messages = _messages(caplog, "postgres_fastmcp.app.config", "WARNING")
-    assert len(messages) == len(LEGACY_ENV_NAMES) == 11
-    assert "Environment variable MCP_HOST is no longer read; use MCP_SERVER_HOST" in messages
-    assert "Environment variable MCP_SERVER_NAME is no longer read; use MCP_FASTMCP_SERVER_NAME" in messages
-    assert any(m.startswith("Environment variable MCP_WORKERS is no longer read;") and "removed" in m for m in messages)
-    assert "value-of-" not in caplog.text
-
-
-def test_no_legacy_warning_without_old_names(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    for name in LEGACY_ENV_NAMES:
-        monkeypatch.delenv(name, raising=False)
-    with caplog.at_level(logging.WARNING):
-        warn_about_legacy_env()
-    assert _messages(caplog, "postgres_fastmcp.app.config", "WARNING") == []
-
-
-def test_cli_warns_about_legacy_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("MCP_PORT", "9999")
-    with caplog.at_level(logging.WARNING):
-        _run(["--transport", "stdio"], monkeypatch)
-    [message] = _messages(caplog, "postgres_fastmcp.app.config", "WARNING")
-    assert message == "Environment variable MCP_PORT is no longer read; use MCP_SERVER_PORT"

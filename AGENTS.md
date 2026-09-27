@@ -943,8 +943,7 @@ current request's access. `tools/registry.py` registers them on a `LocalProvider
 
 ## Server Startup
 
-`app/main.py` warns about each old env name that is still set (`warn_about_legacy_env`, values are
-never logged), builds `Settings` from the CLI flags (`build_settings_from_cli`: an explicit flag >
+`app/main.py` builds `Settings` from the CLI flags (`build_settings_from_cli`: an explicit flag >
 `--database-uri` > config.json > env/.env > defaults), builds the server with `create_server` **before**
 disabling logs for stdio (startup auth warnings and the `Database ceiling: ...` INFO line go to stderr),
 and runs it with `mcp.run(transport=...)`. The CLI transport flag is already merged into

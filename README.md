@@ -97,7 +97,7 @@ uv run postgres-fastmcp
 
 #### 3. Переменные окружения
 
-Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются. Если на старте задано старое имя вроде `MCP_PORT` или `MCP_SERVER_NAME`, сервер один раз пишет WARNING `Environment variable ... is no longer read` с новым именем (или пометкой, что настройка удалена); значение переменной в лог не попадает.
+Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются.
 
 ```bash
 export MCP_SERVER_HOST=0.0.0.0
