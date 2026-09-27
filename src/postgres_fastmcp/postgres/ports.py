@@ -7,7 +7,7 @@
 
 from typing import Any, Protocol
 
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 
 
 class QueryExecutorPort(Protocol):
@@ -39,3 +39,13 @@ class SqlDriverPort(QueryExecutorPort, QueryTemplatePort, Protocol):
     конкретные реализации (``SqlExecutor``, ``SafeSqlExecutor``) остаются
     деталью слоя ``sql``.
     """
+
+    async def execute_statement(
+        self,
+        query: str,
+        params: list[Any] | None = None,
+        *,
+        readonly: bool = True,
+    ) -> StatementResult:
+        """Выполнение запроса: строки и тег команды Postgres (для execute_sql)."""
+        ...

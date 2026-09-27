@@ -8,7 +8,7 @@ import pytest
 from psycopg.errors import QueryCanceled
 from psycopg.pq import DiagnosticField
 
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor, _is_statement_timeout
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError, SchemaNotAllowedError
@@ -180,6 +180,64 @@ class TestSafeSqlExecutorTimeout:
         executor = _make_executor(mock_delegate)
         result = await executor.execute("SELECT 1")
         assert result == [RowResult(cells={"a": 1})]
+
+
+class TestSafeSqlExecutorExecuteStatement:
+    """execute_statement идёт тем же путём, что execute, но через delegate.execute_statement."""
+
+    async def test_validates_prefixes_and_delegates(self) -> None:
+        """Тег, SET LOCAL и read_only из конфигурации; результат делегата возвращается как есть."""
+        expected = StatementResult(rows=None, status="UPDATE 3", affected_rows=3)
+        mock_delegate = MagicMock()
+        mock_delegate.execute_statement = AsyncMock(return_value=expected)
+        config = SafeSqlConfig(query_tag="t", timeout=5, allowed_schema="public", read_only=False)
+        executor = _make_executor(mock_delegate, validator=QueryValidator(read_only=False), config=config)
+
+        result = await executor.execute_statement("UPDATE t SET v = 1", readonly=True)
+
+        assert result is expected
+        mock_delegate.execute_statement.assert_awaited_once_with(
+            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; /* t */ UPDATE t SET v = 1",
+            params=None,
+            readonly=False,
+        )
+        mock_delegate.execute.assert_not_called()
+
+    async def test_invalid_query_raises_before_delegate(self) -> None:
+        """Валидатор отклоняет запрос до обращения к делегату."""
+        mock_delegate = MagicMock()
+        mock_delegate.execute_statement = AsyncMock()
+        executor = _make_executor(mock_delegate, validator=QueryValidator(read_only=True, allowed_schema="public"))
+
+        with pytest.raises(SchemaNotAllowedError):
+            await executor.execute_statement("SELECT * FROM other_schema.t")
+        mock_delegate.execute_statement.assert_not_called()
+
+    async def test_statement_timeout_cancel_maps_to_query_timeout_error(self) -> None:
+        """Отмена по statement_timeout превращается в QueryTimeoutError, как у execute."""
+        mock_delegate = MagicMock()
+        mock_delegate.execute_statement = AsyncMock(
+            side_effect=_query_canceled("canceling statement due to statement timeout")
+        )
+        executor = _make_executor(mock_delegate, config=SafeSqlConfig(query_tag="t", timeout=30))
+
+        with pytest.raises(QueryTimeoutError):
+            await executor.execute_statement("SELECT 1")
+
+    async def test_client_timeout_raises_after_grace(self) -> None:
+        """Клиентская страховка действует и для execute_statement."""
+
+        async def slow(*args: object, **kwargs: object) -> StatementResult:
+            await asyncio.sleep(1)
+            return StatementResult(rows=None, status="UPDATE 0", affected_rows=0)
+
+        mock_delegate = MagicMock()
+        mock_delegate.execute_statement = AsyncMock(side_effect=slow)
+        config = SafeSqlConfig(query_tag="t", timeout=0.01, client_timeout_grace=0.01)
+        executor = _make_executor(mock_delegate, config=config)
+
+        with pytest.raises(QueryTimeoutError):
+            await executor.execute_statement("SELECT 1")
 
 
 @pytest.mark.parametrize(

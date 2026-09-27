@@ -2,14 +2,16 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import Any, cast
+from typing import Any
 
 from psycopg.errors import QueryCanceled
 from psycopg.sql import SQL, Composable, Literal
 
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
+from postgres_fastmcp.postgres.ports import SqlDriverPort
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError
 
@@ -67,14 +69,14 @@ class SafeSqlExecutor:
 
     def __init__(
         self,
-        delegate: Any,  # noqa: ANN401
+        delegate: SqlDriverPort,
         validator: QueryValidator,
         config: SafeSqlConfig,
     ) -> None:
         """Инициализация с делегирующим исполнителем, валидатором и конфигурацией.
 
         Args:
-            delegate: Исполнитель с асинхронным execute(query, params=..., readonly=...) -> list[RowResult]|None.
+            delegate: Исполнитель без проверок (SqlExecutor): execute и execute_statement.
             validator: Валидатор, используемый для валидации каждого запроса перед выполнением.
             config: Конфигурация безопасного SQL (тег, таймаут, схема, read_only, префикс).
         """
@@ -103,14 +105,41 @@ class SafeSqlExecutor:
             QueryTimeoutError: Postgres отменил запрос по statement_timeout либо сработала клиентская страховка.
             QueryCancelledError: Postgres отменил запрос по другой причине.
         """
+        return await self._guarded(query, params, self._delegate.execute)
+
+    async def execute_statement(
+        self,
+        query: str,
+        params: list[Any] | None = None,
+        *,
+        readonly: bool = True,  # noqa: ARG002 — part of SqlDriverPort; effective value from config
+    ) -> StatementResult:
+        """То же, что execute, но со строками отдаёт тег команды Postgres ("UPDATE 3", "CREATE TABLE").
+
+        Валидация, statement_timeout, search_path, клиентская страховка и разбор отмены — те же,
+        что у execute: оба метода идут через _guarded.
+
+        Raises:
+            QueryTimeoutError: Postgres отменил запрос по statement_timeout либо сработала клиентская страховка.
+            QueryCancelledError: Postgres отменил запрос по другой причине.
+        """
+        return await self._guarded(query, params, self._delegate.execute_statement)
+
+    async def _guarded[T](
+        self,
+        query: str,
+        params: list[Any] | None,
+        run: Callable[..., Awaitable[T]],
+    ) -> T:
+        """Тег, валидация, SET LOCAL и клиентская страховка вокруг метода делегата run."""
         query = self.render(query, params) if params else f"/* {self._config.query_tag} */ {query}"
         self._validator.validate(query)
         query = self._with_session_settings(query)
         if self._config.timeout is None:
-            return await self._run(query)
+            return await self._run(query, run)
         try:
             async with asyncio.timeout(self._config.timeout + self._config.client_timeout_grace):
-                return await self._run(query)
+                return await self._run(query, run)
         except TimeoutError as e:
             logger.warning(
                 "Client-side timeout after %ss: %s...",
@@ -119,7 +148,7 @@ class SafeSqlExecutor:
             )
             raise QueryTimeoutError(self._config.timeout) from e
 
-    async def _run(self, query: str) -> list[RowResult] | None:
+    async def _run[T](self, query: str, run: Callable[..., Awaitable[T]]) -> T:
         """Выполнить через делегата; отмену по statement_timeout превратить в QueryTimeoutError.
 
         Любая другая отмена (pg_cancel_backend, запрос пользователя) становится QueryCancelledError,
@@ -127,10 +156,7 @@ class SafeSqlExecutor:
         """
         started = monotonic()
         try:
-            return cast(
-                "list[RowResult] | None",
-                await self._delegate.execute(query, params=None, readonly=self._config.read_only),
-            )
+            return await run(query, params=None, readonly=self._config.read_only)
         except QueryCanceled as e:
             reason = e.diag.message_primary or ""
             if _is_statement_timeout(reason, elapsed=monotonic() - started, timeout=self._config.timeout):

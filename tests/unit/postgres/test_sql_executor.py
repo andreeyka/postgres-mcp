@@ -1,10 +1,11 @@
 # mypy: ignore-errors
 """Unit tests for SqlExecutor."""
 
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from psycopg import InterfaceError, OperationalError
+from psycopg import AsyncConnection, InterfaceError, OperationalError
 from psycopg.errors import (
     AdminShutdown,
     ConnectionFailure,
@@ -22,7 +23,7 @@ from psycopg_pool import PoolTimeout
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 
 
@@ -80,7 +81,9 @@ class TestSqlExecutorExecuteWithPool:
         mock_pool = self._mock_pool_for_execute()
         executor = SqlExecutor(conn=mock_pool)
         with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = [RowResult(cells={"x": 1})]
+            mock_exec.return_value = StatementResult(
+                rows=[RowResult(cells={"x": 1})], status="SELECT 1", affected_rows=1
+            )
             result = await executor.execute("SELECT 1", readonly=True)
             assert result == [RowResult(cells={"x": 1})]
             call_kw = mock_exec.call_args[1]
@@ -101,7 +104,7 @@ class TestSqlExecutorExecuteWithPool:
         mock_pool = self._mock_pool_for_execute()
         executor = SqlExecutor(conn=mock_pool)
         with patch.object(executor, "_execute_with_connection", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = []
+            mock_exec.return_value = StatementResult(rows=[], status="SELECT 0", affected_rows=0)
             await executor.execute("SELECT * FROM t WHERE id = {}", [10])
             call_args = mock_exec.call_args
             assert "10" in str(call_args[0][1])
@@ -168,3 +171,98 @@ class TestSqlExecutorExecuteWithPool:
             with pytest.raises(type(error)):
                 await executor.execute("SELECT 1", readonly=True)
             mock_pool.mark_invalid.assert_called_once()
+
+
+class _FakeCursor:
+    """Курсор psycopg в миниатюре: результаты строки запроса по очереди, как после nextset().
+
+    Как у psycopg 3.3: statusmessage и rowcount относятся к текущему результату,
+    а COMMIT/ROLLBACK на том же курсоре заменяет их своими.
+    """
+
+    def __init__(self, *results: tuple[str, int, list[dict] | None]) -> None:
+        self._pending = list(results)
+        self._current: tuple[str, int, list[dict] | None] = ("", -1, None)
+        self.executed: list[str] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def execute(self, query: str, params: object = None) -> None:
+        self.executed.append(query)
+        if query.startswith(("BEGIN", "COMMIT", "ROLLBACK")):
+            self._current = (query.split(maxsplit=1)[0], -1, None)
+        else:
+            self._current = self._pending.pop(0)
+
+    def nextset(self) -> bool | None:
+        if not self._pending:
+            return None
+        self._current = self._pending.pop(0)
+        return True
+
+    @property
+    def statusmessage(self) -> str:
+        return self._current[0]
+
+    @property
+    def rowcount(self) -> int:
+        return self._current[1]
+
+    @property
+    def description(self) -> list[object] | None:
+        return None if self._current[2] is None else [object()]
+
+    async def fetchall(self) -> list[dict]:
+        return self._current[2] or []
+
+
+def _executor_on(cursor: _FakeCursor) -> SqlExecutor:
+    """SqlExecutor на одиночном подключении, которое отдаёт cursor."""
+    conn = MagicMock(spec=AsyncConnection)
+    conn.cursor.return_value = cursor
+    return SqlExecutor(conn=conn)
+
+
+class TestSqlExecutorExecuteStatement:
+    """execute_statement: тег команды последнего оператора, снятый до COMMIT/ROLLBACK."""
+
+    async def test_status_of_last_statement_after_set_local_prefix(self) -> None:
+        """Префикс SET LOCAL даёт свои результаты; тег и счётчик — от оператора пользователя."""
+        cursor = _FakeCursor(("SET", -1, None), ("SET", -1, None), ("UPDATE 3", 3, None))
+        executor = _executor_on(cursor)
+
+        result = await executor.execute_statement(
+            "SET LOCAL statement_timeout = 1000; SET LOCAL search_path = public; UPDATE t SET v = 1",
+            readonly=False,
+        )
+
+        assert result == StatementResult(rows=None, status="UPDATE 3", affected_rows=3)
+        assert cursor.executed[-1] == "COMMIT"
+
+    async def test_ddl_has_status_without_count(self) -> None:
+        """У DDL в теге нет числа: psycopg отдаёт rowcount -1, affected_rows — None."""
+        executor = _executor_on(_FakeCursor(("CREATE TABLE", -1, None)))
+
+        result = await executor.execute_statement("CREATE TABLE t ()", readonly=False)
+
+        assert result == StatementResult(rows=None, status="CREATE TABLE", affected_rows=None)
+
+    async def test_rows_and_status_for_select(self) -> None:
+        """Оператор с результирующим набором: строки, тег SELECT и их число."""
+        cursor = _FakeCursor(("SELECT 1", 1, [{"a": 1}]))
+        executor = _executor_on(cursor)
+
+        result = await executor.execute_statement("SELECT 1 AS a")
+
+        assert result == StatementResult(rows=[RowResult(cells={"a": 1})], status="SELECT 1", affected_rows=1)
+        assert cursor.executed == ["BEGIN TRANSACTION READ ONLY", "SELECT 1 AS a", "ROLLBACK"]
+
+    async def test_execute_returns_rows_of_execute_statement(self) -> None:
+        """Метод execute остаётся прежним: строки или None, без тега."""
+        executor = _executor_on(_FakeCursor(("INSERT 0 2", 2, None)))
+
+        assert await executor.execute("INSERT INTO t VALUES (1), (2)", readonly=False) is None

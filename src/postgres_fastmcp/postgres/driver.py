@@ -15,7 +15,7 @@ from psycopg.sql import SQL, Composable, Literal
 from psycopg_pool import PoolClosed, PoolTimeout, TooManyRequests
 
 from postgres_fastmcp.postgres.connection import DbConnPool
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 
 
@@ -107,6 +107,25 @@ class SqlExecutor:
         Returns:
             Список RowResult или None для DDL/командных операторов.
         """
+        return (await self.execute_statement(query, params, readonly=readonly)).rows
+
+    async def execute_statement(
+        self,
+        query: str | LiteralString,
+        params: list[Any] | None = None,
+        *,
+        readonly: bool = True,
+    ) -> StatementResult:
+        """Выполнение запроса: строки и тег команды Postgres ("UPDATE 3", "CREATE TABLE").
+
+        Args:
+            query: SQL для выполнения (используйте {} для плейсхолдеров если заданы параметры).
+            params: Необязательные параметры; если заданы, запрос рендерится перед выполнением.
+            readonly: Если True, использовать транзакцию только для чтения; иначе чтение-запись.
+
+        Returns:
+            StatementResult последнего оператора строки запроса.
+        """
         if params:
             query = self.render(query, params)
             params = None
@@ -147,8 +166,12 @@ class SqlExecutor:
         params: list[Any] | None,
         *,
         readonly: bool,
-    ) -> list[RowResult] | None:
-        """Выполнение запроса на данном подключении с явной транзакцией."""
+    ) -> StatementResult:
+        """Выполнение запроса на данном подключении с явной транзакцией.
+
+        Строка может содержать несколько операторов (префикс SET LOCAL от SafeSqlExecutor):
+        после nextset() текущим становится результат последнего, то есть оператора пользователя.
+        """
         async with connection.cursor(row_factory=dict_row) as cursor:
             if readonly:
                 await cursor.execute("BEGIN TRANSACTION READ ONLY")
@@ -161,18 +184,17 @@ class SqlExecutor:
                     await cursor.execute(query)
                 while cursor.nextset():
                     pass
-                if cursor.description is None:
-                    if readonly:
-                        await cursor.execute("ROLLBACK")
-                    else:
-                        await cursor.execute("COMMIT")
-                    return None
-                rows = await cursor.fetchall()
+                # Тег и счётчик читаются до COMMIT/ROLLBACK: после них statusmessage станет "COMMIT"/"ROLLBACK"
+                status = cursor.statusmessage
+                affected_rows = cursor.rowcount if cursor.rowcount >= 0 else None
+                rows = None
+                if cursor.description is not None:
+                    rows = [RowResult(cells=dict(row)) for row in await cursor.fetchall()]
                 if readonly:
                     await cursor.execute("ROLLBACK")
                 else:
                     await cursor.execute("COMMIT")
-                return [RowResult(cells=dict(row)) for row in rows]
+                return StatementResult(rows=rows, status=status, affected_rows=affected_rows)
             except Exception:
                 try:
                     await cursor.execute("ROLLBACK")

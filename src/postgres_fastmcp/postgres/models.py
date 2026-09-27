@@ -1,4 +1,4 @@
-"""Модели данных слоя SQL: строка результата и определение индекса."""
+"""Модели данных слоя SQL: строка результата, результат оператора и определение индекса."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +9,22 @@ class RowResult:
     """Одна строка из результата запроса (словарь с ячейками)."""
 
     cells: dict[str, Any]  # Ячейки результата в виде словаря
+
+
+@dataclass(frozen=True, slots=True)
+class StatementResult:
+    """Результат одного оператора: строки и тег команды Postgres.
+
+    Attributes:
+        rows: Строки результата; None, если у оператора нет результирующего набора (DML без RETURNING, DDL).
+        status: Тег команды (cursor.statusmessage), например "UPDATE 3" или "CREATE TABLE".
+        affected_rows: Число строк из тега (cursor.rowcount = libpq PQcmdTuples): INSERT/UPDATE/DELETE/MERGE,
+            SELECT, CREATE TABLE AS, COPY, FETCH, MOVE. None, если в теге нет числа (DDL, DO, SET).
+    """
+
+    rows: list[RowResult] | None
+    status: str | None
+    affected_rows: int | None
 
 
 @dataclass(frozen=True)
