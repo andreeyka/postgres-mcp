@@ -302,6 +302,34 @@ class TestCatalogServiceGetObjectDetails:
 
         assert started == {"columns", "constraints", "exists"}
         assert cancelled == started
+        # Ошибка запроса не оставляет вызывающей задаче «висящий» запрос отмены.
+        assert asyncio.current_task().cancelling() == 0
+
+    async def test_request_cancellation_wins_over_a_failed_query(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """Запрос отменили в ту же итерацию, когда упал дочерний запрос: наружу CancelledError, а не ошибка домена."""
+        import asyncio
+
+        service = CatalogService(db=mock_db_access)
+        outer: dict[str, asyncio.Task] = {}
+
+        async def execute(query, *args, **kwargs):
+            if query is QUERY_GET_INDEXES:
+                # Отмена вызывающей задачи и падение ребёнка — в одной итерации цикла.
+                outer["task"].cancel()
+                raise TablePrefixAccessError("pg_indexes", "app_")
+            await asyncio.sleep(10)
+            return []
+
+        mock_executor.execute.side_effect = execute
+        outer["task"] = asyncio.create_task(service.get_object_details("public", "users", "table"))
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(outer["task"], timeout=2)
+        assert outer["task"].cancelled()
 
     async def test_get_object_details_unsupported_type_raises(
         self,
