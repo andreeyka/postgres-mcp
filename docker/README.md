@@ -30,7 +30,7 @@ The initialization scripts create test databases. **Each MCP server instance con
 | admin_ro_db  | admin_ro  | password | full        | false      |                 |
 | admin_rw_db  | postgres  | postgres | full        | true       |                 |
 
-Additionally, `init-4-test-databases.sql` creates db1, db2, db3, db4 for integration tests.
+Additionally, the `docker run` in "Running" below also mounts `init-4-test-databases.sql` (creates db1, db2, db3, db4) and `init-all-databases.sh` (populates them with test tables and data) for integration tests.
 
 To use another database, edit `docker/config.json` and set `database` to the desired host, port, user, password, name, access_mode, write_mode (and table_prefix for basic). Or run the server with `--database-uri postgresql://user:pass@postgres:5432/dbname` and no config file.
 
@@ -47,12 +47,17 @@ To use another database, edit `docker/config.json` and set `database` to the des
 # Isolated network so the two containers can reach each other by name
 docker network create mcp-network
 
-# PostgreSQL with HypoPG, initialized with the test databases above
+# PostgreSQL with HypoPG, initialized with the test databases above.
+# init-db.sql creates user_ro_db/user_rw_db/admin_ro_db/admin_rw_db; init-4-test-databases.sql
+# creates db1-db4 for integration tests, and init-all-databases.sh populates them.
 docker build -t postgres-hypopg docker/postgres
 docker run -d --name postgres --network mcp-network -p 5432:5432 \
   -e POSTGRES_PASSWORD=postgres \
   -v "$(pwd)/docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro" \
-  postgres-hypopg
+  -v "$(pwd)/docker/postgres/init-4-test-databases.sql:/docker-entrypoint-initdb.d/init-4-test-databases.sql:ro" \
+  -v "$(pwd)/docker/postgres/init-all-databases.sh:/docker-entrypoint-initdb.d/init-all-databases.sh:ro" \
+  postgres-hypopg \
+  -c shared_preload_libraries=pg_stat_statements,hypopg
 
 # MCP server, built from the project root Dockerfile, with docker/config.json mounted
 docker build -t postgres-fastmcp .
