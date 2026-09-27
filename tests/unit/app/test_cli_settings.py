@@ -11,6 +11,7 @@ from rich.console import Console
 
 from postgres_fastmcp.app.config import build_settings_from_cli
 from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.app.config.server import ServerSettings
 from postgres_fastmcp.app.main import app
 from postgres_fastmcp.shared.enums import AccessMode, TransportConfig
 
@@ -174,3 +175,22 @@ def test_from_uri_accepts_a_connection_field_override() -> None:
     """Переопределение поля, которое есть в URI, не даёт TypeError о повторном аргументе."""
     config = DatabaseConfig.from_uri("postgresql://u:p@h:5433/n?sslmode=require", host="other", sslmode="disable")
     assert (config.host, config.port, config.sslmode) == ("other", 5433, "disable")
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"), [("mcp", "/mcp"), ("/api/mcp", "/api/mcp"), (" api/v1 ", "/api/v1")]
+)
+def test_endpoint_gets_a_leading_slash(configured: str, expected: str) -> None:
+    """Starlette требует путь с '/': значение 'mcp' из старых конфигов не должно ронять HTTP-старт."""
+    assert ServerSettings(endpoint=configured).endpoint == expected
+
+
+def test_http_run_uses_the_configured_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"server": {"endpoint": "api/mcp"}}), encoding="utf-8")
+    _, run = _run_cli(["--transport", "http"], monkeypatch, tmp_path)
+    assert run["path"] == "/api/mcp"
+
+
+def test_stdio_run_takes_no_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _, run = _run_cli(["--transport", "stdio"], monkeypatch, tmp_path)
+    assert run == {"transport": "stdio"}

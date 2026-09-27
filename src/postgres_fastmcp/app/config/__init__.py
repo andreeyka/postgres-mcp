@@ -7,7 +7,7 @@
     "host": "127.0.0.1",
     "port": 8000,
     "transport": "http",
-    "endpoint": "mcp",
+    "endpoint": "/mcp",
     "workers": 1,
     "health_endpoint_enabled": true,
     "response_max_tokens": 20000

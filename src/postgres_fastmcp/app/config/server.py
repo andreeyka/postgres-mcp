@@ -1,6 +1,6 @@
 """Конфигурация сервера."""
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from postgres_fastmcp.shared.enums import TransportConfig
@@ -16,7 +16,7 @@ class ServerSettings(BaseSettings):
     transport: TransportConfig = Field(
         default=TransportConfig.HTTP, description="Глобальный тип транспорта: 'http' или 'stdio'"
     )
-    endpoint: str = Field(default="mcp", description="Путь endpoint по умолчанию")
+    endpoint: str = Field(default="/mcp", description="Путь MCP endpoint для HTTP (ведущий '/' добавляется сам)")
     workers: int = Field(default=1, description="Количество запускаемых рабочих процессов")
     health_endpoint_enabled: bool = Field(
         default=True, description="Включает endpoint проверки состояния /health (авторизация не требуется)"
@@ -26,3 +26,10 @@ class ServerSettings(BaseSettings):
         ge=1000,
         description="Предел ответа тула в токенах (MCP_RESPONSE_MAX_TOKENS); больший ответ заменяется ошибкой",
     )
+
+    @field_validator("endpoint")
+    @classmethod
+    def _leading_slash(cls, value: str) -> str:
+        """Starlette принимает только путь с ведущим '/': 'mcp' из старых конфигов становится '/mcp'."""
+        value = value.strip()
+        return value if value.startswith("/") else f"/{value}"
