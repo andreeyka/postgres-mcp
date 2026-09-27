@@ -97,7 +97,7 @@ uv run postgres-fastmcp
 
 #### 3. Переменные окружения
 
-Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются.
+Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются. Если на старте задано старое имя вроде `MCP_PORT` или `MCP_SERVER_NAME`, сервер один раз пишет WARNING `Environment variable ... is no longer read` с новым именем (или пометкой, что настройка удалена); значение переменной в лог не попадает.
 
 ```bash
 export MCP_SERVER_HOST=0.0.0.0
@@ -214,6 +214,7 @@ uv run postgres-fastmcp \
 - **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--access-mode`, `--write-mode` / `--no-write-mode`. Вывод версии: `--version`. Каждая заданная опция переопределяет `config.json` и переменные окружения на этот запуск.
 - **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
 - **Переменные окружения / .env:** `MCP_<СЕКЦИЯ>_<ПОЛЕ>`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
+- **Итоговая конфигурация в логе:** на старте сервер пишет одну строку INFO `Database ceiling: access_mode=..., write_mode=..., table_prefix=...; auth=...` (класс auth-провайдера или `none`), а для HTTP ещё `Serving MCP over HTTP on host:port/endpoint`; секретов в них нет.
 
 ### Подключение MCP-клиентов
 

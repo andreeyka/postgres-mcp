@@ -943,16 +943,22 @@ current request's access. `tools/registry.py` registers them on a `LocalProvider
 
 ## Server Startup
 
-`app/main.py` builds `Settings` from the CLI flags (`build_settings_from_cli`: an explicit flag >
-config.json > env/.env > defaults), builds the server with `create_server` **before** disabling logs for
-stdio (startup auth warnings go to stderr), and runs it with `mcp.run(transport=...)`:
+`app/main.py` warns about each old env name that is still set (`warn_about_legacy_env`, values are
+never logged), builds `Settings` from the CLI flags (`build_settings_from_cli`: an explicit flag >
+`--database-uri` > config.json > env/.env > defaults), builds the server with `create_server` **before**
+disabling logs for stdio (startup auth warnings and the `Database ceiling: ...` INFO line go to stderr),
+and runs it with `mcp.run(transport=...)`. The CLI transport flag is already merged into
+`settings.server.transport`, so both the `build_auth` decision and the run use that one value:
 
 ```python
-mcp = create_server(settings, build_auth=actual_transport != "stdio")
-if actual_transport == "stdio":
+mcp = create_server(settings, build_auth=settings.server.transport != "stdio")
+if settings.server.transport == "stdio":
     configure_logging(disable=True)
 
-if actual_transport == "http":
+if settings.server.transport == "http":
+    logger.info(
+        "Serving MCP over HTTP on %s:%s%s", settings.server.host, settings.server.port, settings.server.endpoint
+    )
     mcp.run(
         transport="http",
         host=settings.server.host,
