@@ -28,6 +28,8 @@ logger = get_logger(__name__)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 HEALTH_TIMEOUT_SECONDS = 2.0
+_HEALTH_UNAVAILABLE = "database unavailable"
+_HEALTH_REDACTED = "database connection failed (details redacted)"
 
 
 def _warn_about_auth(
@@ -73,20 +75,31 @@ def _warn_about_auth(
         )
 
 
-def _mask_password(text: str, password: str | None) -> str:
-    """Убрать пароль из текста ошибки: строки подключения, password=..., сам пароль и его URL-формы."""
+def _password_forms(password: str) -> set[str]:
+    """Пароль и его URL-формы (как он может оказаться в строке подключения или тексте ошибки)."""
+    return {password, quote(password, safe=""), quote_plus(password)}
+
+
+def _redact_error(text: str, password: str | None) -> str:
+    """Текст ошибки для лога оператора: маска строк подключения и password=...
+
+    Пароль не вклеивается звёздочками по месту: если он совпадает с именем пользователя или базы,
+    ``user "****"`` выдал бы его. Если после маски хоть одна форма пароля осталась в тексте,
+    текст заменяется целиком.
+    """
     masked = obfuscate_password(text) or ""
-    if password:
-        for form in {password, quote_plus(password), quote(password, safe="")}:
-            masked = masked.replace(form, "****")
+    if password and any(form in masked for form in _password_forms(password)):
+        return _HEALTH_REDACTED
     return masked
 
 
 def _add_health_route(mcp: FastMCP, provider: PostgresProvider, password: str | None) -> None:
-    """GET /health: 200, если БД ответила на SELECT 1 за HEALTH_TIMEOUT_SECONDS, иначе 503 с ошибкой.
+    """GET /health: 200, если БД ответила на SELECT 1 за HEALTH_TIMEOUT_SECONDS, иначе 503.
 
     custom_route не оборачивается в RequireAuthMiddleware FastMCP: маршрут доступен без токена.
-    Ответ содержит только статус и замаскированный текст ошибки — ни настроек, ни тулов, ни токенов.
+    Поэтому ответ 503 не содержит текста ошибки БД (в нём имя пользователя, базы и внутренний адрес
+    сервера) — только ``database unavailable`` или сообщение о таймауте; подробности оператор видит
+    в логе на WARNING с маской пароля. Ни настроек, ни тулов, ни токенов в ответе нет.
     """
 
     @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
@@ -95,12 +108,13 @@ def _add_health_route(mcp: FastMCP, provider: PostgresProvider, password: str | 
             async with asyncio.timeout(HEALTH_TIMEOUT_SECONDS):
                 await provider.ping()
         except TimeoutError:
-            error = f"database did not answer within {HEALTH_TIMEOUT_SECONDS:g} s"
+            error = detail = f"database did not answer within {HEALTH_TIMEOUT_SECONDS:g} s"
         except Exception as exc:
-            error = _mask_password(str(exc) or type(exc).__name__, password)
+            error = _HEALTH_UNAVAILABLE
+            detail = _redact_error(str(exc) or type(exc).__name__, password)
         else:
             return JSONResponse({"status": "ok"})
-        logger.debug("Health check failed: %s", error)
+        logger.warning("Health check failed: %s", detail)
         return JSONResponse({"status": "degraded", "error": error}, status_code=503)
 
 
