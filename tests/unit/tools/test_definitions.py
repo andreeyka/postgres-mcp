@@ -203,7 +203,10 @@ async def test_get_object_details_not_found_comes_from_the_catalog(monkeypatch, 
     fake_service.get_object_details.side_effect = ObjectNotFoundError("public", "ghost", "table")
     monkeypatch.setattr(defs, "CatalogService", lambda **kw: fake_service)
 
-    with pytest.raises(ObjectNotFoundError, match=r"Object not found: public\.ghost \(table\)\. Use list_objects"):
+    with pytest.raises(
+        ObjectNotFoundError,
+        match=r'Object not found: public\.ghost \(table\)\. If it is a view, retry with object_type="view"',
+    ):
         await toolset.get_object_details(schema_name="public", object_name="ghost")
 
 

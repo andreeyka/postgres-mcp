@@ -142,7 +142,8 @@ async def test_tools_get_object_details_empty_table(integration_settings: Settin
     }
     assert as_view.is_error is True
     assert as_view.content[0].text == (
-        "Object not found: public.od_empty (view). Use list_objects to see existing objects."
+        'Object not found: public.od_empty (view). If it is a table, retry with object_type="table"; '
+        "use list_objects to see existing objects."
     )
 
 
@@ -150,9 +151,13 @@ async def test_tools_get_object_details_empty_table(integration_settings: Settin
 @pytest.mark.parametrize(
     ("object_type", "message"),
     [
-        ("table", "Object not found: public.od_ghost (table)."),
-        ("sequence", "Object not found: public.od_ghost (sequence)."),
-        ("extension", "Object not found: od_ghost (extension)."),
+        (
+            "table",
+            'Object not found: public.od_ghost (table). If it is a view, retry with object_type="view"; '
+            "use list_objects to see existing objects.",
+        ),
+        ("sequence", "Object not found: public.od_ghost (sequence). Use list_objects to see existing objects."),
+        ("extension", "Object not found: od_ghost (extension). Use list_objects to see existing objects."),
     ],
 )
 async def test_tools_get_object_details_missing(integration_settings: Settings, object_type: str, message: str) -> None:
@@ -165,7 +170,7 @@ async def test_tools_get_object_details_missing(integration_settings: Settings, 
             raise_on_error=False,
         )
     assert result.is_error is True
-    assert result.content[0].text == f"{message} Use list_objects to see existing objects."
+    assert result.content[0].text == message
 
 
 @pytest.mark.asyncio

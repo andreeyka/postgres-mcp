@@ -212,9 +212,12 @@ class TestCatalogServiceGetObjectDetails:
             "indexes": [],
         }
 
-    @pytest.mark.parametrize(("object_type", "table_type"), [("table", "BASE TABLE"), ("view", "VIEW")])
+    @pytest.mark.parametrize(
+        ("object_type", "table_type", "other_type"),
+        [("table", "BASE TABLE", "view"), ("view", "VIEW", "table")],
+    )
     async def test_missing_table_or_view_raises_not_found(
-        self, mock_db_access: MagicMock, mock_executor: MagicMock, object_type: str, table_type: str
+        self, mock_db_access: MagicMock, mock_executor: MagicMock, object_type: str, table_type: str, other_type: str
     ) -> None:
         """Нет строки в information_schema.tables с нужным table_type — ObjectNotFoundError."""
         mock_executor.execute.side_effect = _catalog_rows(exists=False)
@@ -224,7 +227,8 @@ class TestCatalogServiceGetObjectDetails:
             await service.get_object_details("public", "ghost", object_type)
 
         assert str(exc_info.value) == (
-            f"Object not found: public.ghost ({object_type}). Use list_objects to see existing objects."
+            f"Object not found: public.ghost ({object_type}). "
+            f'If it is a {other_type}, retry with object_type="{other_type}"; use list_objects to see existing objects.'
         )
         exists_call = next(c for c in mock_executor.execute.await_args_list if c.args[0] is QUERY_TABLE_EXISTS)
         assert exists_call.kwargs["params"] == ["public", "ghost", table_type]

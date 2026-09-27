@@ -93,13 +93,35 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("ResponseTooLargeError", "Refine the request: add WHERE or LIMIT"),
         ("ResponseTooLargeAfterWriteError", "query the affected rows with a narrower SELECT"),
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
-        ("ObjectNotFoundError", "Use list_objects to see existing objects."),
+        ("ObjectNotFoundError", 'If it is a view, retry with object_type="view"'),
         ("ExtensionStatusUnavailableError", "then retry"),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:
     """Ошибка, которую агент может исправить сам, подсказывает, что сделать вместо этого."""
     assert hint in str(_SAMPLES[name]())
+
+
+@pytest.mark.parametrize(
+    ("object_type", "message"),
+    [
+        (
+            "table",
+            'Object not found: public.v (table). If it is a view, retry with object_type="view"; '
+            "use list_objects to see existing objects.",
+        ),
+        (
+            "view",
+            'Object not found: public.v (view). If it is a table, retry with object_type="table"; '
+            "use list_objects to see existing objects.",
+        ),
+        ("sequence", "Object not found: public.v (sequence). Use list_objects to see existing objects."),
+        ("extension", "Object not found: v (extension). Use list_objects to see existing objects."),
+    ],
+)
+def test_object_not_found_hints_at_the_other_relation_type(object_type: str, message: str) -> None:
+    """Таблица и представление легко перепутать: подсказка называет другой тип; у sequence/extension её нет."""
+    assert str(errors.ObjectNotFoundError("public", "v", object_type)) == message
 
 
 @pytest.mark.parametrize(
