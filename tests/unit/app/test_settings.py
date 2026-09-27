@@ -223,3 +223,15 @@ def test_dead_fields_are_gone() -> None:
 def test_default_instructions_are_english() -> None:
     """Инструкции сервера видит агент: только английский текст."""
     assert FastMCPSettings().instructions.isascii()
+
+
+def test_uri_with_unknown_sslmode_fails() -> None:
+    """Опечатка sslmode=requre не должна молча давать libpq-умолчание prefer."""
+    with pytest.raises(ValueError, match="requre") as exc_info:
+        DatabaseConfig.from_uri("postgresql://u:pw@h/d?sslmode=requre")
+    assert "verify-full" in str(exc_info.value)
+
+
+def test_cli_database_uri_with_unknown_sslmode_fails(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requre"):
+        build_settings_from_cli(database_uri="postgresql://u:pw@h/d?sslmode=requre", config_path=tmp_path / "x.json")

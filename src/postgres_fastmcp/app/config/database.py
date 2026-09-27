@@ -121,8 +121,13 @@ class DatabaseConfig(BaseModel):
         fields = {key: value for key, value in candidates.items() if value is not None}
         # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
         # явное значение перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
+        # Неизвестный sslmode — ошибка: иначе libpq молча откатился бы на prefer. Значение не секрет.
         raw_sslmode = qs.get("sslmode", [None])[0]
-        if raw_sslmode in {mode.value for mode in SslMode}:
+        if raw_sslmode is not None:
+            allowed = [mode.value for mode in SslMode]
+            if raw_sslmode not in allowed:
+                msg = f"Unknown sslmode {raw_sslmode!r} in database URI; expected one of: {', '.join(allowed)}"
+                raise ValueError(msg)
             fields["sslmode"] = SslMode(raw_sslmode)
         client_encoding = qs.get("client_encoding", [None])[0]
         if client_encoding:
