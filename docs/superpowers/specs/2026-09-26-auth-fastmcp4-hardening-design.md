@@ -296,6 +296,13 @@ def create_server(
    `provider.ping()` успешен за 2 секунды, иначе `503 {"status": "degraded",
    "error": <текст с замаскированным паролем>}`. Auth на маршрут не
    распространяется.
+
+   **Отступление:** в реализации тело `503` содержит не текст ошибки, а
+   один из двух фиксированных `error`: `"database unavailable"` или
+   `"database did not answer within 2 s"`. Замаскированный текст ошибки
+   уходит только в лог сервера на WARNING — маршрут анонимный, и даже
+   маскированная строка подключения (хост, порт, БД) не должна доставаться
+   вызывающему без токена.
 5. Если `settings.server.transport == http`, `settings.auth.mode == none` и
    `settings.server.host` не в `{127.0.0.1, localhost, ::1}`, пишется WARNING.
 6. Если `transport == stdio` и `auth.mode != none`, пишется WARNING: auth

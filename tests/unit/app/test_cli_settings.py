@@ -207,3 +207,11 @@ def test_http_run_uses_the_configured_endpoint(monkeypatch: pytest.MonkeyPatch, 
 def test_stdio_run_takes_no_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _, run = _run_cli(["--transport", "stdio"], monkeypatch, tmp_path)
     assert run == {"transport": "stdio"}
+
+
+def test_docker_config_loads() -> None:
+    """docker/config.json — рабочий пример: неизвестный ключ верхнего уровня (например _comment) ронял бы старт."""
+    path = Path(__file__).resolve().parents[3] / "docker" / "config.json"
+    settings = build_settings_from_cli(config_path=path)
+    assert (settings.server.host, settings.server.endpoint) == ("0.0.0.0", "/mcp")
+    assert (settings.database.host, settings.database.table_prefix) == ("postgres", "app_")
