@@ -42,6 +42,8 @@ sslmode: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full
 """
 
 import json
+import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +55,39 @@ from postgres_fastmcp.app.config.database import DatabaseConfig, DatabaseSetting
 from postgres_fastmcp.app.config.fastmcp import FastMCPSettings
 from postgres_fastmcp.app.config.server import ServerSettings
 from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.shared.logger import get_logger
 
 
-__all__ = ["Settings", "build_settings_from_cli", "load_json_config"]
+__all__ = ["LEGACY_ENV_NAMES", "Settings", "build_settings_from_cli", "load_json_config", "warn_about_legacy_env"]
+
+logger = get_logger(__name__)
+
+# Старое имя env -> новое; None — поле удалено. Только предупреждение: старые имена не читаются.
+LEGACY_ENV_NAMES: dict[str, str | None] = {
+    "MCP_HOST": "MCP_SERVER_HOST",
+    "MCP_PORT": "MCP_SERVER_PORT",
+    "MCP_TRANSPORT": "MCP_SERVER_TRANSPORT",
+    "MCP_ENDPOINT": "MCP_SERVER_ENDPOINT",
+    "MCP_WORKERS": None,
+    "MCP_HEALTH_ENDPOINT_ENABLED": "MCP_SERVER_HEALTH_ENDPOINT_ENABLED",
+    "MCP_RESPONSE_MAX_TOKENS": "MCP_SERVER_RESPONSE_MAX_TOKENS",
+    "MCP_SERVER_NAME": "MCP_FASTMCP_SERVER_NAME",
+    "MCP_INSTRUCTIONS": "MCP_FASTMCP_INSTRUCTIONS",
+    "MCP_RETURN_ERRORS_AS_STRINGS": None,
+    "MCP_ERROR_TRACEBACK_IN_STRINGS": None,
+}
+
+
+def warn_about_legacy_env(environ: Mapping[str, str] | None = None) -> None:
+    """Предупредить по разу о каждом заданном старом имени env; значения не логируются."""
+    env = os.environ if environ is None else environ
+    for name, replacement in LEGACY_ENV_NAMES.items():
+        if name not in env:
+            continue
+        if replacement is None:
+            logger.warning("Environment variable %s is no longer read; the setting was removed", name)
+        else:
+            logger.warning("Environment variable %s is no longer read; use %s", name, replacement)
 
 
 class Settings(BaseSettings):

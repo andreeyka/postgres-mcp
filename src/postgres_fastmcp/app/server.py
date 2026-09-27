@@ -194,6 +194,14 @@ def create_server(  # noqa: PLR0913
         access_policy=settings.auth.access_policy,
         access_resolver=access_resolver,
     )
+    # Эффективный потолок прав и auth видны на старте; секретов тут нет (префикс и имя класса — не секреты)
+    logger.info(
+        "Database ceiling: access_mode=%s, write_mode=%s, table_prefix=%s; auth=%s",
+        settings.database.access_mode,
+        settings.database.write_mode,
+        settings.database.table_prefix,
+        type(auth).__name__ if auth is not None else "none",
+    )
     mcp = FastMCP(
         name=settings.fastmcp.server_name,
         instructions=settings.fastmcp.instructions or None,

@@ -6,7 +6,7 @@ from typing import Literal
 from cyclopts import App
 
 from postgres_fastmcp import __version__
-from postgres_fastmcp.app.config import build_settings_from_cli
+from postgres_fastmcp.app.config import build_settings_from_cli, warn_about_legacy_env
 from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.logger import configure_logging, get_logger
@@ -52,6 +52,7 @@ def main(  # noqa: PLR0913
         then 'basic'.
     """
     configure_logging(level="INFO", omit_repeated_times=False)
+    warn_about_legacy_env()
 
     settings = build_settings_from_cli(
         database_uri=database_uri,
@@ -71,6 +72,9 @@ def main(  # noqa: PLR0913
 
     try:
         if settings.server.transport == "http":
+            logger.info(
+                "Serving MCP over HTTP on %s:%s%s", settings.server.host, settings.server.port, settings.server.endpoint
+            )
             mcp.run(
                 transport="http",
                 host=settings.server.host,
