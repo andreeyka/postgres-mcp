@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from postgres_fastmcp.app.config.auth import AuthSettings
 from postgres_fastmcp.app.config.database import DatabaseConfig
@@ -80,6 +80,22 @@ class Settings(BaseSettings):
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
     auth: AuthSettings = Field(default_factory=AuthSettings, description="HTTP authentication and access policy")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],  # noqa: ARG003
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,  # noqa: ARG003
+        dotenv_settings: PydanticBaseSettingsSource,  # noqa: ARG003
+        file_secret_settings: PydanticBaseSettingsSource,  # noqa: ARG003
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Только аргументы конструктора: env и .env читает каждый вложенный блок со своим префиксом.
+
+        Без этого Settings читает переменные без префикса с именами полей (AUTH, DATABASE, SERVER,
+        FASTMCP) как целый блок: AUTH=basic роняет старт, DATABASE='{"host": ...}' подменяет подключение.
+        """
+        return (init_settings,)
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:

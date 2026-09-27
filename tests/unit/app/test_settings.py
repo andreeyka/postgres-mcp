@@ -30,3 +30,27 @@ def test_database_config_error_hides_the_password(monkeypatch: pytest.MonkeyPatc
         Settings()
     assert _SECRET_PASSWORD not in str(exc_info.value)
     assert _SECRET_PASSWORD not in repr(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("AUTH", "basic"), ("DATABASE", '{"host": "evil"}'), ("SERVER", '{"port": 1}'), ("FASTMCP", "x")],
+)
+def test_unprefixed_block_env_is_ignored(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    """Переменная с именем блока без префикса MCP_ не должна подменять блок целиком или ронять старт."""
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv(name, value)
+    settings = Settings()
+    assert settings.database.host == "localhost"
+    assert settings.server.port == 8000
+
+
+def test_nested_blocks_still_read_their_own_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Каждый блок читает свой префикс; словарь (config.json) дополняется из env."""
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    monkeypatch.setenv("MCP_AUTH_ACCESS_POLICY__ENFORCED", "true")
+    settings = Settings(database={"table_prefix": "app_"})
+    assert settings.database.access_mode == "full"
+    assert settings.database.table_prefix == "app_"
+    assert settings.auth.access_policy.enforced is True
