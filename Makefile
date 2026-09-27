@@ -140,10 +140,12 @@ docker-run: check-name ## Запустить контейнер в фоново�
 	@echo "💡 Передаю переменные окружения и .env файл..."
 	@if [ -f .env ]; then \
 		docker run -d --name $(NAME)-container \
+			-p 8000:8000 \
 			--env-file .env \
 			$(NAME):latest; \
 	else \
 		docker run -d --name $(NAME)-container \
+			-p 8000:8000 \
 			$(NAME):latest; \
 	fi
 	@echo "✅ Контейнер запущен! Используйте 'make docker-stop NAME=$(NAME)' для остановки."
@@ -153,10 +155,12 @@ docker-run-it: check-name ## Запустить контейнер в интер
 	@echo "💡 Передаю переменные окружения и .env файл..."
 	@if [ -f .env ]; then \
 		docker run -it --rm --name $(NAME)-interactive \
+			-p 8000:8000 \
 			--env-file .env \
 			$(NAME):latest; \
 	else \
 		docker run -it --rm --name $(NAME)-interactive \
+			-p 8000:8000 \
 			$(NAME):latest; \
 	fi
 

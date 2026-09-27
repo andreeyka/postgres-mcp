@@ -81,6 +81,10 @@ ENV TZ=Europe/Moscow \
     PYTHONUNBUFFERED=1 \
     PATH=${UV_WORKDIR}/.venv/bin:$PATH
 
+# Контейнер должен слушать все интерфейсы, иначе проброшенный порт недоступен снаружи.
+# Без auth (MCP_AUTH_MODE=none) сервер на старте предупредит об открытом HTTP — так и задумано.
+ENV MCP_SERVER_HOST=0.0.0.0
+
 WORKDIR $UV_WORKDIR
 
 # Non-root пользователь для безопасности
