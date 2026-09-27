@@ -67,6 +67,7 @@ jobs:
       - name: Build postgres-hypopg images
         run: uv run python tests/prepare_docker_images.py
       # -v: строка на тест (прогресс-точки без \n не флашатся в лог GHA);
-      # --timeout: зависший тест падает со стектрейсом, а не съедает весь лимит джобы.
+      # --timeout ... --timeout-method=thread: зависший тест прерывается даже внутри C-вызова,
+      # где signal-режим не срабатывает; прогон при этом завершается целиком со стеками всех потоков.
       - name: Run integration tests
-        run: uv run pytest tests/integration -v --timeout=180 --durations=20
+        run: uv run pytest tests/integration -v --timeout=180 --timeout-method=thread --durations=20
