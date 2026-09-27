@@ -7,7 +7,12 @@ import pytest
 
 from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.db_access import DbAccess
-from postgres_fastmcp.postgres.catalog import QUERY_TABLE_EXISTS
+from postgres_fastmcp.postgres.catalog import (
+    QUERY_GET_COLUMNS,
+    QUERY_GET_CONSTRAINTS,
+    QUERY_GET_INDEXES,
+    QUERY_TABLE_EXISTS,
+)
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
@@ -178,7 +183,7 @@ class TestCatalogServiceGetObjectDetails:
         mock_db_access: MagicMock,
         mock_executor: MagicMock,
     ) -> None:
-        """columns/constraints/indexes and the existence query run concurrently via asyncio.gather."""
+        """columns/constraints/indexes and the existence query run concurrently."""
         import asyncio
         import time
 
@@ -260,6 +265,43 @@ class TestCatalogServiceGetObjectDetails:
 
         with pytest.raises(TablePrefixAccessError, match="pg_indexes"):
             await CatalogService(db=db).get_object_details("public", object_name, "table")
+
+    async def test_failed_query_cancels_sibling_queries(
+        self,
+        mock_db_access: MagicMock,
+        mock_executor: MagicMock,
+    ) -> None:
+        """Один запрос упал сразу (как валидатор): соседи отменены, а наружу идёт исходное исключение, не группа."""
+        import asyncio
+
+        started: set[str] = set()
+        cancelled: set[str] = set()
+        names = {
+            QUERY_GET_COLUMNS: "columns",
+            QUERY_GET_CONSTRAINTS: "constraints",
+            QUERY_TABLE_EXISTS: "exists",
+        }
+
+        async def execute(query, *args, **kwargs):
+            if query is QUERY_GET_INDEXES:
+                raise TablePrefixAccessError("pg_indexes", "app_")
+            name = names[query]
+            started.add(name)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.add(name)
+                raise
+            return []
+
+        mock_executor.execute.side_effect = execute
+        service = CatalogService(db=mock_db_access)
+
+        with pytest.raises(TablePrefixAccessError, match="pg_indexes"):
+            await asyncio.wait_for(service.get_object_details("public", "users", "table"), timeout=2)
+
+        assert started == {"columns", "constraints", "exists"}
+        assert cancelled == started
 
     async def test_get_object_details_unsupported_type_raises(
         self,

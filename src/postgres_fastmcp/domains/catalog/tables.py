@@ -76,9 +76,13 @@ class TablesService:
         """Получить столбцы, ограничения и индексы таблицы или представления.
 
         Существование решает каталог (QUERY_TABLE_EXISTS), а не пустые разделы: таблица
-        без столбцов (CREATE TABLE t()) существует. Запрос существования идёт в том же
-        gather, поэтому ошибка валидатора у остальных запросов (BASIC с table_prefix)
+        без столбцов (CREATE TABLE t()) существует. Запрос существования идёт в той же
+        группе задач, поэтому ошибка валидатора у остальных запросов (BASIC с table_prefix)
         остаётся той же, что до проверки существования.
+
+        Запросы идут параллельно в asyncio.TaskGroup: если один падает, остальные
+        отменяются и не держат соединения пула. Наружу пробрасывается первое исходное
+        исключение, а не ExceptionGroup.
 
         Args:
             schema_name: Имя схемы объекта.
@@ -90,13 +94,30 @@ class TablesService:
         """
         sql_driver = self.db.sql_driver
 
-        col_rows, con_rows, idx_rows, found = await asyncio.gather(
-            sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(
-                QUERY_TABLE_EXISTS, params=[schema_name, object_name, _TABLE_TYPES[object_type]], readonly=True
-            ),
+        try:
+            async with asyncio.TaskGroup() as tg:
+                col_task = tg.create_task(
+                    sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True)
+                )
+                con_task = tg.create_task(
+                    sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True)
+                )
+                idx_task = tg.create_task(
+                    sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True)
+                )
+                found_task = tg.create_task(
+                    sql_driver.execute(
+                        QUERY_TABLE_EXISTS, params=[schema_name, object_name, _TABLE_TYPES[object_type]], readonly=True
+                    )
+                )
+        except ExceptionGroup as group:
+            # Первое упавшее — то же исключение, что пробрасывал gather (например, TablePrefixAccessError).
+            raise group.exceptions[0] from None
+        col_rows, con_rows, idx_rows, found = (
+            col_task.result(),
+            con_task.result(),
+            idx_task.result(),
+            found_task.result(),
         )
         if not found:
             return None
