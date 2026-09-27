@@ -45,7 +45,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from postgres_fastmcp.app.config.auth import AuthSettings
@@ -93,6 +93,24 @@ class Settings(BaseSettings):
                 msg = f"Unknown database settings keys: {', '.join(unknown)}"
                 raise ValueError(msg)
             return DatabaseSettings(**value)
+        return value
+
+    @field_validator("server", "fastmcp", "auth", mode="before")
+    @classmethod
+    def _reject_unknown_block_keys(cls, value: object, info: ValidationInfo) -> object:
+        """Неизвестный ключ словаря секции (config.json, CLI) — ошибка; иначе значение как есть.
+
+        Сами блоки игнорируют чужие ключи (нужно для .env с ключами других блоков), и опечатка
+        вроде auth.mdoe молча дала бы mode=none. В тексте ошибки только имена ключей: рядом могут
+        лежать токены и секреты. Словарь возвращается без изменений — вложенный блок дополнит его из env.
+        """
+        if isinstance(value, dict) and info.field_name is not None:
+            block = cls.model_fields[info.field_name].annotation
+            known = block.model_fields if isinstance(block, type) and issubclass(block, BaseSettings) else {}
+            unknown = sorted(str(key) for key in value if key not in known)
+            if unknown:
+                msg = f"Unknown {info.field_name} settings keys: {', '.join(unknown)}"
+                raise ValueError(msg)
         return value
 
     @classmethod
