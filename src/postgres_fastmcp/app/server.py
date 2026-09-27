@@ -1,6 +1,9 @@
 """Фабрика MCP-сервера: FastMCP поверх PostgresProvider с middleware сервера."""
 
+import asyncio
 from collections.abc import Sequence
+from time import monotonic
+from urllib.parse import quote, quote_plus
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
@@ -8,6 +11,8 @@ from fastmcp.server.middleware import Middleware
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 from fastmcp.server.providers import Provider
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from postgres_fastmcp.access import AccessResolver
 from postgres_fastmcp.app.auth import build_auth_provider
@@ -16,11 +21,18 @@ from postgres_fastmcp.app.middleware.response_budget import ResponseBudgetMiddle
 from postgres_fastmcp.provider import PostgresProvider
 from postgres_fastmcp.shared.enums import AuthMode, TransportConfig
 from postgres_fastmcp.shared.logger import get_logger
+from postgres_fastmcp.shared.utils import obfuscate_password
 
 
 logger = get_logger(__name__)
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+HEALTH_TIMEOUT_SECONDS = 2.0
+# Сколько живёт результат пробы: поток анонимных GET /health не открывает по соединению на запрос
+HEALTH_CACHE_SECONDS = 1.0
+_HEALTH_UNAVAILABLE = "database unavailable"
+_HEALTH_REDACTED = "database connection failed (details redacted)"
 
 
 def _warn_about_auth(
@@ -64,6 +76,73 @@ def _warn_about_auth(
             "auth.access_policy.enforced=true has no effect without authentication: requests carry no token, "
             "so every request gets the access ceiling. Set MCP_AUTH_MODE."
         )
+
+
+def _password_forms(password: str) -> set[str]:
+    """Пароль и его URL-формы (как он может оказаться в строке подключения или тексте ошибки)."""
+    return {password, quote(password, safe=""), quote_plus(password)}
+
+
+def _redact_error(text: str, password: str | None) -> str:
+    """Текст ошибки для лога оператора: маска строк подключения и password=...
+
+    Пароль не вклеивается звёздочками по месту: если он совпадает с именем пользователя или базы,
+    ``user "****"`` выдал бы его. Если после маски хоть одна форма пароля осталась в тексте,
+    текст заменяется целиком.
+    """
+    masked = obfuscate_password(text) or ""
+    if password and any(form in masked for form in _password_forms(password)):
+        return _HEALTH_REDACTED
+    return masked
+
+
+def _add_health_route(mcp: FastMCP, provider: PostgresProvider, password: str | None) -> None:
+    """GET /health: 200, если БД ответила на SELECT 1 за HEALTH_TIMEOUT_SECONDS, иначе 503.
+
+    custom_route не оборачивается в RequireAuthMiddleware FastMCP: маршрут доступен без токена.
+    Поэтому ответ 503 не содержит текста ошибки БД (в нём имя пользователя, базы и внутренний адрес
+    сервера) — только ``database unavailable`` или сообщение о таймауте; подробности оператор видит
+    в логе на WARNING с маской пароля. Ни настроек, ни тулов, ни токенов в ответе нет.
+
+    Одновременные запросы ждут одну пробу (single-flight), результат живёт HEALTH_CACHE_SECONDS:
+    анонимный поток GET /health открывает к БД не больше одного соединения за раз и не чаще раза в секунду.
+    """
+    # Кэш и single-flight на сервер (в замыкании, не на модуль): (время, статус, тело) последней пробы
+    lock = asyncio.Lock()
+    last: tuple[float, int, dict[str, str]] | None = None
+
+    def fresh() -> tuple[int, dict[str, str]] | None:
+        if last is not None and monotonic() - last[0] < HEALTH_CACHE_SECONDS:
+            return last[1], last[2]
+        return None
+
+    async def probe() -> tuple[int, dict[str, str]]:
+        try:
+            async with asyncio.timeout(HEALTH_TIMEOUT_SECONDS):
+                await provider.ping()
+        except TimeoutError:
+            error = detail = f"database did not answer within {HEALTH_TIMEOUT_SECONDS:g} s"
+        except Exception as exc:
+            error = _HEALTH_UNAVAILABLE
+            detail = _redact_error(str(exc) or type(exc).__name__, password)
+        else:
+            return 200, {"status": "ok"}
+        logger.warning("Health check failed: %s", detail)
+        return 503, {"status": "degraded", "error": error}
+
+    @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
+    async def health(_request: Request) -> JSONResponse:
+        nonlocal last
+        result = fresh()
+        if result is None:
+            async with lock:
+                # Пока ждали замок, результат мог обновить другой запрос — берём его
+                result = fresh()
+                if result is None:
+                    result = await probe()
+                    last = (monotonic(), *result)
+        status, body = result
+        return JSONResponse(body, status_code=status)
 
 
 def create_server(  # noqa: PLR0913
@@ -115,7 +194,15 @@ def create_server(  # noqa: PLR0913
         access_policy=settings.auth.access_policy,
         access_resolver=access_resolver,
     )
-    return FastMCP(
+    # Эффективный потолок прав и auth видны на старте; секретов тут нет (префикс и имя класса — не секреты)
+    logger.info(
+        "Database ceiling: access_mode=%s, write_mode=%s, table_prefix=%s; auth=%s",
+        settings.database.access_mode,
+        settings.database.write_mode,
+        settings.database.table_prefix,
+        type(auth).__name__ if auth is not None else "none",
+    )
+    mcp = FastMCP(
         name=settings.fastmcp.server_name,
         instructions=settings.fastmcp.instructions or None,
         auth=auth,
@@ -130,3 +217,7 @@ def create_server(  # noqa: PLR0913
         mask_error_details=True,
         on_duplicate="error",
     )
+    if settings.server.health_endpoint_enabled:
+        password = settings.database.password
+        _add_health_route(mcp, provider, password.get_secret_value() if password else None)
+    return mcp

@@ -13,6 +13,7 @@ from docker import errors as docker_errors
 
 logger = logging.getLogger(__name__)
 
+
 def create_postgres_container(version: str) -> Generator[tuple[str, str], None, None]:
     """Create a PostgreSQL container of specified version and return its connection string."""
     try:
@@ -96,8 +97,13 @@ def create_postgres_container(version: str) -> Generator[tuple[str, str], None, 
             exit_info = ""
             if hasattr(container, "attrs") and container.attrs.get("State"):
                 exit_info = f" exit code {container.attrs['State'].get('ExitCode', '?')}"
-            logger.error("Container %s failed to start (logs not read: Docker log driver may not support reading)", container_name)
-            pytest.skip(f"PostgreSQL container failed to start{exit_info}. Set Docker default log driver to json-file to see logs (e.g. in Docker Desktop settings or daemon.json).")
+            logger.error(
+                "Container %s failed to start (logs not read: Docker log driver may not support reading)",
+                container_name,
+            )
+            pytest.skip(
+                f"PostgreSQL container failed to start{exit_info}. Set Docker default log driver to json-file to see logs (e.g. in Docker Desktop settings or daemon.json)."
+            )
 
         # Get assigned port
         port = container.ports["5432/tcp"][0]["HostPort"]

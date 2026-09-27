@@ -5,8 +5,27 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.shared.enums import AccessMode
+
+
+_DATABASE_ENV = {
+    "MCP_DATABASE_HOST": "localhost",
+    "MCP_DATABASE_PORT": "5432",
+    "MCP_DATABASE_USER": "u",
+    "MCP_DATABASE_PASSWORD": "p",
+    "MCP_DATABASE_NAME": "d",
+}
+
+
+@pytest.fixture(autouse=True)
+def _database_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Тестовое подключение MCP_DATABASE_* не зависит от окружения shell.
+
+    Тест переопределяет значения своим monkeypatch.setenv/delenv: этот fixture выполняется раньше.
+    """
+    for name, value in _DATABASE_ENV.items():
+        monkeypatch.setenv(name, value)
 
 
 @pytest.fixture

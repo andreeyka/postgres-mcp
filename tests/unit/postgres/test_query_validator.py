@@ -3,6 +3,7 @@
 
 import pytest
 
+from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
     DdlNotAllowedError,
@@ -14,7 +15,6 @@ from postgres_fastmcp.shared.errors import (
     TablePrefixAccessError,
     UserFacingError,
 )
-from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
 
 class TestQueryValidatorReadOnly:

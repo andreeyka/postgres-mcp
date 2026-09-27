@@ -8,7 +8,7 @@
 Этот форк оригинального проекта [postgres-fastmcp](https://github.com/crystaldba/postgres-fastmcp) переписан на FastMCP и даёт:
 
 - **🚀 Высокая производительность** — FastMCP оптимизирован для быстрой работы
-- **🔧 Гибкая настройка** — `config.json`, переменные окружения (например `MCP_SERVER_*`, `MCP_DATABASE_*`) или CLI
+- **🔧 Гибкая настройка** — `config.json`, переменные окружения (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*`) или CLI
 - **🌐 HTTP и STDIO** — запуск как HTTP-сервер или через stdio для настольных MCP-клиентов
 - **🔐 Детальный контроль доступа** — access_mode (basic/full) и write_mode (true/false)
 - **📌 Одна БД на сервер** — один экземпляр MCP-сервера обслуживает одну базу PostgreSQL
@@ -56,7 +56,7 @@ uv run postgres-fastmcp \
   --access-mode basic
 ```
 
-Опции CLI только при использовании `--database-uri`: `--write-mode` (флаг), `--access-mode` (basic|full). Опции сервера: `--host`, `--port`, `--workers`, `--transport`.
+Все опции CLI необязательны и действуют независимо от `--database-uri`: `--transport` (http|stdio), `--host`, `--port`, `--access-mode` (basic|full), `--write-mode` / `--no-write-mode`. Незаданная опция ничего не переопределяет: значение берётся из `config.json`, затем из переменных окружения, затем по умолчанию.
 
 #### 2. Конфигурационный файл (`config.json`)
 
@@ -68,8 +68,7 @@ uv run postgres-fastmcp \
         "host": "0.0.0.0",
         "port": 8000,
         "transport": "http",
-        "endpoint": "mcp",
-        "workers": 1
+        "endpoint": "/mcp"
     },
     "fastmcp": {
         "server_name": "postgres-fastmcp"
@@ -98,7 +97,7 @@ uv run postgres-fastmcp
 
 #### 3. Переменные окружения
 
-Используйте префиксы `MCP_SERVER_*`, `MCP_DATABASE_*` и `MCP_FASTMCP_*` (см. [env.example](env.example)):
+Имя переменной — `MCP_<СЕКЦИЯ>_<ПОЛЕ>`, где секция совпадает с секцией `config.json`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)). Переменные без префикса секции (`MCP_PORT`, `DATABASE` и т.п.) не читаются.
 
 ```bash
 export MCP_SERVER_HOST=0.0.0.0
@@ -109,9 +108,9 @@ export MCP_DATABASE_PORT=5432
 export MCP_DATABASE_USER=user
 export MCP_DATABASE_PASSWORD=password
 export MCP_DATABASE_NAME=dbname
-export MCP_DATABASE_ROLE=admin
+export MCP_DATABASE_ACCESS_MODE=full
 export MCP_DATABASE_WRITE_MODE=false
-export MCP_RESPONSE_MAX_TOKENS=20000
+export MCP_SERVER_RESPONSE_MAX_TOKENS=20000
 
 uv run postgres-fastmcp
 ```
@@ -120,10 +119,17 @@ uv run postgres-fastmcp
 
 Порядок (от высшего к низшему):
 
-1. Параметры CLI (при указании `--database-uri` настройки БД берутся из CLI и переопределяют остальное)
-2. Файл `config.json` в текущей директории
+1. Явно заданные параметры CLI
+2. Файл `config.json` в текущей директории; CLI переопределяет в нём отдельные поля, а не секцию целиком
 3. Переменные окружения и `.env`
 4. Значения по умолчанию
+
+Особенности `--database-uri`:
+
+- Задаёт только то, что есть в URI: `host`, `port`, `user`, `password`, `name`, а также `sslmode` и `client_encoding` из query string; остальные поля секции `database` (например `table_prefix`) берутся из `config.json`/env как обычно.
+- Сам по себе **не** переключает сервер в режим только чтения: `write_mode` по-прежнему берётся из `config.json`/env (по умолчанию `false`). Чтобы принудительно оставить только чтение вместе с `--database-uri`, добавьте `--no-write-mode` — именно он отвечает за режим SQL. `--access-mode basic` — независимый параметр: он сужает видимость до схемы `public` и базовых инструментов, но не отключает запись сам по себе (`basic` + `write_mode=true` по-прежнему разрешает DML, см. таблицу ниже).
+- Если в URI нет пароля, он берётся из `config.json` или переменных окружения — даже если host или user в URI отличаются от заданных там же.
+- Если в URI не указан порт, подставляется `5432`; это значение перекрывает порт, заданный в `config.json` или env.
 
 ## Конфигурация
 
@@ -135,10 +141,10 @@ uv run postgres-fastmcp
 
 Определяет доступ к схемам и набор доступных инструментов:
 
-| Роль    | Схемы          | Инструменты | Описание |
-| ------- | -------------- | ----------- | -------- |
-| `user`  | Только `public` | Базовые (4) | Только схема public; опционально `table_prefix` — ограничение по префиксу имён таблиц |
-| `admin` | Все схемы      | Все (9)     | Все схемы и расширенные инструменты (схемы, здоровье, топ запросов, анализ индексов) |
+| access_mode | Схемы          | Инструменты | Описание |
+| ----------- | -------------- | ----------- | -------- |
+| `basic`     | Только `public` | Базовые (4) | Только схема public; опционально `table_prefix` — ограничение по префиксу имён таблиц |
+| `full`      | Все схемы      | Все (9)     | Все схемы и расширенные инструменты (схемы, здоровье, топ запросов, анализ индексов) |
 
 #### Режим записи (`write_mode`)
 
@@ -177,7 +183,21 @@ uv run postgres-fastmcp \
   --port 8000
 ```
 
-Сервер доступен по адресу `http://localhost:8000/mcp` (или по пути из `server.endpoint`). Проверка здоровья по `/health` при `MCP_SERVER_HEALTH_ENDPOINT_ENABLED=true` (по умолчанию включено).
+Сервер доступен по адресу `http://localhost:8000/mcp`; путь задаёт `server.endpoint` (`MCP_SERVER_ENDPOINT`, ведущий `/` добавляется сам).
+
+#### Проверка здоровья: `GET /health`
+
+`http://localhost:8000/health` — для балансировщика и проб Kubernetes. Маршрут всегда в корне, независимо от `server.endpoint`, и не требует токена даже при включённой аутентификации. Сервер открывает отдельное соединение с базой (пул инструментов не трогается) и выполняет `SELECT 1`:
+
+| Ответ | Когда |
+| --- | --- |
+| `200 {"status": "ok"}` | база ответила не дольше чем за 2 секунды |
+| `503 {"status": "degraded", "error": "database unavailable"}` | ошибка подключения (адрес, пользователь, пароль в ответе не раскрываются) |
+| `503 {"status": "degraded", "error": "database did not answer within 2 s"}` | база не ответила за 2 секунды |
+
+Подробности неудачи (замаскированный пароль) уходят только в лог сервера на уровне WARNING, не чаще раза в секунду: результат пробы кэшируется на ~1 секунду и общий для всех одновременных запросов, чтобы поток анонимных `GET /health` не открывал по соединению на запрос. Если нужно увидеть в логе, к какому хосту/порту/базе реально подключается драйвер, поднимите уровень логгера `psycopg` до `DEBUG` — тогда в лог попадают сообщения libpq с хостом, портом, пользователем и именем базы (без пароля).
+
+Отключается `server.health_endpoint_enabled=false` (`MCP_SERVER_HEALTH_ENDPOINT_ENABLED=false`), тогда `/health` отвечает `404`. В `stdio` маршрута нет.
 
 #### STDIO
 
@@ -191,9 +211,10 @@ uv run postgres-fastmcp \
 
 ### Справочник конфигурации
 
-- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--workers`, `--write-mode`, `--access-mode`. Вывод версии: `--version`. При указании `--database-uri` подключение к БД и access_mode/write_mode берутся из CLI (и переопределяют config/env на этот запуск).
+- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--access-mode`, `--write-mode` / `--no-write-mode`. Вывод версии: `--version`. Каждая заданная опция переопределяет `config.json` и переменные окружения на этот запуск.
 - **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
-- **Переменные окружения / .env:** Префиксы `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
+- **Переменные окружения / .env:** `MCP_<СЕКЦИЯ>_<ПОЛЕ>`: `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
+- **Итоговая конфигурация в логе:** на старте сервер пишет одну строку INFO `Database ceiling: access_mode=..., write_mode=..., table_prefix=...; auth=...` (класс auth-провайдера или `none`), а для HTTP ещё `Serving MCP over HTTP on host:port/endpoint`; секретов в них нет.
 
 ### Подключение MCP-клиентов
 
@@ -241,7 +262,7 @@ uv run postgres-fastmcp \
                 "MCP_DATABASE_USER": "user",
                 "MCP_DATABASE_PASSWORD": "pass",
                 "MCP_DATABASE_NAME": "dbname",
-                "MCP_DATABASE_ROLE": "user",
+                "MCP_DATABASE_ACCESS_MODE": "basic",
                 "MCP_DATABASE_WRITE_MODE": "false"
             }
         }
@@ -328,7 +349,7 @@ MCP_AUTH_JWT_AUDIENCE=postgres-mcp
 4. IdP возвращает пользователя на `<base_url>/auth/callback` — этот адрес нужно добавить в разрешённые redirect URI клиента в IdP.
 5. Сервер выдаёт MCP-клиенту свой токен и на каждом запросе проверяет токен IdP за ним.
 
-Сервер читает `oidc_config_url` при запуске: если IdP недоступен, сервер не стартует. Исключение — CLI этого пакета при реальном запуске с `--transport stdio` (или `MCP_TRANSPORT=stdio`): он знает, каким транспортом запускается, и в этом случае сознательно не строит провайдер и не обращается к IdP, поскольку в `stdio` аутентификация всё равно не действует. Библиотечный `create_server()` от этого не зависит и всегда пытается построить провайдер (см. начало раздела). Регистрации MCP-клиентов хранятся зашифрованными в каталоге данных FastMCP (`FASTMCP_HOME`, по умолчанию `~/.local/share/fastmcp`); в контейнере вынесите его в volume, иначе после перезапуска клиентам придётся войти заново. `FASTMCP_HOME` должен указывать на доступный для записи volume — с read-only корневой файловой системой контейнера `oidc` не заработает.
+Сервер читает `oidc_config_url` при запуске: если IdP недоступен, сервер не стартует. Исключение — CLI этого пакета при реальном запуске с `--transport stdio` (или `MCP_SERVER_TRANSPORT=stdio`): он знает, каким транспортом запускается, и в этом случае сознательно не строит провайдер и не обращается к IdP, поскольку в `stdio` аутентификация всё равно не действует. Библиотечный `create_server()` от этого не зависит и всегда пытается построить провайдер (см. начало раздела). Регистрации MCP-клиентов хранятся зашифрованными в каталоге данных FastMCP (`FASTMCP_HOME`, по умолчанию `~/.local/share/fastmcp`); в контейнере вынесите его в volume, иначе после перезапуска клиентам придётся войти заново. `FASTMCP_HOME` должен указывать на доступный для записи volume — с read-only корневой файловой системой контейнера `oidc` не заработает.
 
 ### Подключение клиентов с токеном
 
@@ -475,13 +496,13 @@ MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
 ### Формат ответа и бюджет
 
 - `execute_sql`, `list_schemas`, `list_objects`, `get_object_details` и `get_top_queries` принимают `output`: `table` (по умолчанию) — Markdown-таблица, в которой колонки перечислены один раз, и строка `N rows.`; `json` — `{"rows": [...], "row_count": N}` в `structuredContent` и тот же JSON текстом. `get_object_details` в `json` отдаёт поля объекта и разделы (`columns`, `constraints`, `indexes`) одним объектом.
-- Ответ инструмента больше `response_max_tokens` (переменная `MCP_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3. Если инструмент мог записать данные (аннотация `readOnlyHint=false`, то есть `execute_sql` при `write_mode=true`), текст другой и не утверждает, что запись точно произошла — это мог быть и обычный `SELECT`: `... If the statement modified data, its changes are already applied — do not re-run it; query the affected rows with a narrower SELECT instead. Otherwise refine the request: ...`.
+- Ответ инструмента больше `response_max_tokens` (переменная `MCP_SERVER_RESPONSE_MAX_TOKENS`, по умолчанию 20000) заменяется ошибкой `Response is too large ... Refine the request`: агенту нужно добавить `WHERE`/`LIMIT`, выбрать меньше колонок или агрегировать. Размер оценивается как байты текста / 3. Если инструмент мог записать данные (аннотация `readOnlyHint=false`, то есть `execute_sql` при `write_mode=true`), текст другой и не утверждает, что запись точно произошла — это мог быть и обычный `SELECT`: `... If the statement modified data, its changes are already applied — do not re-run it; query the affected rows with a narrower SELECT instead. Otherwise refine the request: ...`.
 - Ввод нормализуется: `object_type` понимает `Tables`, `VIEW`, `sequences`; `health_type` — список или строку через запятую в любом регистре; `sort_by` — синонимы `total`, `mean`, `avg`, `resource`; `limit` больше 100 урезается до 100 и действует для всех `sort_by`, включая `resources`. Неверное значение даёт ошибку, в которой всегда перечислены допустимые значения; если есть похожее, добавляется подсказка `Did you mean ...?`.
 
 ### Ограничения по доступу
 
-- **Роль `user`**: только базовые инструменты (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`); опционально `table_prefix` для ограничения набора таблиц
-- **Роль `admin`**: все инструменты (базовые + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
+- **access_mode=basic**: только базовые инструменты (`list_objects`, `get_object_details`, `explain_query`, `execute_sql`); опционально `table_prefix` для ограничения набора таблиц
+- **access_mode=full**: все инструменты (базовые + `list_schemas`, `analyze_workload_indexes`, `analyze_query_indexes`, `analyze_db_health`, `get_top_queries`)
 - **write_mode=false**: разрешён только SELECT
 - **write_mode=true** при access_mode=basic: в схеме `public` разрешены INSERT/UPDATE/DELETE (изменения коммитятся), DDL отклоняется
 - **write_mode=true** при access_mode=full: без ограничений, включая DDL
@@ -532,7 +553,7 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
 }
 ```
 
-### Пример 2: Роль user с префиксом таблиц
+### Пример 2: access_mode=basic с префиксом таблиц
 
 Ограничение схемой `public` и объектами, имена которых начинаются с `app_`:
 
@@ -560,7 +581,7 @@ CREATE EXTENSION IF NOT EXISTS hypopg;
 uv run postgres-fastmcp --transport stdio --database-uri "postgresql://user:pass@localhost:5432/dbname" --access-mode basic
 ```
 
-### Пример 4: Разработка (чтение-запись, admin)
+### Пример 4: Разработка (чтение-запись, access_mode=full)
 
 Полный набор инструментов и разрешён DML/DDL:
 
@@ -624,7 +645,7 @@ from postgres_fastmcp import (
 
 ### Свой сервер: `PostgresProvider`
 
-**⚠️ Важно:** `DatabaseConfig` — это pydantic `BaseSettings` (`env_prefix="MCP_DATABASE_"`, `env_file=".env"`). Любое поле, не переданное явно, — включая `access_mode`, `write_mode` и `table_prefix`, то есть серверный потолок прав, — молча читается из переменных окружения `MCP_DATABASE_*` и файла `.env` в текущей директории. Библиотечный хост с оставшимся от другого проекта `.env` может незаметно получить провайдер `full` с записью. В коде библиотеки всегда передавайте `access_mode` и `write_mode` явно, не полагаясь на окружение.
+`DatabaseConfig` берёт только то, что передано в конструктор: переменные `MCP_DATABASE_*` и файл `.env` он не читает, поэтому окружение хоста не может поднять потолок прав. Не переданные `access_mode` и `write_mode` означают `basic` без записи; неизвестное поле (например устаревшее `role`) — ошибка `ValidationError`. Если конфигурация базы должна приходить из окружения, как у CLI, возьмите `Settings().database` или `DatabaseSettings()` из `postgres_fastmcp.app.config.database`.
 
 ```python
 from fastmcp import FastMCP
@@ -650,6 +671,7 @@ mcp.run(transport="http", host="0.0.0.0", port=8000)
 - Провайдер владеет пулом соединений: пул открывается при первом запросе и закрывается при остановке сервера.
 - Видимость инструментов задаёт `access_mode` из `DatabaseConfig`: в `basic` доступны четыре инструмента, в `full` — девять.
 - `access_policy=AccessPolicy(enforced=True, ...)` сужает права запроса по claim токена, как описано в разделе «Права по claim»; токен даёт `AuthProvider` вашего сервера. `access_resolver` — функция `AccessToken | None -> EffectiveAccess` вместо политики, если нужна своя логика; она приоритетнее `access_policy`. Результат обоих никогда не превышает потолок из `DatabaseConfig`. Без политики и резолвера права запроса равны потолку.
+- `/health` на своём сервере не появляется сам: `create_server` добавляет его через `custom_route`. Для своего маршрута вызовите `await provider.ping()` — `SELECT 1` на отдельном соединении, при недоступной базе бросает ошибку psycopg (её текст может содержать строку подключения — не отдавайте его наружу без маскировки); таймаут задайте сами, например `asyncio.timeout(2)`.
 - `create_server` подключает бюджет ответа автоматически. На своём сервере добавьте его сами первым middleware: `mcp.add_middleware(ResponseBudgetMiddleware(20000))`, импорт — `from postgres_fastmcp import ResponseBudgetMiddleware`.
 
 ### Готовый сервер: `create_server`
@@ -758,8 +780,8 @@ uv run mypy src/
 | Стандартная реализация MCP | Фреймворк FastMCP |
 | Режимы                        | access_mode (`basic` / `full`) + write_mode (true/false)                      |
 | Только транспорт SSE   | HTTP и stdio |
-| Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*`) и CLI |
-| —                      | Опциональный `table_prefix` для роли `user`; endpoint здоровья `/health` |
+| Настройка через CLI/env | config.json, env (`MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_AUTH_*`, `MCP_FASTMCP_*`) и CLI |
+| —                      | Опциональный `table_prefix` для `access_mode=basic`; endpoint здоровья `/health` |
 
 ## Технические заметки
 

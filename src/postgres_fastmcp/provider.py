@@ -29,10 +29,9 @@ from postgres_fastmcp.tools.registry import register_tools
 class PostgresProvider(LocalProvider):
     """Тулы одной базы PostgreSQL с правами не выше потолка из ``database``.
 
-    ``database`` (``DatabaseConfig``) — pydantic ``BaseSettings``: любое поле, не переданное
-    явно, включая ``access_mode``, ``write_mode`` и ``table_prefix``, читается из переменных
-    окружения ``MCP_DATABASE_*`` и файла ``.env``. В коде библиотеки передавайте
-    ``access_mode``/``write_mode`` явно — иначе оставшийся ``.env`` молча поднимет потолок прав.
+    ``DatabaseConfig`` не читает env и .env: потолок прав — ровно то, что передано (по умолчанию
+    ``basic`` без записи). Конфиг из окружения ``MCP_DATABASE_*`` — ``DatabaseSettings`` или
+    ``Settings().database``.
     """
 
     def __init__(
@@ -71,6 +70,13 @@ class PostgresProvider(LocalProvider):
     def _current_db(self) -> DbAccessPort:
         """Доступ к БД с правами текущего запроса (токен None в stdio и без auth)."""
         return self._db.view(self._resolve(get_access_token()))
+
+    async def ping(self) -> None:
+        """Проверить, что база отвечает на SELECT 1 (для /health); бросает ошибку psycopg, если нет.
+
+        Своего общего таймаута нет: вызывающий оборачивает вызов в ``asyncio.timeout``.
+        """
+        await self._db.ping()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:

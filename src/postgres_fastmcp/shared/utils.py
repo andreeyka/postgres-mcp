@@ -78,8 +78,11 @@ def obfuscate_password(text: str | None) -> str | None:
     try:
         parsed = urlparse(text)
         if parsed.scheme and parsed.netloc and parsed.password:
-            # Replace password with asterisks in proper URL
-            netloc = parsed.netloc.replace(parsed.password, "****")
+            # Маскируется только сегмент ":пароль@" в userinfo: replace() по всему netloc выдал бы
+            # пароль, совпадающий с пользователем или частью хоста
+            userinfo, _, hostport = parsed.netloc.rpartition("@")
+            user = userinfo.partition(":")[0]
+            netloc = f"{user}:****@{hostport}"
             return urlunparse(parsed._replace(netloc=netloc))
     except Exception as e:
         # If URL parsing fails, fall back to regex-based obfuscation

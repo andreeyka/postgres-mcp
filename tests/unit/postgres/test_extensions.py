@@ -9,7 +9,7 @@ from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter, Exte
 
 @pytest.mark.parametrize("message_type", ["plain", "markdown"])
 async def test_hypopg_available_hint_names_execute_sql(message_type: str) -> None:
-    """hypopg доступно, но не установлено: подсказка ведёт к execute_sql, а не к несуществующему execute_query."""
+    """Hypopg доступно, но не установлено: подсказка ведёт к execute_sql, а не к несуществующему execute_query."""
     adapter = ExtensionInspectorAdapter(MagicMock(), MagicMock(), "test")
     status = ExtensionStatus(is_installed=False, is_available=True, name="hypopg", message="", default_version="1.4")
     adapter.check_extension = AsyncMock(return_value=status)  # type: ignore[method-assign]

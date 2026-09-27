@@ -1,5 +1,9 @@
 """Тесты PostgresProvider: видимость тулов, права запроса, lifespan и namespace."""
 
+import asyncio
+import time
+from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -100,7 +104,7 @@ async def test_lifespan_closes_the_service_even_if_the_client_body_raises(
 ) -> None:
     """close() должен сработать и когда тело ``async with Client(...)`` падает исключением."""
     server = FastMCP("t", providers=[PostgresProvider(_database())])
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match="boom"):  # noqa: PT012 - исключение из тела async with
         async with Client(server) as client:
             await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
             raise RuntimeError("boom")
@@ -122,6 +126,22 @@ async def test_tool_call_gets_access_from_resolver_and_token(fake_service: type[
     assert tokens
     assert set(tokens) == {None}
     assert fake_service.instances[0].views == [narrowed]
+
+
+async def test_ceiling_ignores_database_env(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """MCP_DATABASE_ACCESS_MODE=full и WRITE_MODE=true в env и .env не поднимают потолок DatabaseConfig."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MCP_DATABASE_WRITE_MODE=true\n", encoding="utf-8")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    monkeypatch.setenv("MCP_DATABASE_WRITE_MODE", "true")
+    connection = {"host": "h", "user": "u", "password": "p", "name": "d"}
+    server = FastMCP("t", providers=[PostgresProvider(DatabaseConfig(**connection))])
+    assert await _tool_names(server) == _BASIC_TOOLS
+    async with Client(server) as client:
+        await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+    assert fake_service.instances[0].views == [EffectiveAccess(AccessMode.BASIC, write_mode=False)]
 
 
 async def test_default_resolver_uses_the_ceiling(fake_service: type[FakeService]) -> None:
@@ -192,3 +212,55 @@ async def test_two_databases_in_one_host_via_namespace() -> None:
     host.add_provider(PostgresProvider(_database(AccessMode.FULL)), namespace="analytics")
     names = await _tool_names(host)
     assert names == _BASIC_TOOLS | {f"analytics_{name}" for name in _BASIC_TOOLS | _FULL_TOOLS}
+
+
+async def test_ping_runs_select_1_on_a_separate_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Проверка ping не открывает пул: отдельное соединение с URI из конфига."""
+    seen: list[str] = []
+
+    async def check(url: str) -> None:
+        seen.append(url)
+
+    monkeypatch.setattr("postgres_fastmcp.domains.db_access.check_connection", check)
+    provider = PostgresProvider(_database())
+    await provider.ping()
+    assert seen == [_database().database_uri]
+    assert provider._db._pool.pool is None
+
+
+class _FakeConnection:
+    """Подмена AsyncConnection: execute висит, close считается."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        self.closed += 1
+
+    async def execute(self, _sql: str) -> None:
+        await asyncio.sleep(10)
+
+
+@pytest.mark.timeout(5)
+async def test_check_connection_closes_the_connection_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Отмена по таймауту во время SELECT 1 закрывает соединение и не висит дольше таймаута."""
+    from postgres_fastmcp.postgres import connection
+
+    fake = _FakeConnection()
+    kwargs: dict[str, object] = {}
+
+    async def connect(_url: str, **options: object) -> _FakeConnection:
+        kwargs.update(options)
+        return fake
+
+    monkeypatch.setattr(connection.AsyncConnection, "connect", connect)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.05):
+            await connection.check_connection("postgresql://u:p@h/d")
+    assert time.monotonic() - started < 1
+    assert fake.closed == 1
+    assert kwargs == {"autocommit": True, "connect_timeout": connection.CHECK_CONNECT_TIMEOUT_SECONDS}

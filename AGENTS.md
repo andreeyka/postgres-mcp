@@ -943,26 +943,38 @@ current request's access. `tools/registry.py` registers them on a `LocalProvider
 
 ## Server Startup
 
-`app/main.py` builds the server with `create_server(settings)` and runs it with
-`mcp.run(transport=...)` for both stdio and HTTP:
+`app/main.py` builds `Settings` from the CLI flags (`build_settings_from_cli`: an explicit flag >
+`--database-uri` > config.json > env/.env > defaults), builds the server with `create_server` **before**
+disabling logs for stdio (startup auth warnings and the `Database ceiling: ...` INFO line go to stderr),
+and runs it with `mcp.run(transport=...)`. The CLI transport flag is already merged into
+`settings.server.transport`, so both the `build_auth` decision and the run use that one value:
 
 ```python
-mcp = create_server(settings)
+mcp = create_server(settings, build_auth=settings.server.transport != "stdio")
+if settings.server.transport == "stdio":
+    configure_logging(disable=True)
 
-if actual_transport == "http":
+if settings.server.transport == "http":
+    logger.info(
+        "Serving MCP over HTTP on %s:%s%s", settings.server.host, settings.server.port, settings.server.endpoint
+    )
     mcp.run(
         transport="http",
         host=settings.server.host,
         port=settings.server.port,
+        path=settings.server.endpoint,
         uvicorn_config={"ws": "websockets-sansio", "log_config": None},
     )
 else:
     mcp.run(transport="stdio")
 ```
 
+`create_server` also registers `GET /health` (`custom_route`, outside auth) unless
+`server.health_endpoint_enabled` is false; it calls `PostgresProvider.ping()` with a 2 s timeout.
+
 ## Layered Architecture
 
-- **App / composition root** (`app/`): config (`app/config/`, including `AuthSettings` in `app/config/auth.py`), the auth provider factory (`app/auth.py::build_auth_provider`), server assembly and startup auth warnings (`app/server.py::create_server`), middleware, entry point (`app/main.py`)
+- **App / composition root** (`app/`): config (`app/config/`: `Settings` with one block per env prefix `MCP_<SECTION>_`, `DatabaseConfig` without env for library code and `DatabaseSettings` with env, `AuthSettings` in `app/config/auth.py`), the auth provider factory (`app/auth.py::build_auth_provider`), server assembly, `/health` and startup auth warnings (`app/server.py::create_server`), middleware, entry point (`app/main.py`)
 - **Provider** (`provider.py`): `PostgresProvider(LocalProvider)` — owns `DbAccessService` (pool closed in the provider `lifespan`), resolves the request's access and registers the tools
 - **Access** (`access.py`): `EffectiveAccess`, `AccessPolicy`, `AccessResolver`, `resolve_access` (claim rules), `full_access_check`; depends only on `shared/` and `fastmcp.server.auth`
 - **Presentation** (`tools/`): `ToolSet` with the tool methods (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)

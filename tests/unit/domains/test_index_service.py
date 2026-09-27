@@ -17,7 +17,7 @@ class TestIndexAnalysisServiceAnalyzeWorkloadIndexes:
     @patch("postgres_fastmcp.domains.index_tuning.service.DatabaseTuningAdvisor")
     async def test_returns_recommendations_dict(
         self,
-        mock_dta_cls: MagicMock,  # noqa: ARG002 (required for patch order)
+        mock_dta_cls: MagicMock,
         mock_presentation_cls: MagicMock,
         mock_db_access: MagicMock,
     ) -> None:
@@ -55,7 +55,7 @@ class TestIndexAnalysisServiceAnalyzeQueryIndexes:
     @patch("postgres_fastmcp.domains.index_tuning.service.DatabaseTuningAdvisor")
     async def test_returns_recommendations_dict(
         self,
-        mock_dta_cls: MagicMock,  # noqa: ARG002 (required for patch order)
+        mock_dta_cls: MagicMock,
         mock_presentation_cls: MagicMock,
         mock_db_access: MagicMock,
     ) -> None:

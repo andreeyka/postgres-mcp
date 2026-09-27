@@ -3,6 +3,7 @@
 import asyncio
 import logging
 
+from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 
 from postgres_fastmcp.shared.errors import ConnectionFailedError
@@ -109,3 +110,24 @@ class DbConnPool:
         """
         self._is_valid = False
         self._last_error = error
+
+
+# libpq считает connect_timeout в целых секундах, минимум 2; внешний таймаут /health — у вызывающего
+CHECK_CONNECT_TIMEOUT_SECONDS = 2
+
+
+async def check_connection(connection_url: str) -> None:
+    """Открыть отдельное соединение, выполнить SELECT 1 и закрыть его (проверка /health).
+
+    Пул не трогается: проба не открывает пул на сервере, к которому ещё не было запросов, и
+    отдаёт настоящую ошибку psycopg сразу, а не PoolTimeout через 30 секунд. Текст ошибки может
+    содержать строку подключения — маскирует вызывающий.
+
+    Соединение закрывается при любом выходе, включая отмену по внешнему таймауту во время
+    SELECT 1 (``async with``). Отмена посреди connect() закрывать нечего: незавершённый PGconn
+    остаётся только внутри генератора psycopg и освобождается (PQfinish) вместе с ним.
+    """
+    async with await AsyncConnection.connect(
+        connection_url, autocommit=True, connect_timeout=CHECK_CONNECT_TIMEOUT_SECONDS
+    ) as conn:
+        await conn.execute("SELECT 1")

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from postgres_fastmcp.access import EffectiveAccess, clamp_to_ceiling
-from postgres_fastmcp.postgres.connection import DbConnPool
+from postgres_fastmcp.postgres.connection import DbConnPool, check_connection
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.ports import SqlDriverPort
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
@@ -117,6 +117,14 @@ class DbAccessService:
             table_prefix=self._config.table_prefix,
             connection_id=self._pool.connection_url or "",
         )
+
+    async def ping(self) -> None:
+        """SELECT 1 на отдельном соединении; исключение psycopg, если БД не отвечает."""
+        url = self._config.database_uri
+        if not url:
+            msg = "Database connection URL is not set"
+            raise ValueError(msg)
+        await check_connection(url)
 
     async def close(self) -> None:
         """Закрыть пул подключений. Вызывать при завершении жизненного цикла сервиса."""

@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
+from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
     ExplainPlanExecutionError,
     HypopgNotInstalledError,
 )
-from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
-from postgres_fastmcp.domains.explain.service import ExplainService
 
 
 def _make_artifact(text: str = "Plan output") -> ExplainPlanArtifact:
@@ -56,9 +56,7 @@ class TestExplainServiceDispatch:
         service._explain_plain.assert_not_called()
         service._explain_hypothetical.assert_not_called()
 
-    async def test_explain_with_hypothetical_indexes_calls_hypothetical(
-        self, mock_db_access: MagicMock
-    ) -> None:
+    async def test_explain_with_hypothetical_indexes_calls_hypothetical(self, mock_db_access: MagicMock) -> None:
         """explain(sql, hypothetical_indexes=[...]) calls _explain_hypothetical."""
         service = ExplainService(db=mock_db_access)
         service._explain_plain = AsyncMock(return_value="plain-result")
@@ -72,9 +70,7 @@ class TestExplainServiceDispatch:
         service._explain_plain.assert_not_called()
         service._explain_analyze.assert_not_called()
 
-    async def test_explain_analyze_with_hypothetical_raises(
-        self, mock_db_access: MagicMock
-    ) -> None:
+    async def test_explain_analyze_with_hypothetical_raises(self, mock_db_access: MagicMock) -> None:
         """explain(sql, analyze=True, hypothetical_indexes=[...]) raises."""
         service = ExplainService(db=mock_db_access)
         with pytest.raises(ExplainAnalyzeWithHypotheticalError):
@@ -132,9 +128,7 @@ class TestExplainServiceAnalyzeMode:
     ) -> None:
         """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note."""
         mock_tool = MagicMock()
-        mock_tool.explain_analyze = AsyncMock(
-            side_effect=ExplainPlanExecutionError(ExplainAnalyzeNotSupportedError())
-        )
+        mock_tool.explain_analyze = AsyncMock(side_effect=ExplainPlanExecutionError(ExplainAnalyzeNotSupportedError()))
         plain_artifact = _make_artifact("Plain fallback")
         mock_tool.explain = AsyncMock(return_value=plain_artifact)
         mock_tool_cls.return_value = mock_tool
@@ -168,9 +162,7 @@ class TestExplainServiceHypotheticalMode:
         mock_ext_cls.return_value = mock_inspector
 
         service = ExplainService(db=mock_db_access)
-        result = await service.explain(
-            "SELECT 1", hypothetical_indexes=[{"table": "t", "columns": ["id"]}]
-        )
+        result = await service.explain("SELECT 1", hypothetical_indexes=[{"table": "t", "columns": ["id"]}])
         assert "Result" in result
 
     @patch("postgres_fastmcp.domains.explain.service.ExtensionInspectorAdapter")
@@ -193,9 +185,7 @@ class TestExplainServiceHypotheticalMode:
 
         service = ExplainService(db=mock_db_access)
         with pytest.raises(HypopgNotInstalledError) as exc_info:
-            await service.explain(
-                "SELECT 1", hypothetical_indexes=[{"table": "t", "columns": ["id"]}]
-            )
+            await service.explain("SELECT 1", hypothetical_indexes=[{"table": "t", "columns": ["id"]}])
         assert "HypoPG" in str(exc_info.value)
         mock_tool.explain_with_hypothetical_indexes.assert_not_called()
 

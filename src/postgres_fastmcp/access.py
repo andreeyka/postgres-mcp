@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastmcp.server.auth import AccessToken, AuthCheck, AuthContext
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from postgres_fastmcp.shared.enums import AccessMode
 
@@ -34,7 +34,11 @@ class AccessPolicy(BaseModel):
     из ``AccessToken.scopes``. Запись даёт любое значение из ``write_values``, режим FULL —
     любое значение из ``full_values``; оба никогда не выше серверного потолка. Значения в
     ``write_values``/``full_values`` не могут быть пустыми или состоять только из пробелов.
+    Неизвестный ключ (опечатка ``enforcd`` в config.json или
+    ``MCP_AUTH_ACCESS_POLICY__ENFORCD``) — ошибка, а не молчаливое ``enforced=False``.
     """
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enforced: bool = False
     claim: str = "scope"

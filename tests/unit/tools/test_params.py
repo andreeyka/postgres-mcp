@@ -18,6 +18,7 @@ from postgres_fastmcp.shared.errors import (
     InvalidSortCriteriaError,
     UnsupportedObjectTypeError,
 )
+from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.params import (
     TOP_QUERIES_MAX_LIMIT,
     HealthTypesParam,
@@ -27,11 +28,10 @@ from postgres_fastmcp.tools.params import (
     TopQueriesLimitParam,
     TopQueriesSortByParam,
 )
-from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import register_tools
 
 
-def _validate(param: Any, value: object) -> object:
+def _validate(param: object, value: object) -> object:
     return TypeAdapter(param).validate_python(value)
 
 

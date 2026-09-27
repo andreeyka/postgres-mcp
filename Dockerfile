@@ -71,7 +71,7 @@ ARG UV_WORKDIR
 RUN apk add --no-cache postgresql-libs libpq \
     && if [ ! -e /usr/lib/libpq.so ] && [ -e /usr/lib/libpq.so.5 ]; then ln -sf libpq.so.5 /usr/lib/libpq.so; fi
 
-LABEL org.opencontainers.image.title="postgres-mcp" \
+LABEL org.opencontainers.image.title="postgres-fastmcp" \
       org.opencontainers.image.description="MCP-сервер для PostgreSQL на FastMCP"
 
 # Runtime-настройки (без UV_* — uv не нужен в production)
@@ -80,6 +80,10 @@ ENV TZ=Europe/Moscow \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1 \
     PATH=${UV_WORKDIR}/.venv/bin:$PATH
+
+# Контейнер должен слушать все интерфейсы, иначе проброшенный порт недоступен снаружи.
+# Без auth (MCP_AUTH_MODE=none) сервер на старте предупредит об открытом HTTP — так и задумано.
+ENV MCP_SERVER_HOST=0.0.0.0
 
 WORKDIR $UV_WORKDIR
 
@@ -96,8 +100,8 @@ USER app
 # https://hynek.me/articles/docker-signals/
 STOPSIGNAL SIGINT
 
-# Точка входа: скрипт postgres-mcp из pyproject.toml [project.scripts]
-ENTRYPOINT ["postgres-mcp"]
+# Точка входа: скрипт postgres-fastmcp из pyproject.toml [project.scripts]
+ENTRYPOINT ["postgres-fastmcp"]
 CMD ["--transport", "http"]
 
 EXPOSE 8000

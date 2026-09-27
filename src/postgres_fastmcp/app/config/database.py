@@ -1,9 +1,9 @@
-"""Модели конфигурации для базы данных (одна БД на сервер)."""
+"""Конфигурация базы данных: DatabaseConfig для кода библиотеки, DatabaseSettings для env/.env."""
 
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from postgres_fastmcp.shared.enums import AccessMode, SslMode
@@ -16,21 +16,15 @@ ERROR_DATABASE_URI_NOT_SET = (
 )
 
 
-class DatabaseConfig(BaseSettings):
-    """Конфигурация одной базы данных (одна БД на MCP-сервер).
+class DatabaseConfig(BaseModel):
+    """Конфигурация одной базы данных (одна БД на MCP-сервер) для кода библиотеки.
 
-    Загружается из env с префиксом MCP_DATABASE_ (без вложенного delimiter):
-    MCP_DATABASE_HOST, MCP_DATABASE_PORT, MCP_DATABASE_USER и т.д.
+    Берёт только переданные значения: env и .env не читаются, поэтому окружение хоста не может
+    молча поднять потолок прав (access_mode, write_mode). Неизвестное поле — ошибка.
     URI формируется из компонентов: host, port, user, password, name.
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        env_prefix="MCP_DATABASE_",
-        hide_input_in_errors=True,
-    )
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     host: str | None = Field(default=None, description="Хост базы данных")
     port: int = Field(default=5432, description="Порт базы данных")
@@ -107,36 +101,52 @@ class DatabaseConfig(BaseSettings):
         ),
     )
 
+    @staticmethod
+    def uri_fields(uri: str) -> dict[str, Any]:
+        """Поля подключения из URI (postgresql:// или postgresql+asyncpg://).
+
+        Возвращает только то, что в URI есть: host, port (5432, если не указан), user, password,
+        name, а из query string — sslmode и client_encoding. Отсутствующее (например пароль) не
+        попадает в словарь, и его дополняют config.json или env. Остальные поля URI не задаёт.
+        """
+        parsed = urlparse(uri)
+        qs = parse_qs(parsed.query)
+        candidates: dict[str, Any] = {
+            "host": parsed.hostname,
+            "port": parsed.port or 5432,
+            "user": unquote(parsed.username) if parsed.username else None,
+            "password": SecretStr(unquote(parsed.password)) if parsed.password else None,
+            "name": unquote((parsed.path or "").lstrip("/")) or None,
+        }
+        fields = {key: value for key, value in candidates.items() if value is not None}
+        # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
+        # явное значение перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
+        # Неизвестный sslmode — ошибка: иначе libpq молча откатился бы на prefer. Значение не секрет.
+        raw_sslmode = qs.get("sslmode", [None])[0]
+        if raw_sslmode is not None:
+            allowed = [mode.value for mode in SslMode]
+            if raw_sslmode not in allowed:
+                msg = f"Unknown sslmode {raw_sslmode!r} in database URI; expected one of: {', '.join(allowed)}"
+                raise ValueError(msg)
+            fields["sslmode"] = SslMode(raw_sslmode)
+        client_encoding = qs.get("client_encoding", [None])[0]
+        if client_encoding:
+            fields["client_encoding"] = client_encoding
+        return fields
+
     @classmethod
     def from_uri(cls, uri: str, **overrides: Any) -> "DatabaseConfig":
         """Собирает конфиг из URI (postgresql:// или postgresql+asyncpg://).
 
         Args:
             uri: Строка подключения.
-            **overrides: Переопределения полей (write_mode, access_mode и т.д.); проверяются Pydantic при создании.
+            **overrides: Переопределения полей (write_mode, access_mode, host и т.д.); перекрывают поля URI
+                и проверяются Pydantic при создании.
 
         Returns:
             Экземпляр DatabaseConfig с заполненными host, port, user, password, name.
         """
-        parsed = urlparse(uri)
-        db_name = (parsed.path or "").lstrip("/") or None
-        qs = parse_qs(parsed.query)
-        raw_sslmode = qs.get("sslmode", [None])[0] if qs else None
-        try:
-            sslmode = SslMode(raw_sslmode) if raw_sslmode else None
-        except (ValueError, TypeError):
-            sslmode = None
-        client_encoding = (qs.get("client_encoding", ["UTF8"])[0] or "UTF8") if qs else "UTF8"
-        return cls(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            user=unquote(parsed.username) if parsed.username else None,
-            password=SecretStr(unquote(parsed.password)) if parsed.password else None,
-            name=db_name,
-            sslmode=sslmode,
-            client_encoding=client_encoding,
-            **overrides,
-        )
+        return cls(**{**cls.uri_fields(uri), **overrides})
 
     @property
     def is_configured(self) -> bool:
@@ -169,10 +179,14 @@ class DatabaseConfig(BaseSettings):
         """
         if self.user is None or self.password is None or self.host is None or self.port is None or self.name is None:
             return None
-        user = quote_plus(self.user)
-        password = quote_plus(self.password.get_secret_value())
+        # Percent-encoding, а не quote_plus: libpq не декодирует '+' как пробел
+        user = quote(self.user, safe="")
+        password = quote(self.password.get_secret_value(), safe="")
+        # IPv6-адрес без скобок libpq прочитал бы как host:port
+        host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        name = quote(self.name, safe="")
         query = urlencode(self._connection_query_params())
-        return f"postgresql://{user}:{password}@{self.host}:{self.port}/{self.name}?{query}"
+        return f"postgresql://{user}:{password}@{host}:{self.port}/{name}?{query}"
 
     @model_validator(mode="after")
     def _check_database_uri(self) -> "DatabaseConfig":
@@ -180,3 +194,19 @@ class DatabaseConfig(BaseSettings):
         if self.user is None or self.password is None or self.host is None or self.port is None or self.name is None:
             raise ValueError(ERROR_DATABASE_URI_NOT_SET)
         return self
+
+
+class DatabaseSettings(DatabaseConfig, BaseSettings):
+    """DatabaseConfig с чтением env и .env: префикс MCP_DATABASE_ (без вложенного delimiter).
+
+    Блок ``database`` в Settings (CLI, config.json): недостающие в словаре поля берутся из
+    MCP_DATABASE_HOST, MCP_DATABASE_PORT, MCP_DATABASE_USER и т.д. Чужие ключи .env игнорируются.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        env_prefix="MCP_DATABASE_",
+        hide_input_in_errors=True,
+    )

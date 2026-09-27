@@ -13,11 +13,7 @@ from pydantic import ValidationError
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.server import ServerSettings
-from postgres_fastmcp.app.middleware.response_budget import (
-    BYTES_PER_TOKEN,
-    ResponseBudgetMiddleware,
-    estimate_tokens,
-)
+from postgres_fastmcp.app.middleware.response_budget import BYTES_PER_TOKEN, ResponseBudgetMiddleware, estimate_tokens
 from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
@@ -60,15 +56,15 @@ async def test_large_response_raises_with_numbers() -> None:
 
 
 def test_response_max_tokens_default_and_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MCP_RESPONSE_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("MCP_SERVER_RESPONSE_MAX_TOKENS", raising=False)
     assert ServerSettings().response_max_tokens == 20000
-    monkeypatch.setenv("MCP_RESPONSE_MAX_TOKENS", "5000")
+    monkeypatch.setenv("MCP_SERVER_RESPONSE_MAX_TOKENS", "5000")
     assert ServerSettings().response_max_tokens == 5000
     with pytest.raises(ValidationError):
         ServerSettings(response_max_tokens=999)
 
 
-def _server_with_rows(  # noqa: ANN202
+def _server_with_rows(
     monkeypatch: pytest.MonkeyPatch,
     rows: list[RowResult],
     max_tokens: int,

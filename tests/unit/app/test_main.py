@@ -87,7 +87,9 @@ def test_stdio_builds_the_server_before_disabling_logs() -> None:
 
 def test_http_passes_build_auth_true_to_create_server() -> None:
     settings = type(
-        "Settings", (), {"server": type("Server", (), {"transport": "http", "host": "127.0.0.1", "port": 8000})()}
+        "Settings",
+        (),
+        {"server": type("Server", (), {"transport": "http", "host": "127.0.0.1", "port": 8000, "endpoint": "/mcp"})()},
     )()
     mcp = type("MCP", (), {"run": lambda self, **kw: None})()
 

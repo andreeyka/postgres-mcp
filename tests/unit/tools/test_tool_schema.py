@@ -87,7 +87,7 @@ async def test_normalized_params_are_not_enums(tools: dict[str, Tool], tool: str
 
 
 async def test_top_queries_limit_has_lower_bound_only(tools: dict[str, Tool]) -> None:
-    """limit > 100 урезается сервером, поэтому maximum в схеме нет."""
+    """Limit > 100 урезается сервером, поэтому maximum в схеме нет."""
     limit = tools["get_top_queries"].parameters["properties"]["limit"]
     assert limit["minimum"] == 1
     assert "maximum" not in limit
