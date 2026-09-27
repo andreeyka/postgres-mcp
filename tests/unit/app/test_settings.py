@@ -6,12 +6,13 @@ DatabaseConfig, ServerSettings и FastMCPSettings собираются чере�
 флаг на самой вложенной модели.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.config import Settings, build_settings_from_cli
 from postgres_fastmcp.app.config.database import DatabaseConfig, DatabaseSettings
 from postgres_fastmcp.shared.enums import AccessMode
 
@@ -87,8 +88,10 @@ def test_database_settings_reads_env_and_dotenv(monkeypatch: pytest.MonkeyPatch,
 
 def test_database_config_rejects_unknown_fields() -> None:
     """Опечатка или устаревшее поле (role) в коде библиотеки — ошибка, а не молчаливый пропуск."""
-    with pytest.raises(ValidationError, match="role"):
-        DatabaseConfig(**_CONNECTION, role="admin")
+    with pytest.raises(ValidationError, match="role") as exc_info:
+        DatabaseConfig(**{**_CONNECTION, "password": _SECRET_PASSWORD}, role="admin")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+    assert _SECRET_PASSWORD not in repr(exc_info.value)
 
 
 def test_settings_keeps_a_passed_database_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,3 +109,31 @@ def test_settings_database_dict_error_hides_the_password() -> None:
         Settings(database={"host": "h", "password": _SECRET_PASSWORD})
     assert _SECRET_PASSWORD not in str(exc_info.value)
     assert _SECRET_PASSWORD not in repr(exc_info.value)
+
+
+def test_config_json_database_rejects_unknown_key_without_leaking_password(tmp_path: Path) -> None:
+    """Устаревший ключ role в config.json — ошибка с именем ключа, но без значений и пароля."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"database": {**_CONNECTION, "password": _SECRET_PASSWORD, "role": "admin"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="role") as exc_info:
+        build_settings_from_cli(config_path=config_path)
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+    assert _SECRET_PASSWORD not in repr(exc_info.value)
+    assert "admin" not in str(exc_info.value)
+
+
+def test_settings_database_dict_rejects_a_typo() -> None:
+    """Опечатка table_prefx не должна молча снимать ограничение по префиксу в basic."""
+    with pytest.raises(ValidationError, match="table_prefx"):
+        Settings(database={"table_prefx": "app_"})
+
+
+def test_settings_database_dict_with_known_keys_still_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    settings = Settings(database={"table_prefix": "app_", "access_mode": "full"})
+    assert settings.database.table_prefix == "app_"
+    assert settings.database.access_mode == AccessMode.FULL
+    assert settings.database.host == "localhost"

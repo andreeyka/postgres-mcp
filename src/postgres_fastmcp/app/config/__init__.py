@@ -84,8 +84,16 @@ class Settings(BaseSettings):
     @field_validator("database", mode="before")
     @classmethod
     def _database_from_env(cls, value: object) -> object:
-        """Словарь (config.json, CLI) дополняется из env через DatabaseSettings; готовый DatabaseConfig — как есть."""
+        """Словарь (config.json, CLI) дополняется из env через DatabaseSettings; готовый DatabaseConfig — как есть.
+
+        Неизвестный ключ словаря — ошибка: DatabaseSettings игнорирует чужие ключи (нужно для .env),
+        и опечатка вроде table_prefx молча сняла бы ограничение. В тексте ошибки только имена ключей.
+        """
         if isinstance(value, dict):
+            unknown = sorted(str(key) for key in value if key not in DatabaseConfig.model_fields)
+            if unknown:
+                msg = f"Unknown database settings keys: {', '.join(unknown)}"
+                raise ValueError(msg)
             return DatabaseSettings(**value)
         return value
 
