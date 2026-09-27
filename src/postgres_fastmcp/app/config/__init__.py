@@ -43,6 +43,7 @@ sslmode: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,28 @@ from postgres_fastmcp.shared.logger import get_logger
 __all__ = ["LEGACY_ENV_NAMES", "Settings", "build_settings_from_cli", "load_json_config", "warn_about_legacy_env"]
 
 logger = get_logger(__name__)
+
+# Ключи полей везде snake_case (только строчные буквы, цифры, "_"); намеренно без re.IGNORECASE —
+# токен-строка с заглавными буквами (забытая обёртка tokens) не должна попасть в текст ошибки.
+_FIELD_NAME_LIKE_KEY = re.compile(r"^[a-z_][a-z0-9_]{0,40}$")
+
+
+def _describe_unknown_keys(unknown: list[str]) -> str:
+    """Список неизвестных ключей секции для текста ошибки: имена полей — как есть, остальное — счётчиком.
+
+    Ключ-опечатка поля (``mdoe``, ``acess_policy``) похож на настоящее имя поля и должен быть
+    виден для диагностики. Ключ, которым по ошибке стала строка секрета (забытая обёртка
+    ``tokens``, ``client_secret`` и т.п.), обычно не выглядит как snake_case-имя поля — такие
+    ключи в сообщение не попадают, только их количество.
+    """
+    visible = [key for key in unknown if _FIELD_NAME_LIKE_KEY.match(key)]
+    hidden = len(unknown) - len(visible)
+    if not hidden:
+        return ", ".join(visible)
+    noun = "unrecognised key" if hidden == 1 else "unrecognised keys"
+    hidden_part = f"{hidden} {noun}"
+    return ", ".join([*visible, f"and {hidden_part}"]) if visible else hidden_part
+
 
 # Старое имя env -> новое; None — поле удалено. Только предупреждение: старые имена не читаются.
 LEGACY_ENV_NAMES: dict[str, str | None] = {
@@ -117,12 +140,13 @@ class Settings(BaseSettings):
         """Словарь (config.json, CLI) дополняется из env через DatabaseSettings; готовый DatabaseConfig — как есть.
 
         Неизвестный ключ словаря — ошибка: DatabaseSettings игнорирует чужие ключи (нужно для .env),
-        и опечатка вроде table_prefx молча сняла бы ограничение. В тексте ошибки только имена ключей.
+        и опечатка вроде table_prefx молча сняла бы ограничение. В тексте ошибки только ключи,
+        похожие на имена полей (см. ``_describe_unknown_keys``) — не все ключи как есть.
         """
         if isinstance(value, dict):
             unknown = sorted(str(key) for key in value if key not in DatabaseConfig.model_fields)
             if unknown:
-                msg = f"Unknown database settings keys: {', '.join(unknown)}"
+                msg = f"Unknown database settings keys: {_describe_unknown_keys(unknown)}"
                 raise ValueError(msg)
             return DatabaseSettings(**value)
         return value
@@ -133,15 +157,17 @@ class Settings(BaseSettings):
         """Неизвестный ключ словаря секции (config.json, CLI) — ошибка; иначе значение как есть.
 
         Сами блоки игнорируют чужие ключи (нужно для .env с ключами других блоков), и опечатка
-        вроде auth.mdoe молча дала бы mode=none. В тексте ошибки только имена ключей: рядом могут
-        лежать токены и секреты. Словарь возвращается без изменений — вложенный блок дополнит его из env.
+        вроде auth.mdoe молча дала бы mode=none. В тексте ошибки — только ключи, похожие на имена
+        полей (``_describe_unknown_keys``): рядом может лежать токен, забытый без обёртки tokens
+        (тогда сама строка токена становится ключом секции auth) — такой ключ не выводится, только
+        счётчик. Словарь возвращается без изменений — вложенный блок дополнит его из env.
         """
         if isinstance(value, dict) and info.field_name is not None:
             block = cls.model_fields[info.field_name].annotation
             known = block.model_fields if isinstance(block, type) and issubclass(block, BaseSettings) else {}
             unknown = sorted(str(key) for key in value if key not in known)
             if unknown:
-                msg = f"Unknown {info.field_name} settings keys: {', '.join(unknown)}"
+                msg = f"Unknown {info.field_name} settings keys: {_describe_unknown_keys(unknown)}"
                 raise ValueError(msg)
         return value
 

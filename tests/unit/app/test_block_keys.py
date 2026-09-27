@@ -43,6 +43,29 @@ def test_config_json_rejects_unknown_block_keys(tmp_path: Path, sections: dict, 
         assert secret not in repr(exc_info.value)
 
 
+_FORGOTTEN_TOKENS_WRAPPER_KEY = "TOKSECRET123abc"
+
+
+def test_settings_hides_a_token_shaped_key_when_tokens_wrapper_is_forgotten() -> None:
+    """auth={"mode": "static", "<token>": {...}} без обёртки tokens — токен не должен попасть в текст ошибки."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(auth={"mode": "static", _FORGOTTEN_TOKENS_WRAPPER_KEY: {"client_id": "c"}})
+    assert _FORGOTTEN_TOKENS_WRAPPER_KEY not in str(exc_info.value)
+    assert _FORGOTTEN_TOKENS_WRAPPER_KEY not in repr(exc_info.value)
+
+
+def test_config_json_hides_a_token_shaped_key_when_tokens_wrapper_is_forgotten(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"auth": {"mode": "static", _FORGOTTEN_TOKENS_WRAPPER_KEY: {"client_id": "c"}}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        build_settings_from_cli(config_path=config_path)
+    assert _FORGOTTEN_TOKENS_WRAPPER_KEY not in str(exc_info.value)
+    assert _FORGOTTEN_TOKENS_WRAPPER_KEY not in repr(exc_info.value)
+
+
 def test_access_policy_env_typo_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """MCP_AUTH_ACCESS_POLICY__ENFORCD не должен молча оставлять enforced=False."""
     monkeypatch.setenv("MCP_AUTH_ACCESS_POLICY__ENFORCD", "true")
