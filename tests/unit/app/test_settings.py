@@ -137,3 +137,30 @@ def test_settings_database_dict_with_known_keys_still_loads(monkeypatch: pytest.
     assert settings.database.table_prefix == "app_"
     assert settings.database.access_mode == AccessMode.FULL
     assert settings.database.host == "localhost"
+
+
+def test_cli_database_uri_still_reads_database_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--database-uri задаёт подключение, CLI — права; остальное (префикс, таймаут, sslmode) — из env."""
+    monkeypatch.setenv("MCP_DATABASE_TABLE_PREFIX", "app_")
+    monkeypatch.setenv("MCP_DATABASE_SAFE_SQL_TIMEOUT", "99")
+    monkeypatch.setenv("MCP_DATABASE_SSLMODE", "require")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    monkeypatch.setenv("MCP_DATABASE_WRITE_MODE", "true")
+    settings = build_settings_from_cli(
+        database_uri="postgresql://cli:pw@cli-host:6543/cli_db", config_path=tmp_path / "missing.json"
+    )
+    database = settings.database
+    assert (database.host, database.port, database.user, database.name) == ("cli-host", 6543, "cli", "cli_db")
+    assert database.table_prefix == "app_"
+    assert database.safe_sql_timeout == 99
+    assert database.sslmode == "require"
+    assert database.access_mode == AccessMode.BASIC
+    assert database.write_mode is False
+
+
+def test_cli_database_uri_sslmode_beats_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MCP_DATABASE_SSLMODE", "require")
+    settings = build_settings_from_cli(
+        database_uri="postgresql://u:p@h/n?sslmode=disable", config_path=tmp_path / "missing.json"
+    )
+    assert settings.database.sslmode == "disable"

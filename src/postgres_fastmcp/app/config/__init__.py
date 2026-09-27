@@ -170,7 +170,8 @@ def build_settings_from_cli(  # noqa: PLR0913
     json_config = load_json_config(config_path if config_path is not None else Path("config.json"))
 
     if database_uri:
-        database_config = DatabaseConfig.from_uri(database_uri)
+        # DatabaseSettings: поля, которых нет в URI и в CLI (table_prefix, таймауты, пул), — из env
+        database_config = DatabaseSettings.from_uri(database_uri)
         database_config = database_config.model_copy(update={"write_mode": write_mode, "access_mode": access_mode})
         server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
         if transport is not None:

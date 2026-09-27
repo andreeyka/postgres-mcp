@@ -120,16 +120,21 @@ class DatabaseConfig(BaseModel):
             sslmode = SslMode(raw_sslmode) if raw_sslmode else None
         except (ValueError, TypeError):
             sslmode = None
-        client_encoding = (qs.get("client_encoding", ["UTF8"])[0] or "UTF8") if qs else "UTF8"
+        # sslmode и client_encoding передаются, только если они есть в URI: иначе у DatabaseSettings
+        # явное значение по умолчанию перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
+        from_query: dict[str, Any] = {}
+        if sslmode is not None:
+            from_query["sslmode"] = sslmode
+        raw_encoding = qs.get("client_encoding", [None])[0] if qs else None
+        if raw_encoding:
+            from_query["client_encoding"] = raw_encoding
         return cls(
             host=parsed.hostname,
             port=parsed.port or 5432,
             user=unquote(parsed.username) if parsed.username else None,
             password=SecretStr(unquote(parsed.password)) if parsed.password else None,
             name=db_name,
-            sslmode=sslmode,
-            client_encoding=client_encoding,
-            **overrides,
+            **{**from_query, **overrides},
         )
 
     @property
