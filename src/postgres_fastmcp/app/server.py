@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Sequence
+from time import monotonic
 from urllib.parse import quote, quote_plus
 
 from fastmcp import FastMCP
@@ -28,6 +29,8 @@ logger = get_logger(__name__)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 HEALTH_TIMEOUT_SECONDS = 2.0
+# Сколько живёт результат пробы: поток анонимных GET /health не открывает по соединению на запрос
+HEALTH_CACHE_SECONDS = 1.0
 _HEALTH_UNAVAILABLE = "database unavailable"
 _HEALTH_REDACTED = "database connection failed (details redacted)"
 
@@ -100,10 +103,20 @@ def _add_health_route(mcp: FastMCP, provider: PostgresProvider, password: str | 
     Поэтому ответ 503 не содержит текста ошибки БД (в нём имя пользователя, базы и внутренний адрес
     сервера) — только ``database unavailable`` или сообщение о таймауте; подробности оператор видит
     в логе на WARNING с маской пароля. Ни настроек, ни тулов, ни токенов в ответе нет.
-    """
 
-    @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
-    async def health(_request: Request) -> JSONResponse:
+    Одновременные запросы ждут одну пробу (single-flight), результат живёт HEALTH_CACHE_SECONDS:
+    анонимный поток GET /health открывает к БД не больше одного соединения за раз и не чаще раза в секунду.
+    """
+    # Кэш и single-flight на сервер (в замыкании, не на модуль): (время, статус, тело) последней пробы
+    lock = asyncio.Lock()
+    last: tuple[float, int, dict[str, str]] | None = None
+
+    def fresh() -> tuple[int, dict[str, str]] | None:
+        if last is not None and monotonic() - last[0] < HEALTH_CACHE_SECONDS:
+            return last[1], last[2]
+        return None
+
+    async def probe() -> tuple[int, dict[str, str]]:
         try:
             async with asyncio.timeout(HEALTH_TIMEOUT_SECONDS):
                 await provider.ping()
@@ -113,9 +126,23 @@ def _add_health_route(mcp: FastMCP, provider: PostgresProvider, password: str | 
             error = _HEALTH_UNAVAILABLE
             detail = _redact_error(str(exc) or type(exc).__name__, password)
         else:
-            return JSONResponse({"status": "ok"})
+            return 200, {"status": "ok"}
         logger.warning("Health check failed: %s", detail)
-        return JSONResponse({"status": "degraded", "error": error}, status_code=503)
+        return 503, {"status": "degraded", "error": error}
+
+    @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
+    async def health(_request: Request) -> JSONResponse:
+        nonlocal last
+        result = fresh()
+        if result is None:
+            async with lock:
+                # Пока ждали замок, результат мог обновить другой запрос — берём его
+                result = fresh()
+                if result is None:
+                    result = await probe()
+                    last = (monotonic(), *result)
+        status, body = result
+        return JSONResponse(body, status_code=status)
 
 
 def create_server(  # noqa: PLR0913

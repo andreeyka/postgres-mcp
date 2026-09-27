@@ -225,6 +225,62 @@ async def test_health_logs_the_auth_error_for_the_operator(
     assert _SECRET not in _messages(caplog)
 
 
+async def test_concurrent_health_checks_share_one_ping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Single-flight: одновременные GET ждут одну пробу, а не открывают по соединению каждый."""
+    calls = 0
+
+    async def ping(_self: PostgresProvider) -> None:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(PostgresProvider, "ping", ping)
+    async with asgi_server(create_server(_settings())) as running, running.http_client() as http:
+        responses = await asyncio.gather(*(http.get(_HEALTH_URL) for _ in range(20)))
+    assert calls == 1
+    assert {(response.status_code, response.text) for response in responses} == {(200, '{"status":"ok"}')}
+
+
+async def test_health_result_is_cached_until_the_ttl_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Результат живёт HEALTH_CACHE_SECONDS по монотонным часам модуля; потом проба повторяется."""
+    calls = 0
+    now = 1000.0
+
+    async def ping(_self: PostgresProvider) -> None:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            msg = "gone"
+            raise RuntimeError(msg)
+
+    monkeypatch.setattr(PostgresProvider, "ping", ping)
+    monkeypatch.setattr(server_module, "monotonic", lambda: now)
+    async with asgi_server(create_server(_settings())) as running, running.http_client() as http:
+        first = await http.get(_HEALTH_URL)
+        now += server_module.HEALTH_CACHE_SECONDS / 2
+        cached = await http.get(_HEALTH_URL)
+        now += server_module.HEALTH_CACHE_SECONDS
+        refreshed = await http.get(_HEALTH_URL)
+    assert calls == 2
+    assert (first.status_code, cached.status_code, refreshed.status_code) == (200, 200, 503)
+    assert refreshed.json() == _UNAVAILABLE
+
+
+async def test_health_cache_is_per_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Кэш живёт в замыкании маршрута: второй сервер делает свою пробу."""
+    calls = 0
+
+    async def ping(_self: PostgresProvider) -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(PostgresProvider, "ping", ping)
+    monkeypatch.setattr(server_module, "monotonic", lambda: 1000.0)
+    await _get_health(_settings())
+    await _get_health(_settings())
+    assert calls == 2
+
+
 async def test_health_needs_no_token_while_mcp_does(monkeypatch: pytest.MonkeyPatch) -> None:
     async def ping(_self: PostgresProvider) -> None:
         return None
