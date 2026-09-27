@@ -101,41 +101,47 @@ class DatabaseConfig(BaseModel):
         ),
     )
 
+    @staticmethod
+    def uri_fields(uri: str) -> dict[str, Any]:
+        """Поля подключения из URI (postgresql:// или postgresql+asyncpg://).
+
+        Возвращает только то, что в URI есть: host, port (5432, если не указан), user, password,
+        name, а из query string — sslmode и client_encoding. Отсутствующее (например пароль) не
+        попадает в словарь, и его дополняют config.json или env. Остальные поля URI не задаёт.
+        """
+        parsed = urlparse(uri)
+        qs = parse_qs(parsed.query)
+        candidates: dict[str, Any] = {
+            "host": parsed.hostname,
+            "port": parsed.port or 5432,
+            "user": unquote(parsed.username) if parsed.username else None,
+            "password": SecretStr(unquote(parsed.password)) if parsed.password else None,
+            "name": (parsed.path or "").lstrip("/") or None,
+        }
+        fields = {key: value for key, value in candidates.items() if value is not None}
+        # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
+        # явное значение перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
+        raw_sslmode = qs.get("sslmode", [None])[0]
+        if raw_sslmode in {mode.value for mode in SslMode}:
+            fields["sslmode"] = SslMode(raw_sslmode)
+        client_encoding = qs.get("client_encoding", [None])[0]
+        if client_encoding:
+            fields["client_encoding"] = client_encoding
+        return fields
+
     @classmethod
     def from_uri(cls, uri: str, **overrides: Any) -> "DatabaseConfig":
         """Собирает конфиг из URI (postgresql:// или postgresql+asyncpg://).
 
         Args:
             uri: Строка подключения.
-            **overrides: Переопределения полей (write_mode, access_mode и т.д.); проверяются Pydantic при создании.
+            **overrides: Переопределения полей (write_mode, access_mode, host и т.д.); перекрывают поля URI
+                и проверяются Pydantic при создании.
 
         Returns:
             Экземпляр DatabaseConfig с заполненными host, port, user, password, name.
         """
-        parsed = urlparse(uri)
-        db_name = (parsed.path or "").lstrip("/") or None
-        qs = parse_qs(parsed.query)
-        raw_sslmode = qs.get("sslmode", [None])[0] if qs else None
-        try:
-            sslmode = SslMode(raw_sslmode) if raw_sslmode else None
-        except (ValueError, TypeError):
-            sslmode = None
-        # sslmode и client_encoding передаются, только если они есть в URI: иначе у DatabaseSettings
-        # явное значение по умолчанию перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
-        from_query: dict[str, Any] = {}
-        if sslmode is not None:
-            from_query["sslmode"] = sslmode
-        raw_encoding = qs.get("client_encoding", [None])[0] if qs else None
-        if raw_encoding:
-            from_query["client_encoding"] = raw_encoding
-        return cls(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            user=unquote(parsed.username) if parsed.username else None,
-            password=SecretStr(unquote(parsed.password)) if parsed.password else None,
-            name=db_name,
-            **{**from_query, **overrides},
-        )
+        return cls(**{**cls.uri_fields(uri), **overrides})
 
     @property
     def is_configured(self) -> bool:

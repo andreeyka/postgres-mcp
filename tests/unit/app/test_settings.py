@@ -140,7 +140,10 @@ def test_settings_database_dict_with_known_keys_still_loads(monkeypatch: pytest.
 
 
 def test_cli_database_uri_still_reads_database_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """--database-uri задаёт подключение, CLI — права; остальное (префикс, таймаут, sslmode) — из env."""
+    """--database-uri задаёт только подключение; остальное (префикс, таймаут, sslmode, права) — из env.
+
+    Незаданные --access-mode / --write-mode ничего не переопределяют: права берутся из env.
+    """
     monkeypatch.setenv("MCP_DATABASE_TABLE_PREFIX", "app_")
     monkeypatch.setenv("MCP_DATABASE_SAFE_SQL_TIMEOUT", "99")
     monkeypatch.setenv("MCP_DATABASE_SSLMODE", "require")
@@ -154,8 +157,8 @@ def test_cli_database_uri_still_reads_database_env(monkeypatch: pytest.MonkeyPat
     assert database.table_prefix == "app_"
     assert database.safe_sql_timeout == 99
     assert database.sslmode == "require"
-    assert database.access_mode == AccessMode.BASIC
-    assert database.write_mode is False
+    assert database.access_mode == AccessMode.FULL
+    assert database.write_mode is True
 
 
 def test_cli_database_uri_sslmode_beats_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

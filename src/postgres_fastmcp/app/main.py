@@ -25,11 +25,10 @@ def main(  # noqa: PLR0913
     *,
     database_uri: str | None = None,
     transport: Literal["http", "stdio"] | None = None,
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    workers: int = 1,
-    write_mode: bool = False,
-    access_mode: AccessMode = AccessMode.BASIC,
+    host: str | None = None,
+    port: int | None = None,
+    write_mode: bool | None = None,
+    access_mode: AccessMode | None = None,
 ) -> None:
     """Основная функция для запуска сервера.
 
@@ -39,19 +38,18 @@ def main(  # noqa: PLR0913
     Parameters
     ----------
     database_uri : str | None
-        Database connection URI (if specified, runs single server mode; database and server from CLI).
+        Database connection URI; overrides the connection fields of config.json and env.
     transport : Literal['http', 'stdio'] | None
-        Transport type: 'http' or 'stdio'. If not specified, uses environment variables.
-    host : str
-        Host to bind the server to.
-    port : int
-        Port to bind the server to.
-    workers : int
-        Number of workers to run.
-    write_mode : bool
-        Allow DML/DDL (read-write).
-    access_mode : AccessMode
-        Access mode: 'basic' (public schema, 4 tools) or 'full' (all schemas, 9 tools).
+        Transport type: 'http' or 'stdio'. Default: config.json, env, then 'http'.
+    host : str | None
+        Host to bind the HTTP server to. Default: config.json, env, then 127.0.0.1.
+    port : int | None
+        Port to bind the HTTP server to. Default: config.json, env, then 8000.
+    write_mode : bool | None
+        Allow DML/DDL (read-write); --no-write-mode forces read-only. Default: config.json, env, then read-only.
+    access_mode : AccessMode | None
+        Access mode: 'basic' (public schema, 4 tools) or 'full' (all schemas, 9 tools). Default: config.json, env,
+        then 'basic'.
     """
     configure_logging(level="INFO", omit_repeated_times=False)
 
@@ -60,7 +58,6 @@ def main(  # noqa: PLR0913
         transport=transport,
         host=host,
         port=port,
-        workers=workers,
         write_mode=write_mode,
         access_mode=access_mode,
     )

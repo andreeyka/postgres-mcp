@@ -56,7 +56,7 @@ uv run postgres-fastmcp \
   --access-mode basic
 ```
 
-Опции CLI только при использовании `--database-uri`: `--write-mode` (флаг), `--access-mode` (basic|full). Опции сервера: `--host`, `--port`, `--workers`, `--transport`.
+Все опции CLI необязательны и действуют независимо от `--database-uri`: `--transport` (http|stdio), `--host`, `--port`, `--access-mode` (basic|full), `--write-mode` / `--no-write-mode`. Незаданная опция ничего не переопределяет: значение берётся из `config.json`, затем из переменных окружения, затем по умолчанию.
 
 #### 2. Конфигурационный файл (`config.json`)
 
@@ -120,8 +120,8 @@ uv run postgres-fastmcp
 
 Порядок (от высшего к низшему):
 
-1. Параметры CLI (при указании `--database-uri` настройки БД берутся из CLI и переопределяют остальное)
-2. Файл `config.json` в текущей директории
+1. Явно заданные параметры CLI; `--database-uri` задаёт только подключение (хост, порт, пользователь, пароль, имя базы, а также `sslmode` и `client_encoding`, если они есть в URI)
+2. Файл `config.json` в текущей директории; CLI переопределяет в нём отдельные поля, а не секцию целиком
 3. Переменные окружения и `.env`
 4. Значения по умолчанию
 
@@ -191,7 +191,7 @@ uv run postgres-fastmcp \
 
 ### Справочник конфигурации
 
-- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--workers`, `--write-mode`, `--access-mode`. Вывод версии: `--version`. При указании `--database-uri` подключение к БД и access_mode/write_mode берутся из CLI (и переопределяют config/env на этот запуск).
+- **CLI:** `--database-uri`, `--transport`, `--host`, `--port`, `--access-mode`, `--write-mode` / `--no-write-mode`. Вывод версии: `--version`. Каждая заданная опция переопределяет `config.json` и переменные окружения на этот запуск.
 - **config.json:** Должен содержать `server`, `fastmcp` и `database` (см. Быстрый старт). Загружается из текущей директории.
 - **Переменные окружения / .env:** Префиксы `MCP_SERVER_*`, `MCP_DATABASE_*`, `MCP_FASTMCP_*` (см. [env.example](env.example)).
 

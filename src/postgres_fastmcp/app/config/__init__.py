@@ -134,49 +134,47 @@ def load_json_config(json_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _build_settings(json_config: dict[str, Any] | None, **overrides: Any) -> Settings:
-    """Собрать Settings из опционального json-конфига и overrides.
-
-    Порядок приоритета: overrides > json_config > env/.env > defaults.
-    Чтение файлов с диска здесь не выполняется — это ответственность CLI-слоя.
-    """
-    if overrides and json_config:
-        return Settings(**{**json_config, **dict(overrides)})
-    if overrides:
-        return Settings(**overrides)
-    if json_config:
-        return Settings(**json_config)
-    return Settings()
+def _merge_sections(json_config: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Наложить overrides CLI на секции json-конфига поле за полем, а не секцию целиком."""
+    merged = dict(json_config)
+    for section, values in overrides.items():
+        if not values:
+            continue
+        base = json_config.get(section)
+        merged[section] = {**base, **values} if isinstance(base, dict) else values
+    return merged
 
 
 def build_settings_from_cli(  # noqa: PLR0913
     *,
     database_uri: str | None = None,
     transport: str | None = None,
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    workers: int = 1,
-    write_mode: bool = False,
-    access_mode: AccessMode = AccessMode.BASIC,
+    host: str | None = None,
+    port: int | None = None,
+    write_mode: bool | None = None,
+    access_mode: AccessMode | None = None,
     config_path: Path | None = None,
 ) -> Settings:
     """Формирование Settings из аргументов CLI (единый источник текущих прав/конфигурации).
 
-    Инкапсулирует ветвление: database_uri из CLI разбирается в компоненты (host, port, user, password, name),
-    переопределение transport. JSON-конфиг подхватывается только при использовании как CLI:
-    по умолчанию — `./config.json` из CWD; для библиотечного использования стройте Settings напрямую
-    или передавайте явный путь.
+    Приоритет: явно заданный флаг > config.json > env/.env > значения по умолчанию. None означает
+    «флаг не задан» и ничего не переопределяет. Флаги накладываются на секции config.json поле
+    за полем; database_uri задаёт только поля подключения (host, port, user, password, name,
+    sslmode и client_encoding, если они есть в URI), они перекрывают те же поля config.json,
+    а остальная секция database из config.json сохраняется. JSON-конфиг подхватывается только при
+    использовании как CLI: по умолчанию — `./config.json` из CWD; для библиотечного использования
+    стройте Settings напрямую или передавайте явный путь.
     """
-    json_config = load_json_config(config_path if config_path is not None else Path("config.json"))
-
-    if database_uri:
-        # DatabaseSettings: поля, которых нет в URI и в CLI (table_prefix, таймауты, пул), — из env
-        database_config = DatabaseSettings.from_uri(database_uri)
-        database_config = database_config.model_copy(update={"write_mode": write_mode, "access_mode": access_mode})
-        server_overrides: dict[str, Any] = {"host": host, "port": port, "workers": workers}
-        if transport is not None:
-            server_overrides["transport"] = transport
-        return _build_settings(json_config, database=database_config, server=server_overrides)
-    if transport is not None:
-        return _build_settings(json_config, server={"transport": transport})
-    return _build_settings(json_config)
+    json_config = load_json_config(config_path if config_path is not None else Path("config.json")) or {}
+    server = {
+        key: value for key, value in {"transport": transport, "host": host, "port": port}.items() if value is not None
+    }
+    database: dict[str, Any] = DatabaseConfig.uri_fields(database_uri) if database_uri else {}
+    database.update(
+        {
+            key: value
+            for key, value in {"access_mode": access_mode, "write_mode": write_mode}.items()
+            if value is not None
+        }
+    )
+    return Settings(**_merge_sections(json_config, {"server": server, "database": database}))
