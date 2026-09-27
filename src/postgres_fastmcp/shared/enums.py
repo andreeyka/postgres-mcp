@@ -19,6 +19,15 @@ class AccessMode(StrEnum):
     FULL = "full"  # Все схемы, все инструменты (9), расширенные привилегии
 
 
+class AuthMode(StrEnum):
+    """Режим аутентификации HTTP-транспорта."""
+
+    NONE = "none"  # Без аутентификации
+    STATIC = "static"  # Фиксированные токены из конфига (StaticTokenVerifier)
+    JWT = "jwt"  # JWT от внешнего IdP (JWTVerifier)
+    OIDC = "oidc"  # OAuth-прокси к OIDC-провайдеру (OIDCProxy)
+
+
 class SslMode(StrEnum):
     """Режим SSL для подключения к PostgreSQL (libpq)."""
 

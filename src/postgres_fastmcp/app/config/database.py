@@ -29,6 +29,7 @@ class DatabaseConfig(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         env_prefix="MCP_DATABASE_",
+        hide_input_in_errors=True,
     )
 
     host: str | None = Field(default=None, description="Хост базы данных")

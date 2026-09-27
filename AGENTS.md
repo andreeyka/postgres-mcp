@@ -962,9 +962,9 @@ else:
 
 ## Layered Architecture
 
-- **App / composition root** (`app/`): config, server assembly (`app/server.py::create_server`), middleware, entry point (`app/main.py`)
+- **App / composition root** (`app/`): config (`app/config/`, including `AuthSettings` in `app/config/auth.py`), the auth provider factory (`app/auth.py::build_auth_provider`), server assembly and startup auth warnings (`app/server.py::create_server`), middleware, entry point (`app/main.py`)
 - **Provider** (`provider.py`): `PostgresProvider(LocalProvider)` — owns `DbAccessService` (pool closed in the provider `lifespan`), resolves the request's access and registers the tools
-- **Access** (`access.py`): `EffectiveAccess`, `AccessPolicy`, `AccessResolver`, `full_access_check`; depends only on `shared/` and `fastmcp.server.auth`
+- **Access** (`access.py`): `EffectiveAccess`, `AccessPolicy`, `AccessResolver`, `resolve_access` (claim rules), `full_access_check`; depends only on `shared/` and `fastmcp.server.auth`
 - **Presentation** (`tools/`): `ToolSet` with the tool methods (`tools/definitions.py`) and registration with descriptions/annotations (`tools/registry.py`)
 - **Domains** (`domains/`): one package or module per feature — `catalog`, `querying`, `explain`, `health`, `index_tuning`, `top_queries`, plus `db_access` (pool, executors per `EffectiveAccess`, `DbAccessPort`). Domain services take a `DbAccessPort`, never `DbAccessService`
   - `index_tuning` is the largest domain package and is split by responsibility:

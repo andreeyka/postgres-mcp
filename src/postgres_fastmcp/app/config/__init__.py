@@ -29,10 +29,17 @@
     "sslmode": "prefer",
     "table_prefix": null,
     "query_tag": null
+  },
+  "auth": {
+    "mode": "static",
+    "required_scopes": [],
+    "access_policy": {"enforced": true, "claim": "scope", "write_values": ["pg:write"], "full_values": ["pg:full"]},
+    "tokens": {"<token>": {"client_id": "alice", "scopes": ["pg:write"], "claims": {}}}
   }
 }
 
-transport: "http" | "stdio". access_mode: "basic" | "full".
+transport: "http" | "stdio". access_mode: "basic" | "full". auth.mode: "none" | "static" | "jwt" | "oidc"
+(поля режимов jwt/oidc — в app/config/auth.py).
 sslmode: "disable" | "allow" | "prefer" | "require" | "verify-ca" | "verify-full".
 Все поля опциональны; недостающие берутся из env/.env или значений по умолчанию.
 """
@@ -42,8 +49,9 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from postgres_fastmcp.app.config.auth import AuthSettings
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.app.config.fastmcp import FastMCPSettings
 from postgres_fastmcp.app.config.server import ServerSettings
@@ -58,14 +66,20 @@ class Settings(BaseSettings):
 
     Загружаются из: переменных окружения, .env, config.json, значений по умолчанию.
     Потребители используют вложенную конфигурацию через DI или прямой доступ:
-    settings.server, settings.fastmcp, settings.database.
+    settings.server, settings.fastmcp, settings.database, settings.auth.
 
-    Примеры переменных окружения: MCP_SERVER_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_DATABASE_PORT=5432, ...
+    Примеры переменных окружения: MCP_HOST=0.0.0.0, MCP_DATABASE_HOST=localhost, MCP_AUTH_MODE=static, ...
     """
+
+    # Прикрывает только собственные ошибки Settings; ошибка model_validator внутри вложенного
+    # блока (DatabaseConfig, ServerSettings, FastMCPSettings, AuthSettings) несёт input_value
+    # этого блока и печатает его целиком, если у блока нет своего hide_input_in_errors=True
+    model_config = SettingsConfigDict(hide_input_in_errors=True)
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
+    auth: AuthSettings = Field(default_factory=AuthSettings, description="HTTP authentication and access policy")
 
 
 def load_json_config(json_path: Path) -> dict[str, Any] | None:

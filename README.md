@@ -249,6 +249,183 @@ uv run postgres-fastmcp \
 }
 ```
 
+## Аутентификация
+
+Аутентификация защищает HTTP-транспорт: сервер принимает запрос, только если клиент прислал действующий токен. В `stdio` клиент сам запускает сервер как процесс, токенов там нет и аутентификация не применяется. Библиотечная функция `create_server(settings)` всегда строит провайдер из блока `auth`, независимо от `settings.server.transport` — это только конфигурационное значение, а не гарантия того, каким транспортом вызывающий код реально поднимет сервер. Пропускает сборку провайдера (и обращения к IdP, и файлы на диске для `oidc`) только сам CLI этого пакета, и только когда он в самом деле запускает `stdio`.
+
+Коротко о терминах:
+
+- **Токен** — строка, которую клиент отправляет в каждом запросе в заголовке `Authorization: Bearer <токен>`.
+- **Claim** — именованное поле внутри токена: `sub` (кто), `iss` (кто выдал), `groups` (группы пользователя) и т.д.
+- **Scope** — claim `scope`: список разрешений через пробел, например `pg:read pg:write`.
+- **Группы/роли** — claim со списком групп или ролей пользователя в IdP (`groups`, `realm_access.roles` в Keycloak).
+- **IdP** — сервис входа, который выдаёт токены: Keycloak, Auth0, Okta, корпоративный SSO.
+
+### Режимы
+
+Режим задаётся `auth.mode` в `config.json` или переменной `MCP_AUTH_MODE`:
+
+| Режим | Когда использовать | Что проверяет токен |
+| --- | --- | --- |
+| `none` (по умолчанию) | `stdio`, доверенный localhost | ничего, токен не нужен |
+| `static` | сервисные клиенты, тестовые стенды, небольшая команда | строка токена из списка в конфиге |
+| `jwt` | токены выдаёт внешний IdP (machine-to-machine, CI) | подпись, `iss`, `aud`, срок действия |
+| `oidc` | люди входят через корпоративный SSO прямо из MCP-клиента | вход в браузере через IdP, затем токен сервера |
+
+Все настройки лежат в блоке `auth` (`config.json`) или в переменных `MCP_AUTH_*`; вложенные поля в переменных разделяются `__` (`MCP_AUTH_ACCESS_POLICY__ENFORCED`). Поля чужого режима игнорируются. Некорректный блок `auth` останавливает запуск с `ValidationError`, в которой названо поле; строки токенов и секреты в текст ошибки не попадают.
+
+`required_scopes` (`MCP_AUTH_REQUIRED_SCOPES='["mcp"]'`) действует во всех режимах, кроме `none`: токен без любого из этих скоупов отклоняется целиком. Поля-списки и поля-словари в переменных окружения задаются JSON-строкой, как в этом примере; то же самое для `MCP_AUTH_TOKENS` (см. ниже) — и если JSON в `MCP_AUTH_TOKENS` некорректен, сервер не запустится ни в одном режиме, даже не в `static`.
+
+#### `static`
+
+```json
+"auth": {
+  "mode": "static",
+  "tokens": {
+    "<длинная случайная строка>": {"client_id": "ci-bot", "scopes": ["pg:write"]},
+    "<другая строка>": {"client_id": "alice", "claims": {"groups": ["dba"]}}
+  }
+}
+```
+
+- `client_id` — имя клиента в логах; `scopes` — его скоупы; `claims` — любые дополнительные поля токена (например `groups` для политики прав).
+- Строка токена — секрет: не храните её в git. Для Kubernetes положите словарь той же формы в secret и укажите файл: `MCP_AUTH_TOKENS_FILE=/run/secrets/mcp-tokens.json`. Токены из `tokens` и из `tokens_file` объединяются; при совпадении строки побеждает `tokens`.
+- Через окружение: `MCP_AUTH_TOKENS='{"<строка>": {"client_id": "ci-bot", "scopes": ["pg:write"]}}'`.
+- `MCP_AUTH_TOKENS` задаётся только JSON-строкой, как выше. Вложенная форма `MCP_AUTH_TOKENS__<строка_токена>__client_id=...` тоже работает, но приводит строку токена к нижнему регистру — для случайной строки со смешанным регистром сервер её не узнает.
+
+#### `jwt`
+
+| Поле | Обязательно | Назначение |
+| --- | --- | --- |
+| `jwt_jwks_uri` или `jwt_public_key` | ровно одно из двух | где взять ключ проверки подписи: URL набора ключей IdP (JWKS) или PEM публичного ключа |
+| `jwt_issuer` | да | ожидаемый `iss` токена |
+| `jwt_audience` | да | ожидаемый `aud`: строка или список |
+| `jwt_algorithm` | нет | алгоритм подписи, по умолчанию `RS256` |
+
+Чтобы положить в `jwt_public_key` общий HS-секрет (а не PEM), нужно явно задать `MCP_AUTH_JWT_ALGORITHM=HS256` — по умолчанию сервер проверяет подпись как RS256, и любой токен, подписанный HS-секретом, будет отклонён с `401`.
+
+```bash
+MCP_AUTH_MODE=jwt
+MCP_AUTH_JWT_JWKS_URI=https://sso.example.com/realms/main/protocol/openid-connect/certs
+MCP_AUTH_JWT_ISSUER=https://sso.example.com/realms/main
+MCP_AUTH_JWT_AUDIENCE=postgres-mcp
+```
+
+#### `oidc`
+
+| Поле | Обязательно | Назначение |
+| --- | --- | --- |
+| `oidc_config_url` | да | `https://<IdP>/.well-known/openid-configuration` |
+| `oidc_client_id`, `oidc_client_secret` | да | клиент, заведённый для этого сервера в IdP |
+| `base_url` | да | публичный адрес сервера, например `https://mcp.example.com` |
+| `oidc_audience` | нет | ожидаемый `aud` токена IdP |
+
+Как проходит вход:
+
+1. MCP-клиент подключается без токена и получает `401` со ссылкой на метаданные сервера.
+2. Клиент регистрируется на сервере и открывает браузер на `<base_url>/authorize`.
+3. Сервер показывает страницу подтверждения доступа и перенаправляет пользователя в IdP, пользователь входит.
+4. IdP возвращает пользователя на `<base_url>/auth/callback` — этот адрес нужно добавить в разрешённые redirect URI клиента в IdP.
+5. Сервер выдаёт MCP-клиенту свой токен и на каждом запросе проверяет токен IdP за ним.
+
+Сервер читает `oidc_config_url` при запуске: если IdP недоступен, сервер не стартует. Исключение — CLI этого пакета при реальном запуске с `--transport stdio` (или `MCP_TRANSPORT=stdio`): он знает, каким транспортом запускается, и в этом случае сознательно не строит провайдер и не обращается к IdP, поскольку в `stdio` аутентификация всё равно не действует. Библиотечный `create_server()` от этого не зависит и всегда пытается построить провайдер (см. начало раздела). Регистрации MCP-клиентов хранятся зашифрованными в каталоге данных FastMCP (`FASTMCP_HOME`, по умолчанию `~/.local/share/fastmcp`); в контейнере вынесите его в volume, иначе после перезапуска клиентам придётся войти заново. `FASTMCP_HOME` должен указывать на доступный для записи volume — с read-only корневой файловой системой контейнера `oidc` не заработает.
+
+### Подключение клиентов с токеном
+
+Cursor (`~/.cursor/mcp.json`):
+
+```json
+{
+    "mcpServers": {
+        "postgres": {
+            "url": "https://mcp.example.com/mcp",
+            "headers": {"Authorization": "Bearer <токен>"}
+        }
+    }
+}
+```
+
+Claude Code:
+
+```bash
+claude mcp add --transport http postgres https://mcp.example.com/mcp --header "Authorization: Bearer <токен>"
+```
+
+В режиме `oidc` заголовок не нужен: добавьте сервер без `--header`, клиент сам откроет браузер для входа (в Claude Code — команда `/mcp`).
+
+### Ответы при отказе
+
+| Ситуация | Ответ |
+| --- | --- |
+| Нет токена или токен неизвестен, подделан, просрочен | HTTP `401` с заголовком `WWW-Authenticate: Bearer` |
+| У токена нет скоупа из `required_scopes` | HTTP `401`: верификаторы FastMCP отклоняют такой токен целиком |
+| full-инструмент при эффективном режиме `basic` | инструмента нет в списке, вызов даёт `Unknown tool` |
+| Запись при эффективном режиме только чтения | ошибка `... allowed in read-only mode` |
+
+### Предупреждения на старте
+
+Сервер пишет WARNING, если:
+
+- транспорт HTTP, аутентификации нет, а `host` не `127.0.0.1`/`localhost`/`::1` — любой, кто достучится до порта, получит все права из `database`;
+- транспорт `stdio`, а аутентификация включена — в `stdio` она не действует;
+- `access_policy.enforced=true`, а аутентификации нет — без токена политика ничего не сужает.
+
+## Права по claim
+
+Серверный **потолок** прав задают `access_mode` и `write_mode` в `database`. Политика `auth.access_policy` сужает его для каждого запроса по значениям одного claim токена. Токен никогда не даёт больше потолка.
+
+| Поле | По умолчанию | Назначение |
+| --- | --- | --- |
+| `enforced` | `false` | включить сужение; при `false` каждый запрос получает потолок |
+| `claim` | `scope` | откуда брать значения: `scope`, имя claim (`groups`) или путь через точку (`realm_access.roles`) |
+| `write_values` | `["pg:write"]` | любое из этих значений разрешает запись (если её разрешает потолок) |
+| `full_values` | `["pg:full"]` | любое из этих значений даёт режим `full` (если потолок `full`) |
+
+Если путь через точку и в токене одновременно есть буквальный ключ верхнего уровня с тем же именем целиком (например ключ `"realm_access.roles"`, а не вложенный объект `realm_access: {roles: [...]}`), побеждает этот буквальный ключ — так claim'ы Auth0 с URL-именами (`https://example.com/roles`) не разбираются по точкам ошибочно.
+
+Правила:
+
+- Сравнение значений — точное и с учётом регистра: `pg:full` не совпадёт с `PG:FULL`. Строковый claim делится по пробелам (`"Domain Admins"` даёт два значения — `Domain` и `Admins`); из claim-списка берутся только строковые элементы, остальные игнорируются; нет claim — значений нет.
+- Без значения из `full_values` запрос работает в `basic`: только схема `public`, четыре инструмента; full-инструменты для этого токена скрыты.
+- Без значения из `write_values` запрос только читает.
+- Без токена (`stdio`, `auth.mode=none`) запрос получает потолок.
+
+Пример со скоупами (потолок `full` + `write_mode=true`):
+
+```bash
+MCP_AUTH_ACCESS_POLICY__ENFORCED=true
+```
+
+| Скоупы токена | Права запроса |
+| --- | --- |
+| нет | `basic`, только чтение |
+| `pg:write` | `basic`, запись в `public` (DML) |
+| `pg:full` | `full`, только чтение |
+| `pg:full pg:write` | `full`, запись и DDL |
+
+Пример с группами из IdP:
+
+```bash
+MCP_AUTH_MODE=jwt
+MCP_AUTH_JWT_JWKS_URI=https://sso.example.com/realms/main/protocol/openid-connect/certs
+MCP_AUTH_JWT_ISSUER=https://sso.example.com/realms/main
+MCP_AUTH_JWT_AUDIENCE=postgres-mcp
+MCP_AUTH_ACCESS_POLICY__ENFORCED=true
+MCP_AUTH_ACCESS_POLICY__CLAIM=groups
+MCP_AUTH_ACCESS_POLICY__WRITE_VALUES='["dba","backend-writers"]'
+MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
+```
+
+То же со статическими токенами:
+
+```json
+"auth": {
+  "mode": "static",
+  "access_policy": {"enforced": true, "claim": "groups", "full_values": ["dba"], "write_values": ["dba"]},
+  "tokens": {"s3cr3t-alice": {"client_id": "alice", "claims": {"groups": ["dba"]}}}
+}
+```
+
 ## Технические детали
 
 ### FastMCP
@@ -472,7 +649,7 @@ mcp.run(transport="http", host="0.0.0.0", port=8000)
 
 - Провайдер владеет пулом соединений: пул открывается при первом запросе и закрывается при остановке сервера.
 - Видимость инструментов задаёт `access_mode` из `DatabaseConfig`: в `basic` доступны четыре инструмента, в `full` — девять.
-- `access_resolver` — функция `AccessToken | None -> EffectiveAccess`, считающая права запроса по токену; результат никогда не превышает потолок из `DatabaseConfig`. Без резолвера права запроса равны потолку. Сужение прав по claim через `AccessPolicy(enforced=True)` пока не поддерживается: провайдер отклоняет такую политику при создании.
+- `access_policy=AccessPolicy(enforced=True, ...)` сужает права запроса по claim токена, как описано в разделе «Права по claim»; токен даёт `AuthProvider` вашего сервера. `access_resolver` — функция `AccessToken | None -> EffectiveAccess` вместо политики, если нужна своя логика; она приоритетнее `access_policy`. Результат обоих никогда не превышает потолок из `DatabaseConfig`. Без политики и резолвера права запроса равны потолку.
 - `create_server` подключает бюджет ответа автоматически. На своём сервере добавьте его сами первым middleware: `mcp.add_middleware(ResponseBudgetMiddleware(20000))`, импорт — `from postgres_fastmcp import ResponseBudgetMiddleware`.
 
 ### Готовый сервер: `create_server`
@@ -482,7 +659,7 @@ from postgres_fastmcp import Settings, create_server
 
 server = create_server(
     Settings(),
-    auth=None,  # любой AuthProvider из fastmcp.server.auth
+    auth=None,  # None: провайдер из settings.auth; или любой AuthProvider из fastmcp.server.auth
     access_resolver=None,  # свой резолвер прав для PostgresProvider
     extra_providers=[],  # свои источники tools/resources/prompts
     extra_middleware=[],  # добавляются после встроенных middleware
@@ -491,7 +668,7 @@ server.run(transport="http", host="0.0.0.0", port=8000)
 ```
 
 Замечания:
-- `auth=None` означает отсутствие аутентификации. Это безопасно для транспорта `stdio` или доверенного localhost. Для сетевого HTTP-развёртывания подключите `AuthProvider` из `fastmcp.server.auth` или собственный.
+- `auth=None` означает «взять из `settings.auth`» (раздел «Аутентификация»); при `mode=none` аутентификации нет, что безопасно только для `stdio` или доверенного localhost. Переданный `AuthProvider` из `fastmcp.server.auth` (или собственный) заменяет провайдер из настроек; политика прав `settings.auth.access_policy` действует и с ним.
 - Имена инструментов из `extra_providers` не должны совпадать со встроенными (`execute_sql`, `list_objects`, `get_object_details`, `explain_query`, `list_schemas`, `analyze_db_health`, `get_top_queries`, `analyze_query_indexes`, `analyze_workload_indexes`): при совпадении FastMCP пишет предупреждение и оставляет встроенный инструмент. Чтобы развести имена, подключите свой провайдер через `server.add_provider(provider, namespace="...")`.
 - В `access_mode=basic` скрываются только full-инструменты этого пакета; инструменты из `extra_providers` тегом `full` не фильтруются и остаются видимыми независимо от `access_mode`.
 - Middleware выполняются в порядке: бюджет ответа, timing, logging, затем `extra_middleware`. Бюджет стоит первым и проверяет в том числе результат ваших middleware.
