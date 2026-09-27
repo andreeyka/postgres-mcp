@@ -6,10 +6,14 @@ DatabaseConfig, ServerSettings и FastMCPSettings собираются чере�
 флаг на самой вложенной модели.
 """
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from postgres_fastmcp.app.config import Settings
+from postgres_fastmcp.app.config.database import DatabaseConfig, DatabaseSettings
+from postgres_fastmcp.shared.enums import AccessMode
 
 
 _SECRET_PASSWORD = "S3CRETPW"
@@ -54,3 +58,51 @@ def test_nested_blocks_still_read_their_own_prefix(monkeypatch: pytest.MonkeyPat
     assert settings.database.access_mode == "full"
     assert settings.database.table_prefix == "app_"
     assert settings.auth.access_policy.enforced is True
+
+
+_CONNECTION = {"host": "h", "user": "u", "password": "p", "name": "n"}
+
+
+def test_database_config_ignores_env_and_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Библиотечный DatabaseConfig берёт только переданное: ни env, ни .env не поднимают потолок прав."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MCP_DATABASE_WRITE_MODE=true\n", encoding="utf-8")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    config = DatabaseConfig(**_CONNECTION)
+    assert config.access_mode == AccessMode.BASIC
+    assert config.write_mode is False
+    assert DatabaseConfig.from_uri("postgresql://u:p@h/n").access_mode == AccessMode.BASIC
+
+
+def test_database_settings_reads_env_and_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MCP_DATABASE_WRITE_MODE=true\n", encoding="utf-8")
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    config = DatabaseSettings()
+    assert config.access_mode == AccessMode.FULL
+    assert config.write_mode is True
+    assert isinstance(config, DatabaseConfig)
+
+
+def test_database_config_rejects_unknown_fields() -> None:
+    """Опечатка или устаревшее поле (role) в коде библиотеки — ошибка, а не молчаливый пропуск."""
+    with pytest.raises(ValidationError, match="role"):
+        DatabaseConfig(**_CONNECTION, role="admin")
+
+
+def test_settings_keeps_a_passed_database_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    config = DatabaseConfig(**_CONNECTION)
+    settings = Settings(database=config)
+    assert settings.database is config
+    assert settings.database.access_mode == AccessMode.BASIC
+
+
+def test_settings_database_dict_error_hides_the_password() -> None:
+    """Неполный словарь database (config.json) даёт ошибку без пароля в тексте."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(database={"host": "h", "password": _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+    assert _SECRET_PASSWORD not in repr(exc_info.value)

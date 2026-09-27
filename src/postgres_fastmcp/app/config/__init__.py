@@ -48,11 +48,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from postgres_fastmcp.app.config.auth import AuthSettings
-from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.app.config.database import DatabaseConfig, DatabaseSettings
 from postgres_fastmcp.app.config.fastmcp import FastMCPSettings
 from postgres_fastmcp.app.config.server import ServerSettings
 from postgres_fastmcp.shared.enums import AccessMode
@@ -78,8 +78,16 @@ class Settings(BaseSettings):
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     fastmcp: FastMCPSettings = Field(default_factory=FastMCPSettings)
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig, description="Single database configuration")
+    database: DatabaseConfig = Field(default_factory=DatabaseSettings, description="Single database configuration")
     auth: AuthSettings = Field(default_factory=AuthSettings, description="HTTP authentication and access policy")
+
+    @field_validator("database", mode="before")
+    @classmethod
+    def _database_from_env(cls, value: object) -> object:
+        """Словарь (config.json, CLI) дополняется из env через DatabaseSettings; готовый DatabaseConfig — как есть."""
+        if isinstance(value, dict):
+            return DatabaseSettings(**value)
+        return value
 
     @classmethod
     def settings_customise_sources(

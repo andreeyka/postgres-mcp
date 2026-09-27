@@ -624,7 +624,7 @@ from postgres_fastmcp import (
 
 ### Свой сервер: `PostgresProvider`
 
-**⚠️ Важно:** `DatabaseConfig` — это pydantic `BaseSettings` (`env_prefix="MCP_DATABASE_"`, `env_file=".env"`). Любое поле, не переданное явно, — включая `access_mode`, `write_mode` и `table_prefix`, то есть серверный потолок прав, — молча читается из переменных окружения `MCP_DATABASE_*` и файла `.env` в текущей директории. Библиотечный хост с оставшимся от другого проекта `.env` может незаметно получить провайдер `full` с записью. В коде библиотеки всегда передавайте `access_mode` и `write_mode` явно, не полагаясь на окружение.
+`DatabaseConfig` берёт только то, что передано в конструктор: переменные `MCP_DATABASE_*` и файл `.env` он не читает, поэтому окружение хоста не может поднять потолок прав. Не переданные `access_mode` и `write_mode` означают `basic` без записи; неизвестное поле (например устаревшее `role`) — ошибка `ValidationError`. Если конфигурация базы должна приходить из окружения, как у CLI, возьмите `Settings().database` или `DatabaseSettings()` из `postgres_fastmcp.app.config.database`.
 
 ```python
 from fastmcp import FastMCP

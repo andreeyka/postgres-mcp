@@ -1,5 +1,6 @@
 """Тесты PostgresProvider: видимость тулов, права запроса, lifespan и namespace."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -122,6 +123,22 @@ async def test_tool_call_gets_access_from_resolver_and_token(fake_service: type[
     assert tokens
     assert set(tokens) == {None}
     assert fake_service.instances[0].views == [narrowed]
+
+
+async def test_ceiling_ignores_database_env(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """MCP_DATABASE_ACCESS_MODE=full и WRITE_MODE=true в env и .env не поднимают потолок DatabaseConfig."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MCP_DATABASE_WRITE_MODE=true\n", encoding="utf-8")
+    monkeypatch.setenv("MCP_DATABASE_ACCESS_MODE", "full")
+    monkeypatch.setenv("MCP_DATABASE_WRITE_MODE", "true")
+    connection = {"host": "h", "user": "u", "password": "p", "name": "d"}
+    server = FastMCP("t", providers=[PostgresProvider(DatabaseConfig(**connection))])
+    assert await _tool_names(server) == _BASIC_TOOLS
+    async with Client(server) as client:
+        await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
+    assert fake_service.instances[0].views == [EffectiveAccess(AccessMode.BASIC, write_mode=False)]
 
 
 async def test_default_resolver_uses_the_ceiling(fake_service: type[FakeService]) -> None:

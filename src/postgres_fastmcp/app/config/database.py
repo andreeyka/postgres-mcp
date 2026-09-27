@@ -1,9 +1,9 @@
-"""Модели конфигурации для базы данных (одна БД на сервер)."""
+"""Конфигурация базы данных: DatabaseConfig для кода библиотеки, DatabaseSettings для env/.env."""
 
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from postgres_fastmcp.shared.enums import AccessMode, SslMode
@@ -16,21 +16,15 @@ ERROR_DATABASE_URI_NOT_SET = (
 )
 
 
-class DatabaseConfig(BaseSettings):
-    """Конфигурация одной базы данных (одна БД на MCP-сервер).
+class DatabaseConfig(BaseModel):
+    """Конфигурация одной базы данных (одна БД на MCP-сервер) для кода библиотеки.
 
-    Загружается из env с префиксом MCP_DATABASE_ (без вложенного delimiter):
-    MCP_DATABASE_HOST, MCP_DATABASE_PORT, MCP_DATABASE_USER и т.д.
+    Берёт только переданные значения: env и .env не читаются, поэтому окружение хоста не может
+    молча поднять потолок прав (access_mode, write_mode). Неизвестное поле — ошибка.
     URI формируется из компонентов: host, port, user, password, name.
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        env_prefix="MCP_DATABASE_",
-        hide_input_in_errors=True,
-    )
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     host: str | None = Field(default=None, description="Хост базы данных")
     port: int = Field(default=5432, description="Порт базы данных")
@@ -180,3 +174,19 @@ class DatabaseConfig(BaseSettings):
         if self.user is None or self.password is None or self.host is None or self.port is None or self.name is None:
             raise ValueError(ERROR_DATABASE_URI_NOT_SET)
         return self
+
+
+class DatabaseSettings(DatabaseConfig, BaseSettings):
+    """DatabaseConfig с чтением env и .env: префикс MCP_DATABASE_ (без вложенного delimiter).
+
+    Блок ``database`` в Settings (CLI, config.json): недостающие в словаре поля берутся из
+    MCP_DATABASE_HOST, MCP_DATABASE_PORT, MCP_DATABASE_USER и т.д. Чужие ключи .env игнорируются.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        env_prefix="MCP_DATABASE_",
+        hide_input_in_errors=True,
+    )

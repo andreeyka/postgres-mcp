@@ -2,7 +2,7 @@
 
 Public API:
     PostgresProvider — источник тулов одной базы для своего FastMCP (``add_provider``, ``namespace``).
-    DatabaseConfig — подключение и серверный потолок прав (access_mode, write_mode).
+    DatabaseConfig — подключение и серверный потолок прав (access_mode, write_mode); env не читает.
     AccessPolicy, EffectiveAccess, AccessResolver, full_access_check — права одного запроса.
     ResponseBudgetMiddleware — бюджет ответа тула в токенах; ``create_server`` подключает его сам,
         на своём сервере добавьте его вручную первым middleware.
