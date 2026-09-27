@@ -215,3 +215,17 @@ def test_docker_config_loads() -> None:
     settings = build_settings_from_cli(config_path=path)
     assert (settings.server.host, settings.server.endpoint) == ("0.0.0.0", "/mcp")
     assert (settings.database.host, settings.database.table_prefix) == ("postgres", "app_")
+
+
+def test_no_write_mode_beats_config_json_write_mode(tmp_path: Path) -> None:
+    """--no-write-mode поверх config.json write_mode=true даёт только чтение."""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"database": {"write_mode": True, "access_mode": "full"}}), encoding="utf-8")
+    assert build_settings_from_cli(config_path=path).database.write_mode is True
+    assert build_settings_from_cli(write_mode=False, config_path=path).database.write_mode is False
+
+
+def test_no_write_mode_flag_beats_config_json_through_the_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"database": {"write_mode": True}}), encoding="utf-8")
+    settings, _ = _run_cli(["--no-write-mode"], monkeypatch, tmp_path)
+    assert settings.database.write_mode is False

@@ -241,6 +241,33 @@ async def test_concurrent_health_checks_share_one_ping(monkeypatch: pytest.Monke
     assert {(response.status_code, response.text) for response in responses} == {(200, '{"status":"ok"}')}
 
 
+async def test_cancelled_health_probe_does_not_block_the_waiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Отмена запроса-держателя замка не оставляет ожидающего без ответа: он делает свою пробу."""
+    calls = 0
+    holder_in_ping = asyncio.Event()
+
+    async def ping(_self: PostgresProvider) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            holder_in_ping.set()
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr(PostgresProvider, "ping", ping)
+    mcp = create_server(_settings())
+    [route] = [route for route in mcp._additional_http_routes if route.path == "/health"]
+    holder = asyncio.create_task(route.endpoint(None))
+    await holder_in_ping.wait()
+    waiter = asyncio.create_task(route.endpoint(None))
+    await asyncio.sleep(0)
+    holder.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holder
+    response = await asyncio.wait_for(waiter, timeout=5)
+    assert response.status_code == 200
+    assert calls == 2
+
+
 async def test_health_result_is_cached_until_the_ttl_expires(monkeypatch: pytest.MonkeyPatch) -> None:
     """Результат живёт HEALTH_CACHE_SECONDS по монотонным часам модуля; потом проба повторяется."""
     calls = 0
