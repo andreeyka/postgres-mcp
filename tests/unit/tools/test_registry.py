@@ -15,11 +15,11 @@ from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECON
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import (
+    _TOOL_TIMEOUT_MARGIN,
     DESTRUCTIVE,
     READ_ONLY_IDEMPOTENT,
     READ_ONLY_NON_IDEMPOTENT,
     WRITE_NON_DESTRUCTIVE,
-    _TOOL_TIMEOUT_MARGIN,
     register_tools,
 )
 
@@ -176,7 +176,7 @@ def test_full_write_mode_timeouts_also_follow_safe_sql_timeout() -> None:
 
 
 async def test_tool_timeout_is_not_part_of_the_tools_list_wire() -> None:
-    """timeout — параметр вызова FastMCP, а не поле протокольного Tool: формула таймаута
+    """Timeout — параметр вызова FastMCP, а не поле протокольного Tool: формула таймаута
     не может изменить то, что клиент видит в tools/list."""
     tool = await _provider(_database(AccessMode.BASIC, safe_sql_timeout=999)).get_tool("execute_sql")
     wire = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
@@ -198,7 +198,6 @@ async def test_row_tools_have_no_output_schema() -> None:
 
 async def test_execute_sql_output_over_mcp() -> None:
     """По MCP: 'table' — только Markdown, 'JSON' (любой регистр) — JSON-текст и structured_content."""
-
     db = MagicMock()
     db.write_mode = False
     db.sql_driver.execute = AsyncMock(return_value=[RowResult(cells={"n": 1})])

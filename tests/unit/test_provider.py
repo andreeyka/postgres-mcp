@@ -104,7 +104,7 @@ async def test_lifespan_closes_the_service_even_if_the_client_body_raises(
 ) -> None:
     """close() должен сработать и когда тело ``async with Client(...)`` падает исключением."""
     server = FastMCP("t", providers=[PostgresProvider(_database())])
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match="boom"):  # noqa: PT012 - исключение из тела async with
         async with Client(server) as client:
             await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})
             raise RuntimeError("boom")

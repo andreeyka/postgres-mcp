@@ -29,10 +29,10 @@ from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
 class _NoSqlstateResult:
     """Стаб PGresult без SQLSTATE — как при libpq FATAL_ERROR без кода ошибки."""
 
-    def error_field(self, fieldcode: int) -> bytes | None:  # noqa: ARG002
+    def error_field(self, fieldcode: int) -> bytes | None:
         return None
 
-    def get_error_message(self, encoding: str = "utf-8") -> str:  # noqa: ARG002
+    def get_error_message(self, encoding: str = "utf-8") -> str:
         return "server closed the connection unexpectedly"
 
 

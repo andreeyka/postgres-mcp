@@ -8,11 +8,10 @@ import pytest
 from psycopg.errors import QueryCanceled
 from psycopg.pq import DiagnosticField
 
-from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError, SchemaNotAllowedError
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.postgres.security.driver import SafeSqlConfig
-from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor, _is_statement_timeout
+from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor, _is_statement_timeout
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
+from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError, SchemaNotAllowedError
 
 
 def _query_canceled(message_primary: str) -> QueryCanceled:
@@ -127,11 +126,9 @@ class TestSafeSqlExecutorTimeout:
         assert exc_info.value.timeout_seconds == 0.01
 
     async def test_server_side_cancel_maps_to_query_timeout_error(self) -> None:
-        """psycopg QueryCanceled (statement_timeout fired in Postgres) becomes QueryTimeoutError."""
+        """Psycopg QueryCanceled (statement_timeout fired in Postgres) becomes QueryTimeoutError."""
         mock_delegate = MagicMock()
-        mock_delegate.execute = AsyncMock(
-            side_effect=_query_canceled("canceling statement due to statement timeout")
-        )
+        mock_delegate.execute = AsyncMock(side_effect=_query_canceled("canceling statement due to statement timeout"))
         config = SafeSqlConfig(query_tag="t", timeout=30)
         executor = _make_executor(mock_delegate, config=config)
         with pytest.raises(QueryTimeoutError) as exc_info:
@@ -195,8 +192,17 @@ class TestSafeSqlExecutorTimeout:
         (None, 0.5, 30.0, False),
         ("canceling statement due to user request", 100.0, None, False),
     ],
-    ids=["english-message", "localized-at-timeout", "no-diag-after-timeout", "user-request", "no-diag-quick", "no-timeout"],
+    ids=[
+        "english-message",
+        "localized-at-timeout",
+        "no-diag-after-timeout",
+        "user-request",
+        "no-diag-quick",
+        "no-timeout",
+    ],
 )
-def test_is_statement_timeout(message_primary: str | None, elapsed: float, timeout: float | None, expected: bool) -> None:  # noqa: FBT001
+def test_is_statement_timeout(
+    message_primary: str | None, elapsed: float, timeout: float | None, expected: bool
+) -> None:
     """Pure classification: English marker OR elapsed time reached the configured timeout."""
     assert _is_statement_timeout(message_primary, elapsed=elapsed, timeout=timeout) is expected

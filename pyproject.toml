@@ -81,7 +81,7 @@ check_untyped_defs = false
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-exclude = [".venv*", "tests"]
+exclude = [".venv*"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -162,6 +162,12 @@ ignore = [
     "S105",  # Possible hardcoded password - acceptable in tests
     "ARG005",  # Unused lambda argument - acceptable for test callbacks
     "ARG001",  # Unused function argument - acceptable for mocks and fixtures
+    "ARG002",  # Unused method argument - fakes mirror the real signatures
+    "S104",  # Binding to all interfaces - "0.0.0.0" is test data, nothing binds
+    "S106",  # Hardcoded password argument - test credentials and tokens
+    "FBT001",  # Boolean positional argument - pytest parametrization
+    "RUF012",  # Mutable class attribute - fakes record calls in class-level lists
+    "PLR0913",  # Too many arguments - pytest fixtures and parameters
 ]
 # Facade layers touch driver internals (SLF001); index_tuning raises in place (RSE102)
 "src/postgres_fastmcp/domains/catalog/*.py" = ["SLF001"]

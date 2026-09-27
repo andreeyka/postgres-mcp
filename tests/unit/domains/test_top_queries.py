@@ -45,7 +45,7 @@ class _Divisions(Visitor):
     def __init__(self) -> None:
         self.denominators: list[ast.Node] = []
 
-    def visit_A_Expr(self, parent: object, node: ast.A_Expr) -> None:  # noqa: ARG002
+    def visit_A_Expr(self, parent: object, node: ast.A_Expr) -> None:  # noqa: N802 - имя из API pglast Visitor
         if node.name and node.name[0].sval == "/":
             self.denominators.append(node.rexpr)
 

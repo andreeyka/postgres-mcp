@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from postgres_fastmcp.shared.errors import SchemaAccessError, UnsupportedObjectTypeError
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.shared.enums import AccessMode
+from postgres_fastmcp.shared.errors import SchemaAccessError, UnsupportedObjectTypeError
 
 
 class TestCatalogServiceListObjects:

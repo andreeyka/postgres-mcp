@@ -46,7 +46,7 @@ def test_static_tokens_inline() -> None:
 
 
 def test_static_without_tokens_is_rejected() -> None:
-    with pytest.raises(ValidationError, match="auth.mode=static requires tokens or tokens_file"):
+    with pytest.raises(ValidationError, match=r"auth\.mode=static requires tokens or tokens_file"):
         AuthSettings(mode="static")
 
 
@@ -199,7 +199,7 @@ def test_settings_from_config_json_section() -> None:
 
 def test_settings_error_hides_secrets_of_the_auth_block() -> None:
     """Ошибка вложенного блока не печатает его ввод: client_secret и токены остаются скрыты."""
-    with pytest.raises(ValidationError, match="auth.mode=oidc requires base_url") as exc_info:
+    with pytest.raises(ValidationError, match=r"auth\.mode=oidc requires base_url") as exc_info:
         Settings(auth={**{k: v for k, v in _OIDC.items() if k != "base_url"}, "mode": "oidc"})
     assert "oidc-client-secret" not in str(exc_info.value)
 
@@ -254,5 +254,5 @@ def test_blank_token_key_is_rejected() -> None:
 def test_blank_token_key_in_tokens_file_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "tokens.json"
     path.write_text(json.dumps({"": {"client_id": "alice"}}), encoding="utf-8")
-    with pytest.raises(ValidationError, match="tokens_file .* must not contain a blank token string"):
+    with pytest.raises(ValidationError, match=r"tokens_file .* must not contain a blank token string"):
         AuthSettings(mode="static", tokens_file=path)

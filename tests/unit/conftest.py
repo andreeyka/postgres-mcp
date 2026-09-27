@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.shared.enums import AccessMode
 
 
 @pytest.fixture
