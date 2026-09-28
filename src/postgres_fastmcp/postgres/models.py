@@ -65,7 +65,8 @@ class IndexDefinition:
             cleaned_columns.append(cleaned)
         column_part = "_".join(cleaned_columns)
         suffix = "" if self.using == "btree" else f"_{self.using}"
-        base = f"dba_idx_{self.table}_{column_part}_{len(self.columns)}"
+        # Имя индекса не может быть квалифицировано схемой: точку из "schema.table" заменяем.
+        base = f"dba_idx_{self.table.replace('.', '_')}_{column_part}_{len(self.columns)}"
         return f"{base}{suffix}"
 
     def __str__(self) -> str:

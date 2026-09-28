@@ -38,6 +38,8 @@ def test_execute_sql_description_covers_every_mode() -> None:
     assert "INSERT, UPDATE and DELETE on the public schema" in desc
     assert "DDL is rejected except CREATE EXTENSION hypopg / pg_stat_statements" in desc
     assert "full write access any statement runs" in desc
+    assert "system catalogs (pg_*), server-introspection functions, SHOW of arbitrary" in desc
+    assert "object identifier types (reg*, aclitem) and types from other schemas are rejected" in desc
     assert "explicit error" in desc
 
 

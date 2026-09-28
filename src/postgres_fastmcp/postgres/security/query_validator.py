@@ -7,20 +7,37 @@ import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
+    CollateClause,
     CreateExtensionStmt,
     DefElem,
     ExplainStmt,
     FuncCall,
+    IndexElem,
+    IndexStmt,
     Node,
+    RangeTableSample,
     RangeVar,
     RawStmt,
     SelectStmt,
+    SortBy,
+    String,
+    SubLink,
+    TypeName,
+    VariableShowStmt,
 )
 from pglast.enums import A_Expr_Kind
 from pglast.visitors import Ancestor, Visitor
 
-from postgres_fastmcp.postgres.security.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
-from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
+from postgres_fastmcp.postgres.security.policies import (
+    ALLOWED_EXTENSIONS,
+    ALLOWED_FUNCTIONS,
+    ALLOWED_NODE_TYPES,
+    BASIC_ALLOWED_FUNCTIONS,
+    BASIC_PG_SCALAR_TYPES,
+    BASIC_SHOW_PARAMETERS,
+    NAME_LOOKUP_TYPES,
+)
+from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name, validate_schema_access
 from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_NODE_TYPES, WRITE_STMT_TYPES
 from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
@@ -30,14 +47,50 @@ from postgres_fastmcp.shared.errors import (
     FunctionNotAllowedError,
     LikePatternNotConstantError,
     LockingClauseProhibitedError,
+    SchemaNotAllowedError,
+    ShowParameterNotAllowedError,
     SqlParseError,
     StatementTypeNotAllowedError,
+    SystemRelationAccessError,
+    TypeNotAllowedError,
 )
 
 
 logger = logging.getLogger(__name__)
 
 PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
+
+
+def _name_parts(names: tuple[Node, ...] | None) -> list[str]:
+    """Части составного имени (тип, collation) как строки: ('pg_catalog', 'int4')."""
+    return [str(getattr(part, "sval", "") or "") for part in names or ()]
+
+
+def _is_plain_index_elem(elem: object) -> bool:
+    """Элемент индекса — простой столбец: только имя, без выражения, collation и opclass."""
+    return (
+        isinstance(elem, IndexElem)
+        and elem.name is not None
+        and elem.expr is None
+        and not elem.collation
+        and not elem.opclass
+        and not elem.opclassopts
+    )
+
+
+def _is_plain_index(index: IndexStmt) -> bool:
+    """Индекс состоит только из простых столбцов, без выражений, WHERE, opclass и табличного пространства.
+
+    hypopg сам прогоняет CREATE INDEX через transformIndexStmt: входные функции литеральных
+    приведений в выражениях и WHERE вычисляются, а имена типов, функций, классов операторов
+    и табличных пространств резолвятся против каталога — это раскрывает существование чужих
+    объектов даже когда сама таблица индекса разрешена. USING <метод> и сортировка
+    (ASC/DESC, NULLS FIRST/LAST) на резолв объектов не влияют и остаются разрешены.
+    """
+    if index.whereClause is not None or index.tableSpace is not None or index.options or index.excludeOpNames:
+        return False
+    elems = (*(index.indexParams or ()), *(index.indexIncludingParams or ()))
+    return all(_is_plain_index_elem(elem) for elem in elems)
 
 
 class _NodeValidationVisitor(Visitor):
@@ -56,6 +109,7 @@ class _NodeValidationVisitor(Visitor):
         allowed_schema: str | None,
         table_prefix: str | None,
         allow_explain_analyze: bool,
+        allowed_functions: frozenset[str],
     ) -> None:
         """Инициализация визитора с политиками валидации.
 
@@ -64,18 +118,22 @@ class _NodeValidationVisitor(Visitor):
             allowed_schema: Если задана, разрешена только эта схема.
             table_prefix: Если задан вместе со схемой, имена таблиц должны начинаться с него.
             allow_explain_analyze: Разрешён ли EXPLAIN (ANALYZE).
+            allowed_functions: Разрешённые имена функций (для basic — без интроспекции).
         """
         super().__init__()
         self._allowed_node_types = allowed_node_types
         self._allowed_schema = allowed_schema
         self._table_prefix = table_prefix
         self._allow_explain_analyze = allow_explain_analyze
+        self._allowed_functions = allowed_functions
+        self._basic = allowed_schema is not None
 
     def visit(self, _ancestors: Ancestor, node: Node) -> None:
         """Валидация одного узла AST; при нарушении политики вызывает исключение.
 
         Raises:
             DisallowedNodeTypeError: Тип узла AST не разрешён.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -84,6 +142,9 @@ class _NodeValidationVisitor(Visitor):
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
+            ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
+            TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName
+                (каст, колонка табличной функции, аргумент PREPARE) в basic.
         """
         if not isinstance(node, self._allowed_node_types):
             raise DisallowedNodeTypeError(type(node))
@@ -115,8 +176,33 @@ class _NodeValidationVisitor(Visitor):
             func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
             match = PG_CATALOG_PATTERN.match(func_name)
             unqualified = match.group(1) if match else func_name
-            if unqualified not in ALLOWED_FUNCTIONS:
+            if unqualified not in self._allowed_functions:
                 raise FunctionNotAllowedError(func_name)
+            if self._basic and unqualified == "hypopg_create_index":
+                self._validate_hypopg_create_index(node)
+
+        if self._basic and isinstance(node, VariableShowStmt):
+            name = node.name or ""
+            if name.lower() not in BASIC_SHOW_PARAMETERS:
+                raise ShowParameterNotAllowedError(name, sorted(BASIC_SHOW_PARAMETERS))
+
+        if self._basic and isinstance(node, TypeName):
+            self._validate_type_name(node)
+
+        if self._basic and isinstance(node, CollateClause):
+            self._validate_name_qualifier(_name_parts(node.collname))
+
+        # Операторы и методы TABLESAMPLE резолвятся по имени, как типы: OPERATOR(secret.+),
+        # a OPERATOR(secret.=) ANY (SELECT ...), ORDER BY ... USING OPERATOR(secret.<), TABLESAMPLE secret.m(1).
+        # У SubLink для IN и EXISTS operName пуст.
+        if self._basic and isinstance(node, A_Expr):
+            self._validate_name_qualifier(_name_parts(node.name))
+        if self._basic and isinstance(node, SubLink):
+            self._validate_name_qualifier(_name_parts(node.operName))
+        if self._basic and isinstance(node, SortBy):
+            self._validate_name_qualifier(_name_parts(node.useOp))
+        if self._basic and isinstance(node, RangeTableSample):
+            self._validate_name_qualifier(_name_parts(node.method))
 
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
@@ -128,6 +214,84 @@ class _NodeValidationVisitor(Visitor):
 
         if isinstance(node, CreateExtensionStmt):
             self._validate_create_extension(node)
+
+    def _validate_type_name(self, node: TypeName) -> None:
+        """R4 в basic: имя типа не резолвит объекты по имени и не выводит за allowed_schema.
+
+        Функция ввода reg*-типов и aclitem ищет объекты по имени из строки; строковый тип системного
+        отношения (NULL::pg_authid) — то же отношение, что закрывает R1; тип или домен чужой схемы
+        (NULL::secret.accounts, enum_range(NULL::secret.status)) раскрывает её объекты. Массив
+        (_regclass, pg_catalog._aclitem, secret.t[]) проверяется по имени элемента.
+
+        Raises:
+            TypeNotAllowedError: Тип reg* или aclitem (в том числе массив).
+            SystemRelationAccessError: Имя pg_*/_pg_* вне скалярных BASIC_PG_SCALAR_TYPES.
+            SchemaNotAllowedError: Схема типа — не allowed_schema и не pg_catalog.
+        """
+        names = _name_parts(node.names)
+        if not names:
+            return
+        type_name = names[-1].lower()
+        element = type_name.removeprefix("_")
+        if element in NAME_LOOKUP_TYPES:
+            raise TypeNotAllowedError(type_name)
+        if is_system_relation_name(element) and element not in BASIC_PG_SCALAR_TYPES:
+            raise SystemRelationAccessError(type_name)
+        self._validate_name_qualifier(names)
+
+    def _validate_name_qualifier(self, names: list[str]) -> None:
+        """Схема составного имени (тип, collation, оператор, метод TABLESAMPLE) — allowed_schema или pg_catalog.
+
+        Неквалифицированное имя не проверяется: без каталога встроенный тип (int4) не отличить
+        от строкового типа таблицы без префикса (спека basic-confinement §6). Сравнение точное:
+        pglast уже свернул имена без кавычек, а "PUBLIC" в кавычках — другая схема.
+
+        Raises:
+            SchemaNotAllowedError: Явная схема — не allowed_schema и не pg_catalog.
+        """
+        allowed_schema = self._allowed_schema
+        qualifiers = names[:-1]
+        if allowed_schema is None or not qualifiers:
+            return
+        schema = qualifiers[-1]
+        if schema not in (allowed_schema, "pg_catalog"):
+            raise SchemaNotAllowedError(schema, allowed_schema)
+
+    def _validate_hypopg_create_index(self, node: FuncCall) -> None:
+        """В basic аргумент hypopg_create_index — CREATE INDEX по разрешённой таблице из простых столбцов.
+
+        Строку hypopg разбирает сам, валидатор её иначе не видит: без проверки relation агент узнавал бы,
+        существуют ли таблицы и колонки чужих схем, и получал бы оценку их размера; без проверки
+        `_is_plain_index` — то же самое через выражения, WHERE, opclass и TABLESPACE, даже когда сама
+        таблица индекса разрешена.
+
+        Raises:
+            FunctionNotAllowedError: Аргумент не строковая константа, не ровно один CREATE INDEX,
+                или индекс не сводится к простым столбцам.
+            SystemRelationAccessError: Индекс на системном отношении.
+            SchemaNotAllowedError: Индекс на таблице любой схемы, кроме allowed_schema (в том числе
+                information_schema, которую validate_schema_access пропускает для чтения).
+            TablePrefixAccessError: Имя таблицы не соответствует префиксу.
+        """
+        func_name = "hypopg_create_index"
+        args = node.args or ()
+        value = args[0].val if len(args) == 1 and isinstance(args[0], A_Const) else None
+        if not isinstance(value, String) or value.sval is None:
+            raise FunctionNotAllowedError(func_name)
+        try:
+            statements = pglast.parse_sql(value.sval)
+        except pglast.parser.ParseError as e:
+            raise FunctionNotAllowedError(func_name) from e
+        index = statements[0].stmt if len(statements) == 1 else None
+        if not isinstance(index, IndexStmt) or index.relation is None:
+            raise FunctionNotAllowedError(func_name)
+        validate_schema_access(index.relation, allowed_schema=self._allowed_schema, table_prefix=self._table_prefix)
+        schema = index.relation.schemaname
+        allowed_schema = self._allowed_schema
+        if schema is not None and allowed_schema is not None and schema != allowed_schema:
+            raise SchemaNotAllowedError(schema, allowed_schema)
+        if not _is_plain_index(index):
+            raise FunctionNotAllowedError(func_name)
 
     def _validate_create_extension(self, node: CreateExtensionStmt) -> None:
         """Разрешить только расширения из allowlist, без CASCADE и без SCHEMA при ограничении схемы.
@@ -185,6 +349,7 @@ class QueryValidator:
             StatementTypeNotAllowedError: Тип оператора не разрешён.
             DdlNotAllowedError: DDL-операция не разрешена.
             DisallowedNodeTypeError: Тип узла AST не разрешён.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -193,6 +358,9 @@ class QueryValidator:
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
+            ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
+            TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName
+                (каст, колонка табличной функции, аргумент PREPARE) в basic.
         """
         try:
             parsed = pglast.parse_sql(query)
@@ -210,6 +378,7 @@ class QueryValidator:
             allowed_schema=self.allowed_schema,
             table_prefix=self.table_prefix,
             allow_explain_analyze=self.allow_explain_analyze,
+            allowed_functions=BASIC_ALLOWED_FUNCTIONS if self.allowed_schema is not None else ALLOWED_FUNCTIONS,
         )
 
         for stmt in parsed:
