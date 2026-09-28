@@ -5,18 +5,20 @@ from typing import Any, LiteralString, NoReturn
 
 from psycopg import (
     AsyncConnection,
+    AsyncCursor,
     DatabaseError,
     Error as PsycopgError,
     InterfaceError,
     OperationalError,
 )
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 from psycopg.sql import SQL, Composable, Literal
 from psycopg_pool import PoolClosed, PoolTimeout, TooManyRequests
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
-from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
+from postgres_fastmcp.postgres.ports import Precheck, StatementRunner
+from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError, UserFacingError
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,12 @@ def _is_connection_error(error: Exception) -> bool:
     FATAL_ERROR (например, "server closed the connection unexpectedly") без кода SQLSTATE.
     QueryCanceled остаётся исключением: у него всегда есть SQLSTATE (57014), поэтому сюда
     он не попадает.
+
+    Отказ проверки (UserFacingError из precheck: PlanAccessError, PlanUnverifiableError) — не ошибка
+    соединения: пул исправен.
     """
+    if isinstance(error, UserFacingError):
+        return False
     if not isinstance(error, PsycopgError):
         return True
     if isinstance(error, (InterfaceError, PoolTimeout, PoolClosed, TooManyRequests)):
@@ -57,6 +64,20 @@ def _is_connection_error(error: Exception) -> bool:
     if sqlstate is None:
         return isinstance(error, OperationalError) or type(error) is DatabaseError
     return sqlstate.startswith("08") or sqlstate in _CONNECTION_SQLSTATES
+
+
+def _cursor_runner(cursor: AsyncCursor[DictRow]) -> StatementRunner:
+    """StatementRunner поверх курсора транзакции: строка выполняется там же, где затем выполнится оператор."""
+
+    async def run(sql: str) -> list[RowResult] | None:
+        await cursor.execute(sql)
+        while cursor.nextset():
+            pass
+        if cursor.description is None:
+            return None
+        return [RowResult(cells=dict(row)) for row in await cursor.fetchall()]
+
+    return run
 
 
 class SqlExecutor:
@@ -104,6 +125,7 @@ class SqlExecutor:
         params: list[Any] | None = None,
         *,
         readonly: bool = True,
+        precheck: Precheck | None = None,
     ) -> list[RowResult] | None:
         """Выполнение запроса и возвращение строк, или None для операторов без результата.
 
@@ -111,11 +133,13 @@ class SqlExecutor:
             query: SQL для выполнения (используйте {} для плейсхолдеров если заданы параметры).
             params: Необязательные параметры; если заданы, запрос рендерится и then выполняется.
             readonly: Если True, использовать транзакцию только для чтения; иначе чтение-запись.
+            precheck: Предварительные запросы в той же транзакции до оператора (проверка по плану);
+                исключение отменяет оператор.
 
         Returns:
             Список RowResult или None для DDL/командных операторов.
         """
-        return (await self.execute_statement(query, params, readonly=readonly)).rows
+        return (await self.execute_statement(query, params, readonly=readonly, precheck=precheck)).rows
 
     async def execute_statement(
         self,
@@ -123,6 +147,7 @@ class SqlExecutor:
         params: list[Any] | None = None,
         *,
         readonly: bool = True,
+        precheck: Precheck | None = None,
     ) -> StatementResult:
         """Выполнение запроса: строки и тег команды Postgres ("UPDATE 3", "CREATE TABLE").
 
@@ -130,6 +155,8 @@ class SqlExecutor:
             query: SQL для выполнения (используйте {} для плейсхолдеров если заданы параметры).
             params: Необязательные параметры; если заданы, запрос рендерится перед выполнением.
             readonly: Если True, использовать транзакцию только для чтения; иначе чтение-запись.
+            precheck: Предварительные запросы в той же транзакции до оператора (проверка по плану);
+                исключение отменяет оператор.
 
         Returns:
             StatementResult последнего оператора строки запроса.
@@ -149,11 +176,15 @@ class SqlExecutor:
                 pool = await self.conn.pool_connect()
                 async with pool.connection() as connection:
                     await connection.set_autocommit(True)
-                    return await self._execute_with_connection(connection, query, params, readonly=readonly)
+                    return await self._execute_with_connection(
+                        connection, query, params, readonly=readonly, precheck=precheck
+                    )
             if isinstance(self.conn, AsyncConnection):
                 if hasattr(self.conn, "set_autocommit"):
                     await self.conn.set_autocommit(True)
-                return await self._execute_with_connection(self.conn, query, params, readonly=readonly)
+                return await self._execute_with_connection(
+                    self.conn, query, params, readonly=readonly, precheck=precheck
+                )
             _fail()
         except Exception as e:
             if _is_connection_error(e):
@@ -189,6 +220,7 @@ class SqlExecutor:
         params: list[Any] | None,
         *,
         readonly: bool,
+        precheck: Precheck | None = None,
     ) -> StatementResult:
         """Выполнение запроса на данном подключении с явной транзакцией.
 
@@ -201,6 +233,10 @@ class SqlExecutor:
 
         Транзакция открывается одной командой BEGIN[...]; SET LOCAL standard_conforming_strings = on:
         запрос пользователя выполняется отдельным execute() после неё, уже под on.
+
+        precheck выполняется после BEGIN на том же курсоре: его запросы и оператор — одна транзакция
+        одного соединения; исключение precheck уходит в общий ROLLBACK, оператор не выполняется.
+        Пометка hypopg смотрит только на оператор: EXPLAIN функций не вызывает.
         """
         self._mark_hypopg_connection(connection, query)
         async with connection.cursor(row_factory=dict_row) as cursor:
@@ -209,6 +245,8 @@ class SqlExecutor:
             else:
                 await cursor.execute(_BEGIN_READ_WRITE)
             try:
+                if precheck is not None:
+                    await precheck(_cursor_runner(cursor))
                 if params:
                     await cursor.execute(query, params)
                 else:
