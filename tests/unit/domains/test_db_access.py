@@ -149,3 +149,10 @@ def test_basic_agent_driver_keeps_prefix_next_to_catalog_driver() -> None:
         assert isinstance(driver, SafeSqlExecutor)
         assert driver._validator.allowed_schema == "public"
         assert driver._validator.table_prefix == "app_"
+
+
+def test_service_exposes_the_catalog_driver_of_its_views() -> None:
+    """Проверка роли при старте идёт через тот же канал сервера, что и каталог в view()."""
+    service = _service(access_mode=AccessMode.BASIC)
+    assert service.catalog_driver is service.view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).catalog_driver
+    assert isinstance(service.catalog_driver, CatalogSqlExecutor)

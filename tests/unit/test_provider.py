@@ -46,6 +46,8 @@ class FakeService:
         self.sql_driver.execute_statement = AsyncMock(
             return_value=StatementResult(rows=[RowResult(cells={"n": 1})], status="SELECT 1", affected_rows=1)
         )
+        self.catalog_driver = MagicMock()
+        self.catalog_driver.execute = AsyncMock(return_value=[])
         FakeService.instances.append(self)
 
     def view(self, access: EffectiveAccess) -> DbAccess:
@@ -268,3 +270,72 @@ async def test_check_connection_closes_the_connection_on_timeout(monkeypatch: py
     assert time.monotonic() - started < 1
     assert fake.closed == 1
     assert kwargs == {"autocommit": True, "connect_timeout": connection.CHECK_CONNECT_TIMEOUT_SECONDS}
+
+
+@pytest.mark.parametrize(
+    ("ceiling", "options", "reachable"),
+    [
+        (AccessMode.BASIC, {}, True),
+        (AccessMode.FULL, {}, False),
+        (AccessMode.FULL, {"access_policy": AccessPolicy()}, False),
+        (AccessMode.FULL, {"access_policy": AccessPolicy(enforced=True)}, True),
+        (AccessMode.FULL, {"access_resolver": lambda _token: EffectiveAccess(AccessMode.FULL, write_mode=False)}, True),
+    ],
+)
+async def test_basic_role_check_runs_only_when_basic_is_reachable(
+    fake_service: type[FakeService],
+    monkeypatch: pytest.MonkeyPatch,
+    ceiling: AccessMode,
+    options: dict[str, object],
+    *,
+    reachable: bool,
+) -> None:
+    check = AsyncMock()
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    provider = PostgresProvider(_database(ceiling), **options)
+
+    async with Client(FastMCP("t", providers=[provider])) as client:
+        await client.list_tools()
+
+    if reachable:
+        check.assert_called_once_with(fake_service.instances[0].catalog_driver, None)
+    else:
+        check.assert_not_called()
+
+
+async def test_basic_role_check_gets_the_table_prefix(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    check = AsyncMock()
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    database = DatabaseConfig(host="h", user="u", password="p", name="d", table_prefix="app_")
+
+    async with Client(FastMCP("t", providers=[PostgresProvider(database)])) as client:
+        await client.list_tools()
+
+    check.assert_called_once_with(fake_service.instances[0].catalog_driver, "app_")
+
+
+async def test_slow_basic_role_check_is_cancelled_at_shutdown(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверка не задерживает старт и не переживает остановку: задача отменяется, пул закрывается."""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_check(*_args: object) -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", slow_check)
+
+    async with Client(FastMCP("t", providers=[PostgresProvider(_database(AccessMode.BASIC))])) as client:
+        await client.list_tools()
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert cancelled.is_set()
+    assert fake_service.instances[0].closed == 1

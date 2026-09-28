@@ -45,6 +45,7 @@ class FakeService:
         self.sql_driver.execute_statement = AsyncMock(
             return_value=StatementResult(rows=[RowResult(cells={"n": 1})], status="SELECT 1", affected_rows=1)
         )
+        self.catalog_driver = MagicMock()
         FakeService.instances.append(self)
 
     def view(self, access: EffectiveAccess) -> DbAccess:

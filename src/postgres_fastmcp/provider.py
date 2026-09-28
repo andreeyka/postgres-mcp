@@ -1,10 +1,12 @@
 """PostgresProvider: источник девяти тулов одной базы для любого FastMCP-сервера.
 
 Провайдер владеет DbAccessService (пул открывается лениво при первом запросе,
-закрывается в ``lifespan``) и на каждый вызов тула считает права запроса:
-токен текущего запроса -> резолвер -> ``DbAccessService.view(права)``.
+закрывается в ``lifespan``; там же при достижимом basic запускается фоновая проверка прав роли)
+и на каждый вызов тула считает права запроса: токен текущего запроса -> резолвер ->
+``DbAccessService.view(права)``.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -21,9 +23,14 @@ from postgres_fastmcp.access import (
 )
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccessPort, DbAccessService
+from postgres_fastmcp.domains.role_check import warn_about_basic_role
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
+from postgres_fastmcp.shared.logger import get_logger
 from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.registry import register_tools
+
+
+logger = get_logger(__name__)
 
 
 class PostgresProvider(LocalProvider):
@@ -53,6 +60,13 @@ class PostgresProvider(LocalProvider):
                 вызове get_db — должен быть дешёвым и детерминированным.
         """
         super().__init__(on_duplicate="error")
+        # basic достижим: потолок basic или права сужаются по токену до basic
+        self._basic_reachable = (
+            database.access_mode == AccessMode.BASIC
+            or access_resolver is not None
+            or (access_policy is not None and access_policy.enforced)
+        )
+        self._table_prefix = database.table_prefix
         ceiling = EffectiveAccess(database.access_mode, write_mode=database.write_mode)
         if access_resolver is None:
             access_resolver = build_resolver(ceiling, access_policy or AccessPolicy())
@@ -80,8 +94,26 @@ class PostgresProvider(LocalProvider):
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
-        """Закрыть пул подключений при остановке сервера."""
+        """Фоновая проверка прав роли для basic на старте; при остановке — отменить её и закрыть пул.
+
+        Проверка не задерживает старт: одна строка WARNING о правах шире basic или INFO, если БД недоступна.
+        """
+        role_check = asyncio.create_task(self._check_basic_role()) if self._basic_reachable else None
         try:
             yield
         finally:
+            if role_check is not None:
+                role_check.cancel()
+                await asyncio.wait({role_check})
             await self._db.close()
+
+    async def _check_basic_role(self) -> None:
+        """Обёртка фоновой задачи: программная ошибка проверки не должна ронять сервер.
+
+        Сама проверка гасит ошибки БД; ValueError/TypeError (баг в шаблоне каталога) доходят
+        до неё — здесь они ловятся отдельно и логируются, чтобы задача не упала незаметно.
+        """
+        try:
+            await warn_about_basic_role(self._db.catalog_driver, self._table_prefix)
+        except Exception:
+            logger.exception("Basic role check crashed")

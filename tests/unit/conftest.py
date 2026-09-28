@@ -48,3 +48,13 @@ def mock_db_access(mock_executor: AsyncMock) -> MagicMock:
     db.write_mode = False
     db.table_prefix = None
     return db
+
+
+@pytest.fixture(autouse=True)
+def _no_basic_role_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Фоновая проверка роли при старте basic в юнит-тестах не ходит в БД; её тесты подменяют функцию сами."""
+
+    async def _skip(*_args: object) -> None:
+        return None
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", _skip)
