@@ -19,7 +19,7 @@ _SCS_PROBE_SETUP = """
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'scs_probe') THEN
-    CREATE ROLE scs_probe LOGIN;
+    CREATE ROLE scs_probe LOGIN PASSWORD 'scs-probe-pw';
   END IF;
 END $$;
 ALTER ROLE scs_probe SET standard_conforming_strings = off;

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from psycopg.errors import QueryCanceled, UndefinedFunction
+from psycopg.errors import OperationalError, QueryCanceled, UndefinedFunction
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.shared.errors import ConnectionFailedError
@@ -343,3 +343,56 @@ class TestHypopgReset:
 
         connection.set_autocommit.assert_not_awaited()
         connection.execute.assert_not_awaited()
+
+
+class TestResetConnectionAutocommitAndTimeout:
+    """Переключение в autocommit отделено от самих reset-запросов; у reset-запросов есть таймаут."""
+
+    async def test_unmarked_connection_with_autocommit_false_gets_autocommit_then_discard_all(self) -> None:
+        """Случай пробы _open_pool: SELECT 1 идёт в обычной (не autocommit) транзакции psycopg по умолчанию,
+        поэтому соединение возвращается в пул с autocommit=False. reset включает autocommit сам и делает
+        ровно DISCARD ALL — без пометки hypopg других запросов быть не должно."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection(autocommit=False)
+
+        await reset(connection)
+
+        connection.set_autocommit.assert_awaited_once()
+        assert connection.set_autocommit.await_args.args == (True,)
+        connection.execute.assert_awaited_once_with("DISCARD ALL")
+
+    async def test_autocommit_failure_is_logged_neutrally_and_raised(self, caplog: pytest.LogCaptureFixture) -> None:
+        """set_autocommit падает раньше и не про hypopg/DISCARD ALL: сообщение нейтральное, до reset-запросов
+        дело не доходит, соединение выбрасывается пулом."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection(autocommit=False)
+        connection.set_autocommit = AsyncMock(side_effect=OperationalError("server closed the connection unexpectedly"))
+        pool_mgr.mark_hypopg_used(connection)
+
+        with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
+            with pytest.raises(OperationalError):
+                await reset(connection)
+
+        assert any("Failed to prepare a returned connection for reset" in r.getMessage() for r in caplog.records)
+        connection.execute.assert_not_awaited()
+
+    async def test_discard_all_timeout_raises_and_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Зависший сервер не должен блокировать воркер пула бесконечно: таймаут DISCARD ALL поднимает
+        исключение, пул выбрасывает такое соединение."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+
+        async def _hang(*args: object, **kwargs: object) -> None:
+            await asyncio.sleep(10)
+
+        connection.execute = AsyncMock(side_effect=_hang)
+
+        with patch("postgres_fastmcp.postgres.connection.RESET_TIMEOUT_SECONDS", 0.01):
+            with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
+                with pytest.raises(TimeoutError):
+                    await reset(connection)
+
+        assert any("Failed to discard session state" in r.getMessage() for r in caplog.records)

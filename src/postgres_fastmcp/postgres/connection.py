@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 # psycopg_pool: через сколько секунд простоя закрывается соединение сверх min_size
 DEFAULT_MAX_IDLE_SECONDS = 600.0
 
+# Таймаут одного шага reset-callback (hypopg_reset(), DISCARD ALL): зависший сервер не должен
+# блокировать воркер пула бесконечно. При истечении таймаута поднимается исключение, и пул
+# выбрасывает такое соединение — так же, как при любой другой ошибке reset-callback.
+RESET_TIMEOUT_SECONDS = 5.0
+
 
 class DbConnPool:
     """Менеджер подключений к базе данных с использованием пула подключений psycopg."""
@@ -148,14 +153,18 @@ class DbConnPool:
         Роль (SET ROLE), параметры (SET), временные таблицы, курсоры WITH HOLD, LISTEN,
         advisory-блокировки, подготовленные запросы (PREPARE) — всё это иначе пережило бы
         возврат соединения и было бы видно следующему запросу, full или basic, на том же
-        соединении. Для помеченного соединения сначала сбрасываются гипотетические индексы
-        hypopg (они живут в памяти сессии и переживают ROLLBACK), затем в любом случае —
-        DISCARD ALL. Ошибка любого из шагов поднимается дальше: psycopg_pool закрывает такое
-        соединение, состояние сессии на нём неизвестно. Это касается и UndefinedFunction:
-        basic создаёт индексы под SET LOCAL search_path = public, а сброс идёт вне этой
-        транзакции, на search_path роли по умолчанию. Если hypopg лежит в public, а public нет
-        в пути роли, индексы созданы, но hypopg_reset() не найден — оставить такое соединение в
-        пуле значило бы показать чужие гипотетические индексы следующим вызовам.
+        соединении. Сначала соединение переводится в autocommit (пул требует вернуть его в
+        IDLE) — это отдельный шаг со своей нейтральной ошибкой, ведь он ничего не говорит ни о
+        hypopg, ни о DISCARD ALL. Для помеченного соединения затем сбрасываются гипотетические
+        индексы hypopg (они живут в памяти сессии и переживают ROLLBACK), затем в любом случае —
+        DISCARD ALL; у каждого из этих запросов — таймаут RESET_TIMEOUT_SECONDS, зависший сервер
+        не должен блокировать воркер пула. Ошибка любого из шагов (включая таймаут) поднимается
+        дальше: psycopg_pool закрывает такое соединение, состояние сессии на нём неизвестно. Это
+        касается и UndefinedFunction: basic создаёт индексы под SET LOCAL search_path = public,
+        а сброс идёт вне этой транзакции, на search_path роли по умолчанию. Если hypopg лежит в
+        public, а public нет в пути роли, индексы созданы, но hypopg_reset() не найден —
+        оставить такое соединение в пуле значило бы показать чужие гипотетические индексы
+        следующим вызовам.
         """
         if connection.closed:
             # psycopg_pool вызывает reset и для соединения, которое сам же закрыл при возврате
@@ -165,17 +174,21 @@ class DbConnPool:
         is_hypopg = connection in self._hypopg_connections
         self._hypopg_connections.discard(connection)
         try:
-            # Пул требует вернуть соединение в IDLE: и hypopg_reset(), и DISCARD ALL выполняются
-            # вне транзакции.
             if not connection.autocommit:
                 await connection.set_autocommit(True)
+        except Exception as e:
+            logger.warning("Failed to prepare a returned connection for reset: %s", e)
+            raise
+        try:
             if is_hypopg:
-                await connection.execute("SELECT hypopg_reset()")
+                async with asyncio.timeout(RESET_TIMEOUT_SECONDS):
+                    await connection.execute("SELECT hypopg_reset()")
         except Exception as e:
             logger.warning("Failed to reset hypothetical indexes on a returned connection: %s", e)
             raise
         try:
-            await connection.execute("DISCARD ALL")
+            async with asyncio.timeout(RESET_TIMEOUT_SECONDS):
+                await connection.execute("DISCARD ALL")
         except Exception as e:
             logger.warning("Failed to discard session state on a returned connection: %s", e)
             raise
