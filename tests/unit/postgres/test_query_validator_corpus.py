@@ -74,6 +74,7 @@ DML_STATEMENTS = [
 # Запись, которую BASIC_WRITE всё равно блокирует: выход за пределы allowed_schema.
 BASIC_WRITE_BLOCKED = [
     "CREATE EXTENSION hypopg SCHEMA secret",
+    "UPDATE app_t SET a = 1 WHERE a OPERATOR(secret.=) ANY (SELECT 1)",
 ]
 
 # Обычный read-only SQL: обязан проходить во всех режимах (нет ссылок на таблицы, чтобы не задеть prefix).
@@ -171,6 +172,9 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (ARRAY[1])",
     "SELECT * FROM app_t ORDER BY name USING OPERATOR(secret.<)",
     "SELECT * FROM app_t TABLESAMPLE secret.m(1)",
+    "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (SELECT 1)",
+    "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ALL (SELECT 1)",
+    "SELECT 1 FROM app_t WHERE (a, b) OPERATOR(secret.=) ANY (SELECT 1, 2)",
     # схема в кавычках с другим регистром — другая схема
     'SELECT * FROM "PUBLIC".app_t',
     'SELECT NULL::"PUBLIC".t',
@@ -198,6 +202,10 @@ BASIC_ALLOWED_EXTRA = [
     "SELECT * FROM app_t ORDER BY name USING OPERATOR(pg_catalog.<)",
     "SELECT * FROM app_t TABLESAMPLE system(1)",
     "SELECT * FROM app_t TABLESAMPLE pg_catalog.bernoulli(1)",
+    "SELECT 1 FROM app_t WHERE a = ANY (SELECT 1)",
+    "SELECT 1 FROM app_t WHERE a > SOME (SELECT 1)",
+    "SELECT 1 FROM app_t WHERE a IN (SELECT 1)",
+    "SELECT 1 FROM app_t WHERE a OPERATOR(pg_catalog.=) ANY (SELECT 1)",
     # регистр схемы: без кавычек сворачивается в public
     "SELECT * FROM PUBLIC.app_t",
     'SELECT * FROM "public".app_t',

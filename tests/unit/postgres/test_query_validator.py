@@ -398,6 +398,9 @@ class TestBasicPolicy:
             "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (ARRAY[1])",
             "SELECT * FROM app_t ORDER BY name USING OPERATOR(secret.<)",
             "SELECT * FROM app_t TABLESAMPLE secret.m(1)",
+            "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ALL (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE (a, b) OPERATOR(secret.=) ANY (SELECT 1, 2)",
         ],
     )
     def test_operator_or_tablesample_method_from_another_schema_rejected(self, sql: str) -> None:
@@ -405,6 +408,26 @@ class TestBasicPolicy:
             self.BASIC.validate(sql)
         with pytest.raises(SchemaNotAllowedError, match="'secret'"):
             self.PREFIXED.validate(sql)
+
+    def test_quantified_subquery_operator_checked_in_write_mode(self) -> None:
+        """SubLink.operName в DML: UPDATE ... WHERE a OPERATOR(secret.=) ANY (SELECT ...)."""
+        writer = QueryValidator(read_only=False, allowed_schema="public")
+        with pytest.raises(SchemaNotAllowedError, match="'secret'"):
+            writer.validate("UPDATE app_t SET a = 1 WHERE a OPERATOR(secret.=) ANY (SELECT 1)")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1 FROM app_t WHERE a = ANY (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE a > SOME (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE a IN (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE EXISTS (SELECT 1)",
+            "SELECT 1 FROM app_t WHERE a OPERATOR(pg_catalog.=) ANY (SELECT 1)",
+        ],
+    )
+    def test_quantified_subquery_without_foreign_operator_passes(self, sql: str) -> None:
+        self.BASIC.validate(sql)
+        self.PREFIXED.validate(sql)
 
     @pytest.mark.parametrize(
         "sql",

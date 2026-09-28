@@ -21,6 +21,7 @@ from pglast.ast import (
     SelectStmt,
     SortBy,
     String,
+    SubLink,
     TypeName,
     VariableShowStmt,
 )
@@ -192,9 +193,12 @@ class _NodeValidationVisitor(Visitor):
             self._validate_name_qualifier(_name_parts(node.collname))
 
         # Операторы и методы TABLESAMPLE резолвятся по имени, как типы: OPERATOR(secret.+),
-        # ORDER BY ... USING OPERATOR(secret.<), TABLESAMPLE secret.m(1).
+        # a OPERATOR(secret.=) ANY (SELECT ...), ORDER BY ... USING OPERATOR(secret.<), TABLESAMPLE secret.m(1).
+        # У SubLink для IN и EXISTS operName пуст.
         if self._basic and isinstance(node, A_Expr):
             self._validate_name_qualifier(_name_parts(node.name))
+        if self._basic and isinstance(node, SubLink):
+            self._validate_name_qualifier(_name_parts(node.operName))
         if self._basic and isinstance(node, SortBy):
             self._validate_name_qualifier(_name_parts(node.useOp))
         if self._basic and isinstance(node, RangeTableSample):
