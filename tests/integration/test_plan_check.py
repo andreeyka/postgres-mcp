@@ -23,6 +23,9 @@ CREATE OR REPLACE VIEW public.app_secret_fn_view AS SELECT * FROM secret.account
 CREATE OR REPLACE VIEW public.app_settings_view AS SELECT name, setting FROM pg_settings;
 CREATE OR REPLACE VIEW public.app_secret_rows_from_view AS
     SELECT * FROM ROWS FROM (secret.accounts_rows(), generate_series(1, 1)) AS r(id, token, n);
+CREATE OR REPLACE FUNCTION secret.get_tokens() RETURNS text[]
+    LANGUAGE plpgsql STABLE AS 'BEGIN RETURN ARRAY(SELECT token FROM secret.accounts); END';
+CREATE OR REPLACE VIEW public.app_secret_unnest_view AS SELECT * FROM unnest(secret.get_tokens()) AS t(token);
 CREATE TABLE IF NOT EXISTS public.app_plan_items (id int);
 INSERT INTO public.app_plan_items SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM public.app_plan_items);
 """
@@ -108,3 +111,10 @@ async def test_multi_argument_unnest_passes_with_plan_check(db_plan_check: DbAcc
 async def test_rows_from_with_a_foreign_function_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
     with pytest.raises(PlanAccessError, match=r"secret\.accounts_rows"):
         await db_plan_check.sql_driver.execute("SELECT * FROM app_secret_rows_from_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_nested_call_of_a_single_function_scan_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
+    """Unnest — разрешённая встроенная, но её аргумент secret.get_tokens() виден только в Function Call."""
+    with pytest.raises(PlanAccessError, match=r"secret\.get_tokens"):
+        await db_plan_check.sql_driver.execute("SELECT * FROM app_secret_unnest_view", readonly=True)

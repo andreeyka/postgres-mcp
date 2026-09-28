@@ -366,3 +366,60 @@ async def test_function_hint_names_the_allowed_schemas() -> None:
     assert "Only functions from 'public' or built-in functions allowed in basic mode are permitted." in str(
         exc_info.value
     )
+
+
+def _single_scan(schema: str, function: str, call: str) -> dict[str, Any]:
+    """Function Scan одиночной функции с Function Call (VERBOSE): аргументы видны только в нём."""
+    return {**_function_scan(schema, function), "Function Call": call}
+
+
+@pytest.mark.parametrize(
+    ("schema", "function", "call", "name"),
+    [
+        ("pg_catalog", "unnest", "unnest(secret.get_secrets())", "secret.get_secrets"),
+        ("pg_catalog", "unnest", "unnest(pg_ls_dir('.'::text))", "pg_ls_dir"),
+        ("pg_catalog", "generate_series", "generate_series(1, secret.f())", "secret.f"),
+        ("public", "my_srf", "my_srf(my_helper(1))", "my_helper"),
+    ],
+)
+async def test_nested_call_of_a_single_function_scan_is_checked(
+    schema: str, function: str, call: str, name: str
+) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _single_scan(schema, function, call)})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", name)
+
+
+@pytest.mark.parametrize(
+    ("schema", "function", "call"),
+    [
+        ("pg_catalog", "generate_series", "generate_series(1, 10)"),
+        ("pg_catalog", "unnest", "unnest('{1,2}'::integer[])"),
+        ("pg_catalog", "json_to_recordset", """json_to_recordset('[{"a": 1}]'::json)"""),
+        ("public", "my_srf", "my_srf(1)"),
+    ],
+)
+async def test_single_function_scan_with_allowed_calls_passes(schema: str, function: str, call: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _single_scan(schema, function, call)})
+
+    await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _rows_from("unnest('{1}'::integer[]) FROM secret.t"),
+        _single_scan("pg_catalog", "unnest", "unnest('{1}'::integer[]) FROM secret.t"),
+        _single_scan("pg_catalog", "unnest", "unnest('{1}'::integer[]) WHERE true"),
+        _single_scan("pg_catalog", "unnest", "unnest('{1}'::integer[]) UNION SELECT 1"),
+        _single_scan("pg_catalog", "generate_series", "generate_series(1, (SubPlan 1))"),
+    ],
+)
+async def test_function_call_with_more_than_a_target_list_is_rejected(node: dict[str, Any]) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    with pytest.raises(PlanUnverifiableError, match="a Function Scan whose functions cannot be verified"):
+        await _guard(explain).check(_SELECT)

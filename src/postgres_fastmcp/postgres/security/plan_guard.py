@@ -26,6 +26,7 @@ from pglast.ast import (
     String,
     UpdateStmt,
 )
+from pglast.enums.parsenodes import SetOperation
 from pglast.parser import ParseError
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
@@ -120,27 +121,68 @@ def _plan_document(rows: list[RowResult] | None) -> list[dict[str, Any]]:
 
 
 class _FunctionCalls(Visitor):
-    """Собирает имена всех вызовов функций выражения, включая вложенные в аргументы."""
+    """Собирает все вызовы функций выражения, включая вложенные в аргументы."""
 
     def __init__(self) -> None:
-        """Пустой список имён; каждое — кортеж частей имени (схема, функция) или (функция,)."""
+        """Пустой список вызовов в порядке обхода."""
         super().__init__()
-        self.names: list[tuple[str, ...]] = []
+        self.calls: list[FuncCall] = []
 
     def visit_FuncCall(self, _ancestors: object, node: FuncCall) -> None:  # noqa: N802
-        """Запомнить имя вызова; части, которые не строки, делают имя непроверяемым."""
-        parts = tuple(part.sval or "" if isinstance(part, String) else "" for part in node.funcname or ())
-        self.names.append(parts)
+        """Запомнить вызов."""
+        self.calls.append(node)
 
 
-def _function_call_names(call: object) -> list[tuple[str | None, str]]:
+# Части SelectStmt, которых в "SELECT <Function Call>" быть не должно: только список целей.
+_NON_TARGET_SELECT_PARTS = (
+    "fromClause",
+    "whereClause",
+    "groupClause",
+    "havingClause",
+    "withClause",
+    "distinctClause",
+    "sortClause",
+    "limitCount",
+    "limitOffset",
+    "lockingClause",
+    "windowClause",
+    "valuesLists",
+    "intoClause",
+)
+
+
+def _call_name(call: FuncCall) -> tuple[str | None, str]:
+    """Имя вызова: (схема или None, имя).
+
+    Raises:
+        PlanUnverifiableError: Части имени не строки, пустые или их больше двух (имя с базой данных).
+    """
+    parts = tuple(part.sval if isinstance(part, String) else None for part in call.funcname or ())
+    match parts:
+        case (str(name),) if name:
+            return None, name
+        case (str(schema), str(name)) if schema and name:
+            return schema, name
+        case _:
+            raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+
+
+def _function_call_names(call: object, *, skip_outermost: bool) -> list[tuple[str | None, str]]:
     """Имена функций (схема или None, имя) из Function Call узла Function Scan (EXPLAIN VERBOSE).
 
     Для ROWS FROM Postgres печатает список выражений через запятую (deparse списка в ruleutils);
     "SELECT " + текст разбирается как список целей, так что годится и одно выражение, и несколько.
+    Разбор должен дать только список целей: FROM, WHERE, UNION и прочее — признак текста, который
+    не является списком вызовов.
+
+    Args:
+        call: Значение Function Call из плана.
+        skip_outermost: Одиночная функция: внешний вызов — сама функция узла, она уже проверена по
+            Function Name/Schema (функция public печатается без схемы); проверяются только вложенные.
 
     Raises:
-        PlanUnverifiableError: Текста нет, он не разбирается или в нём нет ни одного вызова функции.
+        PlanUnverifiableError: Текста нет, он не разбирается, в нём не только список целей, у одиночной
+            функции он не один вызов, а у нескольких функций — ни одного вызова.
     """
     if not isinstance(call, str) or not call.strip():
         raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
@@ -148,22 +190,25 @@ def _function_call_names(call: object) -> list[tuple[str | None, str]]:
         statements = pglast.parse_sql(f"SELECT {call}")
     except ParseError:
         raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE) from None
-    if len(statements) != 1 or not isinstance(statements[0].stmt, SelectStmt):
+    statement = statements[0].stmt if len(statements) == 1 else None
+    if (
+        not isinstance(statement, SelectStmt)
+        or statement.op != SetOperation.SETOP_NONE
+        or any(getattr(statement, part) for part in _NON_TARGET_SELECT_PARTS)
+        or not statement.targetList
+    ):
         raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
     collector = _FunctionCalls()
-    collector(statements[0].stmt)
-    names: list[tuple[str | None, str]] = []
-    for parts in collector.names:
-        match parts:
-            case (str(name),) if name:
-                names.append((None, name))
-            case (str(schema), str(name)) if schema and name:
-                names.append((schema, name))
-            case _:
-                raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
-    if not names:
+    collector(statement)
+    calls = collector.calls
+    if skip_outermost:
+        outermost = statement.targetList[0].val if len(statement.targetList) == 1 else None
+        if not isinstance(outermost, FuncCall):
+            raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+        calls = [found for found in calls if found is not outermost]
+    elif not calls:
         raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
-    return names
+    return [_call_name(found) for found in calls]
 
 
 class PlanGuard:
@@ -211,7 +256,9 @@ class PlanGuard:
             if node_type in _RELATION_SCAN_TYPES and "Relation Name" not in node:
                 raise PlanUnverifiableError(node_type)
             if node_type == _FUNCTION_SCAN_TYPE and "Function Name" not in node:
-                self._check_function_calls(node.get("Function Call"))
+                self._check_function_calls(node.get("Function Call"), skip_outermost=False)
+            elif node_type == _FUNCTION_SCAN_TYPE and "Function Call" in node:
+                self._check_function_calls(node["Function Call"], skip_outermost=True)
             if "Relation Name" in node:
                 self._check_relation(node.get("Schema"), str(node["Relation Name"]))
             if "Function Name" in node:
@@ -235,13 +282,15 @@ class PlanGuard:
             qualified_name = f"{schema or '?'}.{name}"
             raise self._function_error(qualified_name)
 
-    def _check_function_calls(self, call: object) -> None:
-        """Function Scan без Function Name (ROWS FROM из нескольких функций): каждый вызов из Function Call.
+    def _check_function_calls(self, call: object, *, skip_outermost: bool) -> None:
+        """Вызовы из Function Call узла Function Scan, включая вложенные в аргументы.
 
-        Имя со схемой проверяется как у узла с Function Name. Имя без схемы (search_path = allowed_schema,
-        так что это может быть и allowed_schema, и pg_catalog) допустимо, только если оно в списке basic.
+        Без Function Name (ROWS FROM из нескольких функций) проверяется каждый вызов; у одиночной функции —
+        все, кроме внешнего (он проверен по Function Name/Schema). Имя со схемой проверяется как у узла
+        с Function Name. Имя без схемы (search_path = allowed_schema, так что это может быть и allowed_schema,
+        и pg_catalog) допустимо, только если оно в списке basic.
         """
-        for schema, name in _function_call_names(call):
+        for schema, name in _function_call_names(call, skip_outermost=skip_outermost):
             if schema is not None:
                 self._check_function(schema, name)
             elif name.lower() not in BASIC_ALLOWED_FUNCTIONS:
