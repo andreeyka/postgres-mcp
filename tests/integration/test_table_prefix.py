@@ -12,7 +12,7 @@ from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import ObjectNotFoundError, SchemaNotAllowedError, TablePrefixAccessError
+from postgres_fastmcp.shared.errors import ObjectNotFoundError, SystemRelationAccessError, TablePrefixAccessError
 
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ async def test_table_prefix_blocks_system_schemas(db_user_prefix: DbAccess) -> N
     sql_driver = db_user_prefix.sql_driver
     assert isinstance(sql_driver, SafeSqlExecutor)
 
-    with pytest.raises(SchemaNotAllowedError):
+    with pytest.raises(SystemRelationAccessError):
         await sql_driver.execute("SELECT * FROM pg_catalog.pg_class LIMIT 1", readonly=True)
 
 
@@ -354,9 +354,9 @@ async def test_extensions_are_listed_and_detailed_regardless_of_prefix(db_user_p
 @pytest.mark.asyncio
 async def test_agent_sql_still_cannot_read_system_catalogs(db_user_prefix: DbAccess) -> None:
     """Путь каталога не открывает системные представления для execute_sql."""
-    with pytest.raises(TablePrefixAccessError):
+    with pytest.raises(SystemRelationAccessError):
         await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_indexes", readonly=True)
-    with pytest.raises(SchemaNotAllowedError):
+    with pytest.raises(SystemRelationAccessError):
         await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_catalog.pg_indexes", readonly=True)
 
 

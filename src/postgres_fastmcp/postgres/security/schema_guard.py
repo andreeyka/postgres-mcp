@@ -2,7 +2,18 @@
 
 from pglast.ast import RangeVar
 
-from postgres_fastmcp.shared.errors import SchemaNotAllowedError, SchemataTableAccessError, TablePrefixAccessError
+from postgres_fastmcp.shared.errors import (
+    SchemaNotAllowedError,
+    SchemataTableAccessError,
+    SystemRelationAccessError,
+    TablePrefixAccessError,
+)
+
+
+# Системные отношения: все имена pg_catalog начинаются с pg_ (создать там отношение нельзя без
+# allow_system_table_mods), _pg_* — внутренние представления information_schema. Представления
+# расширений в public (pg_stat_statements и т. п.) попадают сюда же.
+_SYSTEM_RELATION_PREFIXES = ("pg_", "_pg_")
 
 
 def validate_schema_access(
@@ -19,12 +30,17 @@ def validate_schema_access(
         table_prefix: Если задан вместе с allowed_schema, имена таблиц должны начинаться с этого.
 
     Raises:
+        SystemRelationAccessError: Если в basic запрошено системное отношение (pg_*, _pg_*).
         TablePrefixAccessError: Если имя таблицы не соответствует префиксу.
         SchemaNotAllowedError: Если схема не разрешена.
         SchemataTableAccessError: Если в пользовательском режиме запрошен доступ к information_schema.schemata.
     """
     if not allowed_schema:
         return
+
+    relname = range_var.relname or ""
+    if relname.lower().startswith(_SYSTEM_RELATION_PREFIXES):
+        raise SystemRelationAccessError(relname)
 
     schemaname = range_var.schemaname
 

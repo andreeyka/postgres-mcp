@@ -93,12 +93,69 @@ MUST_ALLOW_EVERYWHERE = [
     "SELECT jsonb_path_query('{}', '$')",
     "SELECT now() AT TIME ZONE 'UTC'",
     "SELECT 'abc' SIMILAR TO 'a%'",
-    "SELECT current_setting('server_version')",
     "SHOW search_path",
     "PREPARE p AS SELECT 1",
     "DECLARE c CURSOR FOR SELECT 1",
     "EXPLAIN SELECT 1",
 ]
+
+# Интроспекция и системные отношения: проходят в full, в basic блокируются (спека basic-confinement §4).
+BASIC_BLOCKED_FULL_ALLOWED = [
+    "SELECT * FROM pg_class",
+    "SELECT * FROM pg_stats",
+    "SELECT * FROM pg_catalog.pg_stats",
+    "SELECT * FROM PG_ROLES",
+    "SELECT * FROM public.pg_stat_statements",
+    "SELECT * FROM information_schema._pg_user_mappings",
+    "WITH x AS (SELECT * FROM pg_stat_activity) SELECT * FROM x",
+    "SELECT current_setting('server_version')",
+    "SELECT current_setting('app.jwt_secret')",
+    "SELECT pg_catalog.current_setting('app.jwt_secret')",
+    "SELECT pg_get_functiondef(1)",
+    "SELECT pg_get_viewdef('secret.v'::text)",
+    "SELECT inet_server_addr()",
+    "SELECT to_regclass('secret.t')",
+    "SELECT pg_input_is_valid('secret.t', 'regclass')",
+    "SHOW ALL",
+    "SHOW app.jwt_secret",
+    "SHOW data_directory",
+    "SELECT 't'::regclass",
+    "SELECT CAST('t' AS pg_catalog.regclass)",
+    "SELECT 'secret.f'::regproc",
+    "SELECT regclass 't'",
+    "SELECT 'r'::REGROLE",
+]
+
+# Разрешено в basic, несмотря на соседство с закрытыми правилами.
+BASIC_ALLOWED_EXTRA = [
+    "SELECT current_user, session_user, current_database(), version()",
+    "SELECT pg_typeof(1), pg_size_pretty(1024::bigint)",
+    "SHOW search_path",
+    "SHOW TIME ZONE",
+    "SHOW TRANSACTION ISOLATION LEVEL",
+    "SHOW server_version",
+    "SELECT '1'::int, 'a'::text",
+]
+
+
+@pytest.mark.parametrize("sql", BASIC_BLOCKED_FULL_ALLOWED)
+def test_basic_blocks_introspection(sql: str) -> None:
+    with pytest.raises(UserFacingError):
+        BASIC_READ_ONLY.validate(sql)
+    with pytest.raises(UserFacingError):
+        BASIC_WRITE.validate(sql)
+
+
+@pytest.mark.parametrize("sql", BASIC_BLOCKED_FULL_ALLOWED)
+def test_full_keeps_introspection(sql: str) -> None:
+    FULL_READ_ONLY.validate(sql)
+
+
+@pytest.mark.parametrize("sql", BASIC_ALLOWED_EXTRA)
+def test_basic_allows_value_functions_and_safe_show(sql: str) -> None:
+    BASIC_READ_ONLY.validate(sql)
+    BASIC_WRITE.validate(sql)
+
 
 # Read-only SQL с таблицами: проходит в full, в basic требует префикс app_.
 TABLE_QUERIES_FULL = [

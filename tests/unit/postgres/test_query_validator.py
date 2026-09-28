@@ -10,9 +10,12 @@ from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     FunctionNotAllowedError,
     SchemaNotAllowedError,
+    ShowParameterNotAllowedError,
     SqlParseError,
     StatementTypeNotAllowedError,
+    SystemRelationAccessError,
     TablePrefixAccessError,
+    TypeCastNotAllowedError,
     UserFacingError,
 )
 
@@ -248,3 +251,42 @@ class TestQueryValidatorDmlMode:
         """A data-modifying CTE stays rejected in read-only mode."""
         with pytest.raises(UserFacingError):
             QueryValidator(read_only=True).validate("WITH w AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM w")
+
+
+class TestBasicPolicy:
+    """basic: системные отношения, интроспекция, SHOW и reg*-приведения (спека basic-confinement §4)."""
+
+    BASIC = QueryValidator(read_only=True, allowed_schema="public")
+
+    @pytest.mark.parametrize(
+        "sql", ["SELECT * FROM pg_stats", "SELECT * FROM pg_catalog.pg_stats", "SELECT * FROM public.pg_stats"]
+    )
+    def test_system_relation_rejected_with_its_name(self, sql: str) -> None:
+        with pytest.raises(SystemRelationAccessError, match="'pg_stats'"):
+            self.BASIC.validate(sql)
+
+    def test_system_relation_checked_before_prefix(self) -> None:
+        validator = QueryValidator(read_only=True, allowed_schema="public", table_prefix="app_")
+        with pytest.raises(SystemRelationAccessError):
+            validator.validate("SELECT * FROM pg_indexes")
+
+    def test_introspection_function_rejected(self) -> None:
+        with pytest.raises(FunctionNotAllowedError, match="current_setting"):
+            self.BASIC.validate("SELECT current_setting('app.jwt_secret')")
+
+    def test_show_outside_the_list_names_allowed_parameters(self) -> None:
+        with pytest.raises(ShowParameterNotAllowedError) as exc_info:
+            self.BASIC.validate("SHOW app.jwt_secret")
+        assert "SHOW app.jwt_secret is not allowed" in str(exc_info.value)
+        assert "search_path" in str(exc_info.value)
+
+    @pytest.mark.parametrize("sql", ["SELECT 't'::regclass", "SELECT 't'::pg_catalog.REGCLASS[]"])
+    def test_reg_cast_rejected(self, sql: str) -> None:
+        with pytest.raises(TypeCastNotAllowedError, match="regclass"):
+            self.BASIC.validate(sql)
+
+    def test_full_is_unchanged(self) -> None:
+        full = QueryValidator(read_only=True)
+        full.validate("SELECT * FROM pg_stats")
+        full.validate("SHOW app.jwt_secret")
+        full.validate("SELECT 't'::regclass, current_setting('work_mem')")

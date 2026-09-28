@@ -15,11 +15,20 @@ from pglast.ast import (
     RangeVar,
     RawStmt,
     SelectStmt,
+    TypeCast,
+    VariableShowStmt,
 )
 from pglast.enums import A_Expr_Kind
 from pglast.visitors import Ancestor, Visitor
 
-from postgres_fastmcp.postgres.security.policies import ALLOWED_EXTENSIONS, ALLOWED_FUNCTIONS, ALLOWED_NODE_TYPES
+from postgres_fastmcp.postgres.security.policies import (
+    ALLOWED_EXTENSIONS,
+    ALLOWED_FUNCTIONS,
+    ALLOWED_NODE_TYPES,
+    BASIC_ALLOWED_FUNCTIONS,
+    BASIC_SHOW_PARAMETERS,
+    REG_TYPES,
+)
 from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
 from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_NODE_TYPES, WRITE_STMT_TYPES
 from postgres_fastmcp.shared.errors import (
@@ -30,14 +39,23 @@ from postgres_fastmcp.shared.errors import (
     FunctionNotAllowedError,
     LikePatternNotConstantError,
     LockingClauseProhibitedError,
+    ShowParameterNotAllowedError,
     SqlParseError,
     StatementTypeNotAllowedError,
+    TypeCastNotAllowedError,
 )
 
 
 logger = logging.getLogger(__name__)
 
 PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
+
+
+def _cast_type_name(node: TypeCast) -> str:
+    """Имя типа приведения без схемы, в нижнем регистре ('pg_catalog.regclass[]' -> 'regclass')."""
+    names = node.typeName.names if node.typeName is not None and node.typeName.names else ()
+    last = names[-1] if names else None
+    return str(getattr(last, "sval", "") or "").lower()
 
 
 class _NodeValidationVisitor(Visitor):
@@ -56,6 +74,7 @@ class _NodeValidationVisitor(Visitor):
         allowed_schema: str | None,
         table_prefix: str | None,
         allow_explain_analyze: bool,
+        allowed_functions: frozenset[str],
     ) -> None:
         """Инициализация визитора с политиками валидации.
 
@@ -64,18 +83,22 @@ class _NodeValidationVisitor(Visitor):
             allowed_schema: Если задана, разрешена только эта схема.
             table_prefix: Если задан вместе со схемой, имена таблиц должны начинаться с него.
             allow_explain_analyze: Разрешён ли EXPLAIN (ANALYZE).
+            allowed_functions: Разрешённые имена функций (для basic — без интроспекции).
         """
         super().__init__()
         self._allowed_node_types = allowed_node_types
         self._allowed_schema = allowed_schema
         self._table_prefix = table_prefix
         self._allow_explain_analyze = allow_explain_analyze
+        self._allowed_functions = allowed_functions
+        self._basic = allowed_schema is not None
 
     def visit(self, _ancestors: Ancestor, node: Node) -> None:
         """Валидация одного узла AST; при нарушении политики вызывает исключение.
 
         Raises:
             DisallowedNodeTypeError: Тип узла AST не разрешён.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -84,6 +107,8 @@ class _NodeValidationVisitor(Visitor):
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
+            ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
+            TypeCastNotAllowedError: Приведение к reg*-типу в basic.
         """
         if not isinstance(node, self._allowed_node_types):
             raise DisallowedNodeTypeError(type(node))
@@ -115,8 +140,18 @@ class _NodeValidationVisitor(Visitor):
             func_name = ".".join([str(n.sval) for n in node.funcname]).lower() if node.funcname else ""
             match = PG_CATALOG_PATTERN.match(func_name)
             unqualified = match.group(1) if match else func_name
-            if unqualified not in ALLOWED_FUNCTIONS:
+            if unqualified not in self._allowed_functions:
                 raise FunctionNotAllowedError(func_name)
+
+        if self._basic and isinstance(node, VariableShowStmt):
+            name = node.name or ""
+            if name.lower() not in BASIC_SHOW_PARAMETERS:
+                raise ShowParameterNotAllowedError(name, sorted(BASIC_SHOW_PARAMETERS))
+
+        if self._basic and isinstance(node, TypeCast):
+            type_name = _cast_type_name(node)
+            if type_name in REG_TYPES:
+                raise TypeCastNotAllowedError(type_name)
 
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
@@ -185,6 +220,7 @@ class QueryValidator:
             StatementTypeNotAllowedError: Тип оператора не разрешён.
             DdlNotAllowedError: DDL-операция не разрешена.
             DisallowedNodeTypeError: Тип узла AST не разрешён.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -193,6 +229,8 @@ class QueryValidator:
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
+            ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
+            TypeCastNotAllowedError: Приведение к reg*-типу в basic.
         """
         try:
             parsed = pglast.parse_sql(query)
@@ -210,6 +248,7 @@ class QueryValidator:
             allowed_schema=self.allowed_schema,
             table_prefix=self.table_prefix,
             allow_explain_analyze=self.allow_explain_analyze,
+            allowed_functions=BASIC_ALLOWED_FUNCTIONS if self.allowed_schema is not None else ALLOWED_FUNCTIONS,
         )
 
         for stmt in parsed:

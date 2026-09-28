@@ -21,7 +21,7 @@ from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ObjectNotFoundError,
     SchemaAccessError,
-    SchemaNotAllowedError,
+    SystemRelationAccessError,
     TablePrefixAccessError,
     UnsupportedObjectTypeError,
 )
@@ -549,9 +549,9 @@ class TestBasicTablePrefix:
     @pytest.mark.parametrize(
         ("sql", "error"),
         [
-            ("SELECT * FROM pg_indexes", TablePrefixAccessError),
-            ("SELECT * FROM pg_catalog.pg_indexes", SchemaNotAllowedError),
-            ("SELECT * FROM pg_catalog.pg_class", SchemaNotAllowedError),
+            ("SELECT * FROM pg_indexes", SystemRelationAccessError),
+            ("SELECT * FROM pg_catalog.pg_indexes", SystemRelationAccessError),
+            ("SELECT * FROM pg_catalog.pg_class", SystemRelationAccessError),
             ("SELECT * FROM other_users", TablePrefixAccessError),
         ],
     )
