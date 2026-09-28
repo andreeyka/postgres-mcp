@@ -28,6 +28,7 @@ class DatabaseConfigPort(Protocol):
 
     pool_min_size: int
     pool_max_size: int
+    max_inactive_connection_lifetime: int
     write_mode: bool
     access_mode: AccessMode
     safe_sql_timeout: int
@@ -100,6 +101,7 @@ class DbAccessService:
             connection_url=config.database_uri,
             min_size=config.pool_min_size,
             max_size=config.pool_max_size,
+            max_idle=config.max_inactive_connection_lifetime,
         )
         self._ceiling = EffectiveAccess(config.access_mode, write_mode=config.write_mode)
         self._executors: dict[EffectiveAccess, SqlDriverPort] = {}

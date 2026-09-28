@@ -156,3 +156,7 @@ def test_service_exposes_the_catalog_driver_of_its_views() -> None:
     service = _service(access_mode=AccessMode.BASIC)
     assert service.catalog_driver is service.view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).catalog_driver
     assert isinstance(service.catalog_driver, CatalogSqlExecutor)
+
+
+def test_inactive_connection_lifetime_becomes_pool_max_idle() -> None:
+    assert _service(max_inactive_connection_lifetime=42)._pool.max_idle == 42

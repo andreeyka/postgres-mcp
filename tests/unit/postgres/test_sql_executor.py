@@ -266,3 +266,52 @@ class TestSqlExecutorExecuteStatement:
         executor = _executor_on(_FakeCursor(("INSERT 0 2", 2, None)))
 
         assert await executor.execute("INSERT INTO t VALUES (1), (2)", readonly=False) is None
+
+
+def _pooled_executor(cursor: _FakeCursor) -> tuple[SqlExecutor, MagicMock, MagicMock]:
+    """SqlExecutor на пуле (DbConnPool) с одним соединением, которое отдаёт cursor."""
+    connection = MagicMock()
+    connection.set_autocommit = AsyncMock()
+    connection.cursor.return_value = cursor
+    checkout = MagicMock()
+    checkout.__aenter__ = AsyncMock(return_value=connection)
+    checkout.__aexit__ = AsyncMock(return_value=None)
+    inner = MagicMock()
+    inner.connection.return_value = checkout
+    pool = MagicMock(spec=DbConnPool)
+    pool.pool_connect = AsyncMock(return_value=inner)
+    return SqlExecutor(conn=pool), pool, connection
+
+
+class TestSqlExecutorMarksHypopgConnections:
+    """Соединение с гипотетическими индексами помечается для сброса при возврате в пул."""
+
+    async def test_hypothetical_index_marks_the_pooled_connection(self) -> None:
+        cursor = _FakeCursor(
+            ("SELECT 1", 1, [{"hypopg_reset": None}]),
+            ("SELECT 1", 1, [{"hypopg_create_index": 1}]),
+            ("EXPLAIN", -1, [{"QUERY PLAN": []}]),
+        )
+        executor, pool, connection = _pooled_executor(cursor)
+
+        await executor.execute(
+            "SELECT hypopg_reset();SELECT HYPOPG_CREATE_INDEX('CREATE INDEX ON t (a)');EXPLAIN (FORMAT JSON) SELECT 1"
+        )
+
+        pool.mark_hypopg_used.assert_called_once_with(connection)
+
+    async def test_plain_query_does_not_mark(self) -> None:
+        executor, pool, _ = _pooled_executor(_FakeCursor(("SELECT 1", 1, [{"a": 1}])))
+
+        await executor.execute("SELECT 1 AS a")
+
+        pool.mark_hypopg_used.assert_not_called()
+
+    async def test_connection_is_marked_even_if_the_statement_fails(self) -> None:
+        """Индекс мог создаться до ошибки в том же пакете: пометка — до выполнения."""
+        executor, pool, connection = _pooled_executor(_FakeCursor())
+
+        with pytest.raises(IndexError):
+            await executor.execute("SELECT hypopg_create_index('CREATE INDEX ON t (a)')")
+
+        pool.mark_hypopg_used.assert_called_once_with(connection)

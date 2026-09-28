@@ -171,7 +171,12 @@ class SqlExecutor:
 
         Строка может содержать несколько операторов (префикс SET LOCAL от SafeSqlExecutor):
         после nextset() текущим становится результат последнего, то есть оператора пользователя.
+
+        SQL с hypopg_create_index помечает соединение пула до выполнения: пул сбросит гипотетические
+        индексы при возврате соединения, даже если пакет упал после их создания.
         """
+        if isinstance(self.conn, DbConnPool) and "hypopg_create_index" in str(query).lower():
+            self.conn.mark_hypopg_used(connection)
         async with connection.cursor(row_factory=dict_row) as cursor:
             if readonly:
                 await cursor.execute("BEGIN TRANSACTION READ ONLY")

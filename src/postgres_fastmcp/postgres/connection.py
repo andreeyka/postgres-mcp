@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import weakref
+from typing import Any
 
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
@@ -12,6 +14,9 @@ from postgres_fastmcp.shared.utils import obfuscate_password
 
 logger = logging.getLogger(__name__)
 
+# psycopg_pool: через сколько секунд простоя закрывается соединение сверх min_size
+DEFAULT_MAX_IDLE_SECONDS = 600.0
+
 
 class DbConnPool:
     """Менеджер подключений к базе данных с использованием пула подключений psycopg."""
@@ -21,6 +26,7 @@ class DbConnPool:
         connection_url: str | None = None,
         min_size: int = 1,
         max_size: int = 5,
+        max_idle: float = DEFAULT_MAX_IDLE_SECONDS,
     ) -> None:
         """Инициализация пула подключений к базе данных.
 
@@ -28,10 +34,15 @@ class DbConnPool:
             connection_url: URL подключения к базе данных.
             min_size: Минимальное количество подключений в пуле.
             max_size: Максимальное количество подключений в пуле.
+            max_idle: Через сколько секунд простоя пул закрывает соединение сверх min_size.
         """
         self.connection_url = connection_url
         self.min_size = min_size
         self.max_size = max_size
+        self.max_idle = max_idle
+        # Соединения, на которых создавались гипотетические индексы hypopg: индексы живут в памяти сессии
+        # и переживают ROLLBACK, поэтому сбрасываются при возврате соединения в пул (reset-callback).
+        self._hypopg_connections: weakref.WeakSet[AsyncConnection[Any]] = weakref.WeakSet()
         self.pool: AsyncConnectionPool | None = None
         self._is_valid = False
         self._last_error: str | None = None
@@ -65,6 +76,8 @@ class DbConnPool:
                 conninfo=url,
                 min_size=self.min_size,
                 max_size=self.max_size,
+                max_idle=self.max_idle,
+                reset=self._reset_connection,
                 open=False,
             )
             await self.pool.open()
@@ -115,6 +128,32 @@ class DbConnPool:
         """
         self._is_valid = False
         self._last_error = error
+
+    def mark_hypopg_used(self, connection: AsyncConnection[Any]) -> None:
+        """Пометить соединение: при возврате в пул на нём выполнится hypopg_reset().
+
+        Args:
+            connection: Соединение пула, на котором выполнялся hypopg_create_index.
+        """
+        self._hypopg_connections.add(connection)
+
+    async def _reset_connection(self, connection: AsyncConnection[Any]) -> None:
+        """reset-callback пула: сбросить гипотетические индексы на помеченном соединении.
+
+        Непомеченное соединение не трогается (без лишнего запроса). Ошибка сброса поднимается дальше:
+        psycopg_pool закрывает такое соединение, состояние hypopg на нём неизвестно.
+        """
+        if connection not in self._hypopg_connections:
+            return
+        self._hypopg_connections.discard(connection)
+        try:
+            # Пул требует вернуть соединение в IDLE: hypopg_reset() выполняется вне транзакции.
+            if not connection.autocommit:
+                await connection.set_autocommit(True)
+            await connection.execute("SELECT hypopg_reset()")
+        except Exception as e:
+            logger.warning("Failed to reset hypothetical indexes on a returned connection: %s", e)
+            raise
 
 
 # libpq считает connect_timeout в целых секундах, минимум 2; внешний таймаут /health — у вызывающего
