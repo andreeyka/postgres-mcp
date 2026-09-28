@@ -10,9 +10,8 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
-from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.domains.explain.service import ExplainService
-from postgres_fastmcp.postgres.models import IndexDefinition, RowResult
+from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
@@ -287,51 +286,3 @@ async def test_hypothetical_index_on_a_forbidden_table_is_rejected_before_explai
 
     sent = [c.args[0] for c in delegate.execute.await_args_list]
     assert not any("hypopg_create_index" in q for q in sent)
-
-
-def _builder_with(execute) -> tuple[ExplainPlanBuilder, MagicMock]:
-    sql_driver = MagicMock()
-    sql_driver.execute = AsyncMock(side_effect=execute)
-    sql_driver.render = MagicMock(side_effect=lambda query, params: query.replace("{}", "'def'"))
-    return ExplainPlanBuilder(sql_driver, catalog_driver=MagicMock()), sql_driver
-
-
-async def test_hypothetical_indexes_are_reset_after_explain() -> None:
-    """Состояние hypopg живёт в сессии пулового соединения: после EXPLAIN оно сбрасывается."""
-
-    async def execute(query, params=None, *, readonly=True):
-        if "EXPLAIN" in query:
-            return [RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})]
-        return []
-
-    builder, sql_driver = _builder_with(execute)
-
-    await builder.generate_explain_plan_with_hypothetical_indexes(
-        "SELECT 1", frozenset({IndexDefinition(table="app_t", columns=("c",))})
-    )
-
-    sent = [c.args[0] for c in sql_driver.execute.await_args_list]
-    assert "EXPLAIN" in sent[0]
-    assert sent[1:] == ["SELECT hypopg_reset();"]
-
-
-async def test_failing_explain_still_resets_and_raises_the_original_error() -> None:
-    """Сбой EXPLAIN не оставляет гипотетические индексы; ошибка сброса не маскирует исходную."""
-
-    class ExplainFailedError(Exception):
-        pass
-
-    async def execute(query, params=None, *, readonly=True):
-        if "EXPLAIN" in query:
-            raise ExplainFailedError
-        raise RuntimeError("reset failed too")
-
-    builder, sql_driver = _builder_with(execute)
-
-    with pytest.raises(ExplainFailedError):
-        await builder.generate_explain_plan_with_hypothetical_indexes(
-            "SELECT 1", frozenset({IndexDefinition(table="app_t", columns=("c",))})
-        )
-
-    sent = [c.args[0] for c in sql_driver.execute.await_args_list]
-    assert sent[-1] == "SELECT hypopg_reset();"

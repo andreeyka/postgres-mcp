@@ -137,7 +137,7 @@ QUERY_SERVER_VERSION = "SHOW server_version"
 
 - `explain_query` в basic: определение гипотетического индекса собирает сервер (`IndexDefinition.definition`) и отправляет в `hypopg_create_index` через `sql_driver`, поэтому проверка валидатора ниже покрывает и `hypothetical_indexes`; ошибки — те же, что у `execute_sql` (`SchemaNotAllowedError`, `TablePrefixAccessError`, `SystemRelationAccessError`), до обращения к hypopg.
 - `execute_sql` в basic: `hypopg_create_index` разрешён только с одним строковым константным аргументом; строка разбирается pglast и должна быть ровно одним `IndexStmt`, чей `relation` проходит `validate_schema_access` (схема, префикс, R1) и не имеет явной схемы, кроме `allowed_schema` (`information_schema`, открытая для чтения, здесь даёт `SchemaNotAllowedError`), а сам индекс состоит только из простых столбцов — без выражений, `WHERE`, opclass, collation, `INCLUDE` не-колонок, `TABLESPACE` и опций (`USING <метод>` и сортировка `ASC/DESC`, `NULLS FIRST/LAST` разрешены). Причина — §2: hypopg прогоняет `CREATE INDEX` через `transformIndexStmt`, которая резолвит имена объектов и вычисляет входные функции литеральных приведений. Иначе `FunctionNotAllowedError('hypopg_create_index')`.
-- Сброс: состояние hypopg живёт в сессии пулового соединения, поэтому `explain_query` (во всех режимах) вызывает `hypopg_reset()` и до `EXPLAIN` (в той же строке), и после — в `finally`, подавляя только ошибку самого сброса. Сброс после — best effort: отдельный вызов может получить из пула другое соединение.
+- Остаток гипотетических индексов: `explain_query` вызывает `hypopg_reset()` только до `EXPLAIN`, в той же строке. Индексы, оставшиеся на пуловом соединении после вызова, из basic не прочитать: функции и представления, которые их показывают (`hypopg_list_indexes`, `hypopg_hidden_indexes`, `hypopg_get_indexdef`, `hypopg_relation_size`), закрыты (§4.1, §4.2). Надёжная очистка на том же соединении — §6.
 
 ### 4.6. Страховочные тесты
 
@@ -172,7 +172,6 @@ QUERY_SERVER_VERSION = "SHOW server_version"
 - basic: `currval` и `lastval` недоступны (§4.2).
 - basic: представления `hypopg*` закрыты как системные (`SystemRelationAccessError`); `hypopg_get_indexdef`, `hypopg_list_indexes`, `hypopg_relation_size` недоступны (§4.1, §4.2).
 - basic: `hypopg_create_index` не принимает явную схему, кроме `public` (раньше проходила `information_schema.<таблица>`) (§4.5).
-- Все режимы: `explain_query` с `hypothetical_indexes` сбрасывает hypopg и после `EXPLAIN`, в том числе при ошибке; анализ индексов (DTA) делает на один запрос больше на каждую оценку стоимости (§4.5).
 - Все режимы: гипотетические индексы на таблицах со схемой (`schema.table`) работают — имя индекса раньше включало точку и не разбиралось.
 
 README (ветка 2): основная граница — права роли БД; basic — защита в глубину; представления расширений `pg_*`/`hypopg*` в `public` закрыты в basic; для `hypothetical_indexes` в basic hypopg должен стоять в `public` (basic выставляет `search_path = public` и не принимает функции с явной схемой).
@@ -181,6 +180,7 @@ README (ветка 2): основная граница — права роли �
 
 - (i) Представление в `public` поверх таблиц другой схемы остаётся доступным: проверка идёт по тексту запроса, не по плану. Проверка по плану (`EXPLAIN (VERBOSE)`) рассмотрена и отложена: круг к БД на каждый запрос и смена семантики представлений.
 - (i) `information_schema` в basic остаётся (кроме `schemata` и `_pg_*`): метаданные чужих схем с учётом прав роли.
+- (i) Очистка гипотетических индексов на том же соединении после `EXPLAIN` отложена: отдельный вызов `hypopg_reset()` получает из пула (FIFO) обычно другое соединение и ничего не чистит. Надёжный путь — хук сброса пула (`reset` у psycopg_pool) с `hypopg_reset()`, устойчивый к отсутствию расширения. Остаток из basic не прочитать (§4.5).
 - (!) Неквалифицированный строковый тип таблицы без префикса (`NULL::users`, `json_populate_record(NULL::users, '{}')` при `table_prefix = app_`) проходит: без каталога его не отличить от встроенного типа. Раскрывает существование и колонки таблицы `public` вне префикса, не данные. Квалифицированный `NULL::public.users` проходит по той же причине (типы расширений в `public`).
 - (!) Владелец объекта видит `information_schema.routines.routine_definition` и `information_schema.views.view_definition` своих объектов в любой схеме, а также свои `information_schema.user_mapping_options` (в том числе пароли user mapping): фильтр по правам роли их не прячет.
 - (!) Существование конфигурации и словаря полнотекстового поиска проверяется через `to_tsvector('cfg', …)`/`ts_lexize('dict', …)`: имя резолвится функцией, а не типом.

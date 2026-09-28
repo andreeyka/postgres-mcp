@@ -234,10 +234,6 @@ class ExplainPlanBuilder:
 
         Returns:
             План объяснения в виде словаря.
-
-        Гипотетические индексы живут в сессии соединения, а соединение пуловое: сброс идёт и до
-        EXPLAIN (в той же строке), и после — в finally, чтобы индексы этого вызова не достались
-        следующим запросам на том же соединении даже при ошибке.
         """
         try:
             # Create the indexes query
@@ -277,12 +273,3 @@ class ExplainPlanBuilder:
         except Exception:
             logger.exception("Error getting explain plan for query: %s", query_text)
             raise
-        finally:
-            await self._reset_hypopg_quietly()
-
-    async def _reset_hypopg_quietly(self) -> None:
-        """Сбросить гипотетические индексы hypopg, подавляя только ошибки самого сброса."""
-        try:
-            await self.sql_driver.execute("SELECT hypopg_reset();", params=None, readonly=True)
-        except Exception:
-            logger.debug("hypopg_reset failed (extension may be unavailable)", exc_info=True)
