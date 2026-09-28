@@ -405,6 +405,12 @@ class TestBasicPolicy:
             ("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')", SchemaNotAllowedError),
             ("SELECT hypopg_create_index('CREATE INDEX ON users (c)')", TablePrefixAccessError),
             ("SELECT hypopg_create_index('CREATE INDEX ON pg_class (relname)')", SystemRelationAccessError),
+            (
+                "SELECT hypopg_create_index('CREATE INDEX ON information_schema.sql_features (feature_id)')",
+                SchemaNotAllowedError,
+            ),
+            ("SELECT hypopg_create_index('CREATE INDEX ON pg_catalog.app_t (c)')", SchemaNotAllowedError),
+            ("SELECT hypopg_create_index('CREATE INDEX ON hypopg_list_indexes (c)')", SystemRelationAccessError),
             ("SELECT hypopg_create_index('SELECT 1')", FunctionNotAllowedError),
             (
                 "SELECT hypopg_create_index('CREATE INDEX ON app_t (c); CREATE INDEX ON secret.t (c)')",
@@ -430,6 +436,37 @@ class TestBasicPolicy:
     )
     def test_hypopg_create_index_on_allowed_table_passes(self, sql: str) -> None:
         self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        ("sql", "relation"),
+        [
+            ("SELECT * FROM hypopg_list_indexes", "hypopg_list_indexes"),
+            ("SELECT * FROM public.hypopg_hidden_indexes", "hypopg_hidden_indexes"),
+            ("SELECT * FROM HYPOPG_LIST_INDEXES", "hypopg_list_indexes"),
+        ],
+    )
+    def test_hypopg_views_are_system_relations(self, sql: str, relation: str) -> None:
+        """Представления hypopg показывают состояние всей сессии пулового соединения (R1)."""
+        with pytest.raises(SystemRelationAccessError, match=f"'{relation}'"):
+            self.BASIC.validate(sql)
+        with pytest.raises(SystemRelationAccessError, match=f"'{relation}'"):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        ("sql", "func"),
+        [
+            ("SELECT * FROM hypopg_list_indexes()", "hypopg_list_indexes"),
+            ("SELECT hypopg_get_indexdef(1)", "hypopg_get_indexdef"),
+            ("SELECT hypopg_relation_size(1)", "hypopg_relation_size"),
+        ],
+    )
+    def test_hypopg_session_functions_rejected(self, sql: str, func: str) -> None:
+        with pytest.raises(FunctionNotAllowedError, match=func):
+            self.BASIC.validate(sql)
+
+    def test_hypopg_reset_stays_in_basic(self) -> None:
+        """explain_query склеивает hypopg_reset() с EXPLAIN запроса агента."""
+        self.PREFIXED.validate("SELECT hypopg_reset()")
 
     def test_full_does_not_parse_hypopg_argument(self) -> None:
         QueryValidator(read_only=True).validate("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')")

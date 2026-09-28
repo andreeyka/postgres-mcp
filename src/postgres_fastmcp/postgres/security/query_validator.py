@@ -253,7 +253,8 @@ class _NodeValidationVisitor(Visitor):
             FunctionNotAllowedError: Аргумент не строковая константа, не ровно один CREATE INDEX,
                 или индекс не сводится к простым столбцам.
             SystemRelationAccessError: Индекс на системном отношении.
-            SchemaNotAllowedError: Индекс на таблице другой схемы.
+            SchemaNotAllowedError: Индекс на таблице любой схемы, кроме allowed_schema (в том числе
+                information_schema, которую validate_schema_access пропускает для чтения).
             TablePrefixAccessError: Имя таблицы не соответствует префиксу.
         """
         func_name = "hypopg_create_index"
@@ -269,6 +270,10 @@ class _NodeValidationVisitor(Visitor):
         if not isinstance(index, IndexStmt) or index.relation is None:
             raise FunctionNotAllowedError(func_name)
         validate_schema_access(index.relation, allowed_schema=self._allowed_schema, table_prefix=self._table_prefix)
+        schema = index.relation.schemaname
+        allowed_schema = self._allowed_schema
+        if schema is not None and allowed_schema is not None and schema.lower() != allowed_schema.lower():
+            raise SchemaNotAllowedError(schema, allowed_schema)
         if not _is_plain_index(index):
             raise FunctionNotAllowedError(func_name)
 

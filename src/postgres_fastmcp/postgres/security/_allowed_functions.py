@@ -618,6 +618,11 @@ INTROSPECTION_FUNCTIONS: frozenset[str] = frozenset(
         # планирование для этого пулового соединения
         "hypopg_hide_index",
         "hypopg_unhide_index",
+        # показывают гипотетические индексы всей сессии пулового соединения, то есть чужих вызовов;
+        # explain_query в basic обходится hypopg_reset и hypopg_create_index
+        "hypopg_get_indexdef",
+        "hypopg_list_indexes",
+        "hypopg_relation_size",
     )
 )
 

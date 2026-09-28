@@ -154,6 +154,13 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT currval('secret.accounts')",
     "SELECT currval('users')",
     "SELECT lastval()",
+    # состояние hypopg всей сессии пулового соединения: чужие гипотетические и скрытые индексы
+    "SELECT * FROM hypopg_list_indexes",
+    "SELECT * FROM public.hypopg_hidden_indexes",
+    "SELECT * FROM hypopg_list_indexes()",
+    "SELECT hypopg_get_indexdef(1)",
+    "SELECT hypopg_relation_size(1)",
+    "SELECT hypopg_create_index('CREATE INDEX ON information_schema.sql_features (feature_id)')",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.
