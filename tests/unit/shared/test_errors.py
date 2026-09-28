@@ -116,12 +116,21 @@ def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:
     assert hint in str(_SAMPLES[name]())
 
 
+def test_plan_access_message_names_the_object_without_guessing_the_path() -> None:
+    """Сообщение называет объект и не утверждает, что он достигнут через представление (есть секции, RLS)."""
+    error = errors.PlanAccessError("relation", "secret.x", allowed_schema="public", table_prefix=None)
+    assert str(error) == (
+        "Access to relation 'secret.x' is not allowed in basic mode: the query plan reads it. "
+        "Only tables in 'public' are permitted."
+    )
+
+
 @pytest.mark.parametrize(
     ("kind", "table_prefix", "hint"),
     [
         ("relation", None, "Only tables in 'main' are permitted."),
         ("relation", "app_", "Only tables in 'main' starting with 'app_' are permitted."),
-        ("function", "app_", "Only functions from 'main' or 'pg_catalog' are permitted."),
+        ("function", "app_", "Only functions from 'main' or built-in functions allowed in basic mode are permitted."),
     ],
 )
 def test_plan_access_hint_follows_kind_and_rules(kind: str, table_prefix: str | None, hint: str) -> None:

@@ -5,7 +5,8 @@
 
 Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
 редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
-Relation Name), Custom Scan без отношения и ROWS FROM из нескольких функций (Function Scan без Function Name).
+Relation Name), Custom Scan без отношения. ROWS FROM из нескольких функций (Function Scan без Function Name,
+так Postgres переписывает и unnest(a, b)) проверяется по тексту вызовов из Function Call (VERBOSE).
 """
 
 import json
@@ -13,10 +14,24 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 import pglast
-from pglast.ast import DeclareCursorStmt, DefElem, DeleteStmt, ExplainStmt, InsertStmt, Node, SelectStmt, UpdateStmt
+from pglast.ast import (
+    DeclareCursorStmt,
+    DefElem,
+    DeleteStmt,
+    ExplainStmt,
+    FuncCall,
+    InsertStmt,
+    Node,
+    SelectStmt,
+    String,
+    UpdateStmt,
+)
+from pglast.parser import ParseError
 from pglast.stream import RawStream
+from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.policies import BASIC_ALLOWED_FUNCTIONS
 from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name
 from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
@@ -34,7 +49,8 @@ _PLANNABLE_TYPES = (SelectStmt, InsertStmt, UpdateStmt, DeleteStmt)
 # Значения, которыми опцию EXPLAIN выключают явно: generic_plan false / off / 0 / no.
 _DISABLED_OPTION_VALUES = frozenset({"false", "off", "0", "no"})
 
-# Встроенные функции; функции allowed_schema (расширения в public) тоже допустимы.
+# Встроенные функции — только из списка basic (pg_show_all_settings, pg_ls_dir и подобные закрыты);
+# функции allowed_schema (расширения в public) допустимы все.
 _BUILTIN_FUNCTION_SCHEMA = "pg_catalog"
 
 # Узлы сканирования, которые без Relation Name читают неизвестно что (scanrelid = 0 при pushdown).
@@ -103,8 +119,55 @@ def _plan_document(rows: list[RowResult] | None) -> list[dict[str, Any]]:
     return value
 
 
+class _FunctionCalls(Visitor):
+    """Собирает имена всех вызовов функций выражения, включая вложенные в аргументы."""
+
+    def __init__(self) -> None:
+        """Пустой список имён; каждое — кортеж частей имени (схема, функция) или (функция,)."""
+        super().__init__()
+        self.names: list[tuple[str, ...]] = []
+
+    def visit_FuncCall(self, _ancestors: object, node: FuncCall) -> None:  # noqa: N802
+        """Запомнить имя вызова; части, которые не строки, делают имя непроверяемым."""
+        parts = tuple(part.sval or "" if isinstance(part, String) else "" for part in node.funcname or ())
+        self.names.append(parts)
+
+
+def _function_call_names(call: object) -> list[tuple[str | None, str]]:
+    """Имена функций (схема или None, имя) из Function Call узла Function Scan (EXPLAIN VERBOSE).
+
+    Для ROWS FROM Postgres печатает список выражений через запятую (deparse списка в ruleutils);
+    "SELECT " + текст разбирается как список целей, так что годится и одно выражение, и несколько.
+
+    Raises:
+        PlanUnverifiableError: Текста нет, он не разбирается или в нём нет ни одного вызова функции.
+    """
+    if not isinstance(call, str) or not call.strip():
+        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+    try:
+        statements = pglast.parse_sql(f"SELECT {call}")
+    except ParseError:
+        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE) from None
+    if len(statements) != 1 or not isinstance(statements[0].stmt, SelectStmt):
+        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+    collector = _FunctionCalls()
+    collector(statements[0].stmt)
+    names: list[tuple[str | None, str]] = []
+    for parts in collector.names:
+        match parts:
+            case (str(name),) if name:
+                names.append((None, name))
+            case (str(schema), str(name)) if schema and name:
+                names.append((schema, name))
+            case _:
+                raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+    if not names:
+        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+    return names
+
+
 class PlanGuard:
-    """Проверяет план каждого оператора: отношения — только allowed_schema (с префиксом), функции — pg_catalog и она."""
+    """Проверяет план каждого оператора: отношения — allowed_schema (с префиксом), функции — она и список basic."""
 
     def __init__(self, explain: ExplainRunner, *, allowed_schema: str, table_prefix: str | None) -> None:
         """Инициализация с исполнителем EXPLAIN и правилами basic.
@@ -148,7 +211,7 @@ class PlanGuard:
             if node_type in _RELATION_SCAN_TYPES and "Relation Name" not in node:
                 raise PlanUnverifiableError(node_type)
             if node_type == _FUNCTION_SCAN_TYPE and "Function Name" not in node:
-                raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
+                self._check_function_calls(node.get("Function Call"))
             if "Relation Name" in node:
                 self._check_relation(node.get("Schema"), str(node["Relation Name"]))
             if "Function Name" in node:
@@ -166,11 +229,26 @@ class PlanGuard:
             )
 
     def _check_function(self, schema: str | None, name: str) -> None:
-        """Табличная функция плана: встроенная или из allowed_schema."""
-        if schema not in (_BUILTIN_FUNCTION_SCHEMA, self._allowed_schema):
-            raise PlanAccessError(
-                FUNCTION_KIND,
-                f"{schema or '?'}.{name}",
-                allowed_schema=self._allowed_schema,
-                table_prefix=self._prefix_for_hint,
-            )
+        """Табличная функция плана: из allowed_schema или встроенная из списка basic."""
+        builtin_allowed = schema == _BUILTIN_FUNCTION_SCHEMA and name.lower() in BASIC_ALLOWED_FUNCTIONS
+        if schema != self._allowed_schema and not builtin_allowed:
+            qualified_name = f"{schema or '?'}.{name}"
+            raise self._function_error(qualified_name)
+
+    def _check_function_calls(self, call: object) -> None:
+        """Function Scan без Function Name (ROWS FROM из нескольких функций): каждый вызов из Function Call.
+
+        Имя со схемой проверяется как у узла с Function Name. Имя без схемы (search_path = allowed_schema,
+        так что это может быть и allowed_schema, и pg_catalog) допустимо, только если оно в списке basic.
+        """
+        for schema, name in _function_call_names(call):
+            if schema is not None:
+                self._check_function(schema, name)
+            elif name.lower() not in BASIC_ALLOWED_FUNCTIONS:
+                raise self._function_error(name)
+
+    def _function_error(self, name: str) -> PlanAccessError:
+        """Отказ по функции плана с подсказкой по правилам basic."""
+        return PlanAccessError(
+            FUNCTION_KIND, name, allowed_schema=self._allowed_schema, table_prefix=self._prefix_for_hint
+        )

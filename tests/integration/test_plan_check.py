@@ -20,6 +20,9 @@ CREATE OR REPLACE VIEW public.app_secret_view AS SELECT id, token FROM secret.ac
 CREATE OR REPLACE FUNCTION secret.accounts_rows() RETURNS SETOF secret.accounts
     LANGUAGE sql STABLE AS 'SELECT * FROM secret.accounts';
 CREATE OR REPLACE VIEW public.app_secret_fn_view AS SELECT * FROM secret.accounts_rows();
+CREATE OR REPLACE VIEW public.app_settings_view AS SELECT name, setting FROM pg_settings;
+CREATE OR REPLACE VIEW public.app_secret_rows_from_view AS
+    SELECT * FROM ROWS FROM (secret.accounts_rows(), generate_series(1, 1)) AS r(id, token, n);
 CREATE TABLE IF NOT EXISTS public.app_plan_items (id int);
 INSERT INTO public.app_plan_items SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM public.app_plan_items);
 """
@@ -83,3 +86,25 @@ async def test_information_schema_is_rejected_with_plan_check(db_plan_check: DbA
     """Строгий режим: представления information_schema читают pg_catalog."""
     with pytest.raises(PlanAccessError, match="pg_catalog"):
         await db_plan_check.sql_driver.execute("SELECT table_name FROM information_schema.tables", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_view_over_pg_settings_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
+    """pg_settings — Function Scan pg_catalog.pg_show_all_settings, которой нет в списке функций basic."""
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.pg_show_all_settings'"):
+        await db_plan_check.sql_driver.execute("SELECT * FROM app_settings_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_multi_argument_unnest_passes_with_plan_check(db_plan_check: DbAccess) -> None:
+    """unnest(a, b) Postgres переписывает в ROWS FROM без Function Name; вызовы проверяются по Function Call."""
+    rows = await db_plan_check.sql_driver.execute(
+        "SELECT * FROM unnest(ARRAY[1, 2], ARRAY['a', 'b']) AS u(n, s)", readonly=True
+    )
+    assert [row.cells["s"] for row in rows] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_rows_from_with_a_foreign_function_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
+    with pytest.raises(PlanAccessError, match=r"secret\.accounts_rows"):
+        await db_plan_check.sql_driver.execute("SELECT * FROM app_secret_rows_from_view", readonly=True)

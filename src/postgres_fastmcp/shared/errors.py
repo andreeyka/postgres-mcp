@@ -185,15 +185,12 @@ class PlanAccessError(UserFacingError):
             table_prefix: Обязательный префикс имён таблиц или None.
         """
         if kind == "function":
-            hint = f"Only functions from '{allowed_schema}' or 'pg_catalog' are permitted."
+            hint = f"Only functions from '{allowed_schema}' or built-in functions allowed in basic mode are permitted."
         elif table_prefix:
             hint = f"Only tables in '{allowed_schema}' starting with '{table_prefix}' are permitted."
         else:
             hint = f"Only tables in '{allowed_schema}' are permitted."
-        message = (
-            f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query reaches it through "
-            f"a view, rule or function. {hint}"
-        )
+        message = f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query plan reads it. {hint}"
         super().__init__(message)
         self.kind = kind
         self.qualified_name = qualified_name

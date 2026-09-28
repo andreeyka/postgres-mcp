@@ -231,6 +231,84 @@ async def test_function_scan_without_a_function_name_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
+    "function",
+    [
+        "pg_show_all_settings",
+        "pg_show_all_file_settings",
+        "pg_hba_file_rules",
+        "pg_prepared_statement",
+        "pg_cursor",
+        "pg_available_extensions",
+        "pg_config",
+        "pg_ls_dir",
+        "pg_stat_get_activity",
+        "PG_SHOW_ALL_SETTINGS",
+    ],
+)
+async def test_pg_catalog_function_outside_the_basic_allowlist_is_rejected(function: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _function_scan("pg_catalog", function)})
+
+    with pytest.raises(PlanAccessError, match=rf"function 'pg_catalog\.{function}'") as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert exc_info.value.kind == "function"
+
+
+@pytest.mark.parametrize("function", ["generate_series", "unnest", "jsonb_each", "Generate_Series"])
+async def test_pg_catalog_function_in_the_basic_allowlist_passes(function: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _function_scan("pg_catalog", function)})
+
+    await _guard(explain).check(_SELECT)
+
+
+def _rows_from(call: str) -> dict[str, Any]:
+    """Function Scan для ROWS FROM из нескольких функций: без Function Name, с Function Call (VERBOSE)."""
+    return {"Node Type": "Function Scan", "Alias": "f", "Function Call": call}
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "unnest('{1,2}'::integer[]), unnest('{a,b}'::text[])",
+        "generate_series(1, 3), unnest(ARRAY['a'::text, 'b'::text])",
+        "pg_catalog.unnest('{1,2}'::integer[]), public.app_f()",
+        "unnest('{1,2}'::integer[])",
+    ],
+)
+async def test_multi_function_scan_with_verifiable_calls_passes(call: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _rows_from(call)})
+
+    await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    ("call", "name"),
+    [
+        ("secret.f(), generate_series(1, 1)", "secret.f"),
+        ("pg_catalog.pg_show_all_settings(), generate_series(1, 1)", "pg_catalog.pg_show_all_settings"),
+        ("generate_series(1, 1), pg_show_all_settings()", "pg_show_all_settings"),
+        ("unnest(secret.g()), generate_series(1, 1)", "secret.g"),
+        ("app_f(), generate_series(1, 1)", "app_f"),
+    ],
+)
+async def test_multi_function_scan_with_a_forbidden_call_is_rejected(call: str, name: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _rows_from(call)})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", name)
+
+
+@pytest.mark.parametrize("call", ["", "unnest(", "not a (call", 42])
+async def test_multi_function_scan_with_an_unparsable_call_is_rejected(call: object) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: {"Node Type": "Function Scan", "Alias": "f", "Function Call": call}})
+
+    with pytest.raises(PlanUnverifiableError, match="a Function Scan whose functions cannot be verified"):
+        await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize(
     "rows",
     [
         None,
@@ -285,4 +363,6 @@ async def test_function_hint_names_the_allowed_schemas() -> None:
     with pytest.raises(PlanAccessError) as exc_info:
         await _guard(explain).check(_SELECT)
 
-    assert "Only functions from 'public' or 'pg_catalog' are permitted." in str(exc_info.value)
+    assert "Only functions from 'public' or built-in functions allowed in basic mode are permitted." in str(
+        exc_info.value
+    )
