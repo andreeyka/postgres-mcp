@@ -78,7 +78,7 @@
 ## 4. Изменения поведения (для заметок к PR)
 
 - basic + `table_prefix`: `get_object_details` работает для объектов с префиксом; для таблиц/представлений/последовательностей без префикса — ошибка префикса по имени объекта (раньше — ошибка про `pg_indexes`/`pg_extension` для всех, а для последовательностей без префикса — детали).
-- basic + `table_prefix`: `list_objects(object_type="extension")` работает (раньше — ошибка про `pg_extension`).
+- basic + `table_prefix`: `list_objects(object_type="extension")` и `get_object_details(object_type="extension")` работают для любого расширения (раньше — ошибка про `pg_extension`).
 - basic + `write_mode=true`: запросы каталога идут в read-only транзакции (раньше `SafeSqlExecutor` игнорировал `readonly=True` и открывал пишущую).
 - full + `write_mode=true`: запросы каталога проходят AST-валидацию read-only и получают `statement_timeout` (раньше шли через `SqlExecutor` без проверок и таймаута; транзакция и тогда была read-only).
 - Все режимы: колонки ограничений в `get_object_details` берутся только из запрошенной таблицы (раньше соединение `key_column_usage` шло по имени ограничения и схеме, и одноимённые FK/CHECK других таблиц схемы подмешивали свои колонки).
@@ -116,4 +116,4 @@
 
 - (!) В basic **без** префикса валидатор пропускает неквалифицированные системные отношения: `SELECT * FROM pg_class`, `pg_roles`, `pg_stat_activity`. Запрещено только явное `pg_catalog.`.
 - (!) `explain_query` с гипотетическими индексами в basic + `table_prefix`: проверка hypopg читает `pg_extension` через `sql_driver`, отказ валидатора перехватывается (`postgres/extensions.py:155`) и наружу выходит `HypopgNotInstalledError`.
-- (i) Метаданные объектов без префикса и из других схем видны агенту через `information_schema.*` в `execute_sql`. Отказ `get_object_details` по префиксу — согласованность с `list_objects`, а не сокрытие. Имена последовательностей без префикса могут встречаться в `column_default` таблиц с префиксом (`nextval('users_id_seq'::regclass)`).
+- (i) Метаданные объектов без префикса и из других схем видны агенту через `information_schema.*` в `execute_sql`. Отказ `get_object_details` по префиксу — согласованность с `list_objects`, а не сокрытие. Имена последовательностей без префикса могут встречаться в `column_default` таблиц с префиксом (`nextval('users_id_seq'::regclass)`). Определение индекса (`pg_indexes.indexdef`) у таблицы с префиксом может называть функции и схемы вне `public` (индекс по выражению или частичный) — только имена, без данных; так же было в basic без префикса.
