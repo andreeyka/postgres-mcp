@@ -128,7 +128,7 @@ QUERY_SERVER_VERSION = "SHOW server_version"
 | Имя `pg_*`/`_pg_*`/`hypopg*` — строковый тип системного отношения (R1), кроме скалярных `pg_lsn`, `pg_snapshot` (`BASIC_PG_SCALAR_TYPES`) | `NULL::pg_authid`, `json_populate_record(NULL::pg_class, '{}')` | `SystemRelationAccessError(type_name)` |
 | Явная схема типа — не `allowed_schema` и не `pg_catalog` | `NULL::secret.accounts`, `enum_range(NULL::secret.status)`, `ROW(1)::secret.accounts` | `SchemaNotAllowedError` |
 | Явная схема collation — не `allowed_schema` и не `pg_catalog` | `'a' COLLATE secret.coll` | `SchemaNotAllowedError` |
-| Явная схема оператора (`A_Expr.name` любого вида, `SortBy.useOp`) или метода `TABLESAMPLE` — не `allowed_schema` и не `pg_catalog` | `1 OPERATOR(secret.+) 2`, `a OPERATOR(secret.=) ANY (...)`, `ORDER BY a USING OPERATOR(secret.<)`, `TABLESAMPLE secret.m(1)` | `SchemaNotAllowedError` |
+| Явная схема оператора (`A_Expr.name` любого вида, `SubLink.operName` в `ANY`/`ALL`/`SOME (SELECT …)`, `SortBy.useOp`) или метода `TABLESAMPLE` — не `allowed_schema` и не `pg_catalog` | `1 OPERATOR(secret.+) 2`, `a OPERATOR(secret.=) ANY (...)`, `ORDER BY a USING OPERATOR(secret.<)`, `TABLESAMPLE secret.m(1)` | `SchemaNotAllowedError` |
 
 `TypeNotAllowedError`: `Type {type_name} is not allowed in basic mode. Rewrite the query without object identifier types.`
 
@@ -176,7 +176,7 @@ QUERY_SERVER_VERSION = "SHOW server_version"
 - API/клиенты: `TypeCastNotAllowedError` переименована в `TypeNotAllowedError`, текст — `Type {type_name} is not allowed in basic mode. …` (срабатывает не только на касты); `REG_TYPES` → `NAME_LOOKUP_TYPES` в `postgres/security/policies.py`. Псевдонимов нет.
 - basic: `currval` и `lastval` недоступны (§4.2).
 - basic: `pg_typeof` и `pg_basetype` недоступны (оракул типов через `regtypein`, §4.2); ломается идиома `pg_typeof(x)` для отладки типов.
-- basic: операторы и методы `TABLESAMPLE` с явной схемой, кроме `public` и `pg_catalog`, отклоняются `SchemaNotAllowedError` (§4.4).
+- basic: операторы и методы `TABLESAMPLE` с явной схемой, кроме `public` и `pg_catalog`, отклоняются `SchemaNotAllowedError` (§4.4), в том числе оператор сравнения с подзапросом `a OPERATOR(secret.=) ANY/ALL/SOME (SELECT …)` (`SubLink.operName`); `IN (SELECT …)` и `EXISTS` оператора не несут.
 - basic: имя схемы сравнивается точно: `"PUBLIC".t` (в кавычках) отклоняется, `PUBLIC.t` без кавычек и `"public".t` проходят (§4.4).
 - basic: представления `hypopg*` закрыты как системные (`SystemRelationAccessError`); `hypopg_get_indexdef`, `hypopg_list_indexes`, `hypopg_relation_size` недоступны (§4.1, §4.2).
 - basic: `hypopg_create_index` не принимает явную схему, кроме `public` (раньше проходила `information_schema.<таблица>`) (§4.5).
@@ -191,7 +191,7 @@ README (ветка 2): основная граница — права роли �
 - (i) Очистка гипотетических индексов на том же соединении после `EXPLAIN` отложена: отдельный вызов `hypopg_reset()` получает из пула (FIFO) обычно другое соединение и ничего не чистит. Надёжный путь — хук сброса пула (`reset` у psycopg_pool) с `hypopg_reset()`, устойчивый к отсутствию расширения. Остаток из basic не прочитать (§4.5).
 - (!) Неквалифицированный строковый тип таблицы без префикса (`NULL::users`, `json_populate_record(NULL::users, '{}')` при `table_prefix = app_`) проходит: без каталога его не отличить от встроенного типа. Раскрывает существование и колонки таблицы `public` вне префикса, не данные. Квалифицированный `NULL::public.users` проходит по той же причине (типы расширений в `public`).
 - (!) Владелец объекта видит `information_schema.routines.routine_definition` и `information_schema.views.view_definition` своих объектов в любой схеме, а также свои `information_schema.user_mapping_options` (в том числе пароли user mapping): фильтр по правам роли их не прячет.
-- (!) Существование конфигурации и словаря полнотекстового поиска проверяется через `to_tsvector('cfg', …)`/`ts_lexize('dict', …)` и `get_current_ts_config() = 'cfg'` (литерал приводится через `regconfigin`): имя резолвится функцией или неявным приведением, а не явным типом.
+- (!) Конфигурации, словари и парсеры полнотекстового поиска через `to_tsvector`/`to_tsquery`/`plainto_tsquery`/`phraseto_tsquery`/`websearch_to_tsquery`/`ts_headline`/`ts_debug` (включая сравнение его колонок `regdictionary`)/`ts_lexize`/`ts_parse`/`ts_token_type` и `get_current_ts_config()` (`get_current_ts_config() = 'cfg'` приводит литерал через `regconfigin`) — только существование объектов: имя резолвится функцией или неявным приведением, а не явным типом.
 - (!) Неявное приведение литерала к пользовательской колонке типа `reg*` или домена над ним (`WHERE regclass_col = 'secret.t'`) статически не обнаружить: тип колонки известен только каталогу. Настоящая граница — права роли.
 - (!) `EXPLAIN (SETTINGS)` показывает планировочные параметры с нестандартными значениями.
 - (x) `SET LOCAL search_path = public, pg_catalog` отклонён: объекты `public` перекрыли бы встроенные функции и операторы (класс CVE-2018-1058).
