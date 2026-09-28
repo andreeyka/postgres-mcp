@@ -421,3 +421,10 @@ def test_uri_query_with_invalid_utf8_fails_without_echoing_it() -> None:
         DatabaseConfig.uri_fields("postgresql://u:p@h/d?application_name=%FFsecret")
     assert "secret" not in str(exc_info.value)
     assert "%FF" not in str(exc_info.value)
+
+
+def test_plan_check_is_off_by_default_and_read_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert DatabaseConfig(**_CONNECTION).plan_check is False
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_PLAN_CHECK", "true")
+    assert DatabaseSettings().plan_check is True

@@ -8,7 +8,6 @@ from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
-    ExplainPlanExecutionError,
     HypopgNotInstalledError,
 )
 
@@ -70,15 +69,13 @@ class ExplainService:
         tool = self._make_tool()
         try:
             result = await tool.explain_analyze(sql)
-        except ExplainPlanExecutionError as e:
-            cause = getattr(e, "__cause__", None) or getattr(e, "inner", None)
-            if isinstance(cause, ExplainAnalyzeNotSupportedError):
-                plain_result = await tool.explain(sql)
-                return plain_result.to_text() + (
-                    "\n\n(Note: EXPLAIN ANALYZE is not supported in this environment; "
-                    "plain EXPLAIN result is shown above.)"
-                )
-            raise
+        except ExplainAnalyzeNotSupportedError:
+            # В basic валидатор отклоняет ANALYZE сразу (UserFacingError доходит без оборачивания,
+            # см. _run_explain_query) — подменяем его обычным EXPLAIN и предупреждаем в тексте ответа.
+            plain_result = await tool.explain(sql)
+            return plain_result.to_text() + (
+                "\n\n(Note: EXPLAIN ANALYZE is not supported in this environment; plain EXPLAIN result is shown above.)"
+            )
         return result.to_text()
 
     async def _explain_hypothetical(

@@ -91,7 +91,7 @@ uv run postgres-fastmcp \
 uv run postgres-fastmcp
 ```
 
-Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`, `connect_options`, `max_inactive_connection_lifetime`.
+Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `plan_check`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`, `connect_options`, `max_inactive_connection_lifetime`.
 
 `connect_options` — параметры libpq, которые попадают в query string URI подключения: `{"target_session_attrs": "read-write", "options": "-c statement_timeout=5000", "sslrootcert": "/etc/ssl/ca.pem", "application_name": "mcp"}`. Значения — строки. Ключи, у которых есть свои поля (`host`, `hostaddr`, `port`, `dbname`, `user`, `password`, `sslmode`, `ssl`, `requiressl`, `client_encoding`), и секреты (`sslpassword`, `passfile`, `oauth_client_secret`, `sslkeylogfile` — последний пишет на диск ключи TLS-сессий) отклоняются: URI подключения может попасть в логи и сообщения об ошибках. Параметр, которого libpq не знает (например `prepared_statement_cache_size` или `pgbouncer` из URI SQLAlchemy, asyncpg или Prisma), — ошибка при загрузке конфигурации; в сообщении назван только ключ. В env — JSON-объект: `MCP_DATABASE_CONNECT_OPTIONS='{"application_name": "mcp"}'`. `max_inactive_connection_lifetime` (секунды, по умолчанию 300) — через сколько простоя пул закрывает соединения сверх `pool_min_size`.
 
@@ -170,7 +170,7 @@ uv run postgres-fastmcp
 
 **Для access_mode=basic опционально:** `table_prefix` ограничивает таблицы, представления и последовательности по префиксу имени: `list_objects` скрывает объекты без префикса, а `get_object_details` и `execute_sql` отказывают по ним. Расширения префиксом не ограничиваются. Для full игнорируется.
 
-**Что закрыто в access_mode=basic для SQL агента:** системные отношения `pg_*` (в том числе `pg_catalog.*`, `pg_stats`, `pg_stat_activity` и представления расширений в `public`, например `pg_stat_statements`), функции интроспекции сервера и объектов (`current_setting`, `pg_get_functiondef`, `pg_relation_size`, `has_*_privilege`, `to_regclass` и др.), `SHOW` параметров вне короткого списка (`search_path`, `TimeZone`, `server_version` и т. п.), типы, резолвящие имена объектов (`reg*` и `aclitem`, в том числе их массивы), в любой позиции — не только касты, но и списки колонок табличных функций (`json_to_record(...) AS x(a regclass)`) и аргументы `PREPARE`; имена типов и collation из других схем (`NULL::secret.accounts`, `COLLATE secret.coll`) и строковые типы системных отношений (`NULL::pg_authid`); операторы и методы `TABLESAMPLE` из других схем (`OPERATOR(secret.=)`, `TABLESAMPLE secret.m(1)`); `pg_typeof`/`pg_basetype`, `currval`/`lastval`; `hypopg_create_index` по таблицам вне `public` или без префикса. Гипотетические индексы в basic (`hypothetical_indexes` в `explain_query` и сам `hypopg_create_index`) допускают только простые столбцы таблиц `public` с нужным префиксом — без выражений, `WHERE`, opclass и `TABLESPACE`. Функции `ts_stat`/`ts_rewrite` закрыты во всех режимах. Основная граница доступа — права роли в БД; basic — защита в глубину поверх них. Статически basic закрыть не может всё: представление в `public` поверх таблиц другой схемы отдаёт данные этой схемы, а `information_schema` показывает метаданные других схем в пределах прав роли. Полный список принятых ограничений — `docs/superpowers/specs/2026-09-28-basic-confinement-design.md`, §6. Представления расширений в `public` с именами `pg_*` и `hypopg*` (`pg_stat_statements`, `hypopg_list_indexes` и т. п.) в basic закрыты. Для `hypothetical_indexes` в basic расширение hypopg должно быть установлено в `public`: basic выставляет `search_path = public` и не принимает функции с явной схемой.
+**Что закрыто в access_mode=basic для SQL агента:** системные отношения `pg_*` (в том числе `pg_catalog.*`, `pg_stats`, `pg_stat_activity` и представления расширений в `public`, например `pg_stat_statements`), функции интроспекции сервера и объектов (`current_setting`, `pg_get_functiondef`, `pg_relation_size`, `has_*_privilege`, `to_regclass` и др.), `SHOW` параметров вне короткого списка (`search_path`, `TimeZone`, `server_version` и т. п.), типы, резолвящие имена объектов (`reg*` и `aclitem`, в том числе их массивы), в любой позиции — не только касты, но и списки колонок табличных функций (`json_to_record(...) AS x(a regclass)`) и аргументы `PREPARE`; имена типов и collation из других схем (`NULL::secret.accounts`, `COLLATE secret.coll`) и строковые типы системных отношений (`NULL::pg_authid`); операторы и методы `TABLESAMPLE` из других схем (`OPERATOR(secret.=)`, `TABLESAMPLE secret.m(1)`); `pg_typeof`/`pg_basetype`, `currval`/`lastval`; `hypopg_create_index` по таблицам вне `public` или без префикса. Гипотетические индексы в basic (`hypothetical_indexes` в `explain_query` и сам `hypopg_create_index`) допускают только простые столбцы таблиц `public` с нужным префиксом — без выражений, `WHERE`, opclass и `TABLESPACE`. Функции `ts_stat`/`ts_rewrite` закрыты во всех режимах. Основная граница доступа — права роли в БД; basic — защита в глубину поверх них. Статически basic закрыть не может всё: представление в `public` поверх таблиц другой схемы отдаёт данные этой схемы (закрывается настройкой `plan_check`, см. ниже), а `information_schema` показывает метаданные других схем в пределах прав роли. Полный список принятых ограничений — `docs/superpowers/specs/2026-09-28-basic-confinement-design.md`, §6. Представления расширений в `public` с именами `pg_*` и `hypopg*` (`pg_stat_statements`, `hypopg_list_indexes` и т. п.) в basic закрыты. Для `hypothetical_indexes` в basic расширение hypopg должно быть установлено в `public`: basic выставляет `search_path = public` и не принимает функции с явной схемой.
 
 #### Роль для basic
 
@@ -216,6 +216,40 @@ Database role 'app' has privileges beyond basic mode: BYPASSRLS; member of pg_re
 Сервер при этом стартует. Если БД на старте недоступна, проверка пропускается с одной строкой INFO `Basic role check skipped: ...`; сам пул при этом ещё отдельно логирует свои предупреждения о повторных попытках подключения (`psycopg_pool`, около 30 секунд) — это его штатное поведение, а не часть проверки. Прочая ошибка Postgres при самой проверке — WARNING `Basic role check failed: ...`; программная ошибка проверки (а не БД) — ERROR `Basic role check crashed` в лог, сервер тоже не останавливается.
 
 Проверка и её строка в логе видны только при включённом логировании, то есть на транспорте HTTP: в `stdio` логи отключены (см. «Транспорты»), и фоновая проверка там не запускается. В `stdio` права роли можно проверить вручную теми же запросами (`src/postgres_fastmcp/postgres/catalog.py`, шаблоны `QUERY_ROLE_*`) либо один раз временно поднять сервер с `--transport http`.
+
+#### Проверка по плану (`plan_check`)
+
+`plan_check=true` (env `MCP_DATABASE_PLAN_CHECK=true`, по умолчанию `false`) — строгий режим basic: перед выполнением каждого оператора SQL агента сервер строит его план (`EXPLAIN (VERBOSE, FORMAT JSON)`, без выполнения) и отклоняет запрос, если план читает отношение вне `public` (или без `table_prefix`), системное отношение `pg_*`, табличную функцию схемы, отличной от `pg_catalog` и `public`, или функцию `pg_catalog` вне списка функций basic (так закрыты представления в `public` поверх `pg_settings`, `pg_file_settings`, `pg_hba_file_rules`, `pg_ls_dir(...)`, `pg_stat_get_activity(...)` и подобных). Ответ — ошибка `Access to relation 'secret.accounts' is not allowed in basic mode: the query plan reads it. ...`.
+
+- Закрывает представления, правила и встраиваемые SQL-функции поверх чужих схем, которые валидатор по тексту запроса не видит.
+- Отклоняет и запросы к `information_schema`: её представления читают `pg_catalog`.
+- **Закрыт по умолчанию (fail closed):** узел плана, который не называет, что читает, — тоже отказ, с ошибкой `PlanUnverifiableError`: join или агрегат, которые `postgres_fdw` целиком пересчитал на удалённом сервере (`Foreign Scan` без `Relation Name`), любой `Custom Scan` без отношения. Вызовы внутри табличных функций во `FROM` проверяются по тексту вызова (`Function Call` в плане): вложенные в аргументы (`unnest(secret.get_secrets())`, `unnest(pg_ls_dir('.'))` отклоняются) и все функции `ROWS FROM` из нескольких функций (так Postgres переписывает и `unnest(a, b)`). Проходят только разрешённые встроенные функции basic и функции, записанные со схемой `public`; имя без схемы допустимо, только если оно в списке функций basic. Перепишите запрос на прямое обращение к разрешённым отношениям — такое проверяется штатно.
+- Многооператорная строка: `PlanGuard` строит план каждого оператора до выполнения первого (документированное ограничение), поэтому поздний оператор, зависящий от результата раннего (`CREATE EXTENSION hypopg; SELECT hypopg_create_index(...)`), может быть отклонён ошибкой планирования Postgres, хотя без `plan_check` строка выполнилась бы оператор за оператором.
+- Цена — лишний запрос(ы) к БД на каждый оператор (EXPLAIN проверки по плану идёт до самого выполнения); клиентский таймаут (`safe_sql_timeout` + клиентская страховка) покрывает эту проверку и выполнение вместе, одним бюджетом. Для `access_mode=full` настройка игнорируется.
+
+**Что `plan_check` не закрывает.** План показывает, какие отношения и табличные функции читаются, но не что происходит внутри них:
+
+- материализованные представления в `public` поверх других схем (данные в них уже скопированы);
+- сторонние таблицы (foreign tables) в `public`, в том числе `postgres_fdw`, смотрящий в ту же БД;
+- триггеры на таблицах, которые меняет DML агента;
+- невстраиваемые функции (`VOLATILE`, `SECURITY DEFINER`, PL/pgSQL) и тела функций `public`, вызванных во `FROM`, — их тело плану непрозрачно;
+- функции в выражениях представлений (`SELECT secret.f(x)`), а также операторы, приведения типов и агрегаты, реализованные функциями других схем;
+- функции политик RLS;
+- проверка и выполнение идут в разных транзакциях (и, возможно, соединениях): между ними представление могут пересоздать (`CREATE OR REPLACE VIEW`), а начальное отсечение секций по `now()` может дать другой набор секций.
+
+**Что `plan_check` отклоняет, хотя это легитимно:**
+
+- секции и дочерние таблицы наследования в другой схеме или без префикса (например, чанки TimescaleDB в `_timescaledb_internal`);
+- политики RLS с подзапросами к другим схемам;
+- временные таблицы, заслоняющие имя из `public` (схема `pg_temp_N`);
+- `Custom Scan` без отношения (например, распределённые запросы Citus);
+- правила `DO INSTEAD NOTHING`/`NOTIFY` — у оператора нет плана (`PlanUnverifiableError`);
+- функции пользователя из `public`, вложенные в аргументы функции во `FROM` (`my_srf(my_helper(1))`) или перечисленные в `ROWS FROM` из нескольких функций / `unnest(a, b)`: при `search_path = public` план печатает их без схемы, и их не отличить от встроенных функций вне списка basic;
+- подзапросы в аргументах функций во `FROM` на PG 17+ (в плане — `(InitPlan 1).col1`, `(SubPlan 1)`): такой текст вызова не разбирается (`PlanUnverifiableError`).
+
+Ошибка планирования Postgres (например, отношения нет) цитирует разобранный заново текст оператора со служебным префиксом EXPLAIN, а не исходный SQL агента.
+
+По умолчанию выключено: представление в `public` поверх другой схемы обычно создаёт DBA намеренно и выдаёт роли через `GRANT`.
 
 ### Транспорты
 
@@ -523,8 +557,9 @@ MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
 1. **Разбор SQL** — библиотека `pglast` анализирует SQL перед выполнением; разрешён только allowlist типов операторов, узлов AST и функций
 2. **Транзакции только для чтения** — в режимах только чтение используются read-only транзакции PostgreSQL
 3. **Проверки COMMIT/ROLLBACK** — блокируются попытки обойти режим только чтение
-4. **Таймауты** — `safe_sql_timeout` выставляется как `statement_timeout` внутри транзакции, запрос отменяет сам PostgreSQL. Таймаут самого тула выводится так, чтобы быть длиннее `statement_timeout` с клиентской страховкой, поэтому первым срабатывает именно PostgreSQL
+4. **Таймауты** — `safe_sql_timeout` выставляется как `statement_timeout` внутри транзакции, запрос отменяет сам PostgreSQL. Таймаут самого тула выводится так, чтобы быть длиннее `statement_timeout` с клиентской страховкой, поэтому первым срабатывает именно PostgreSQL. При включённом `plan_check` (см. «Проверка по плану» выше) в этот же бюджет входит и EXPLAIN-проверка плана перед выполнением: клиентская страховка ждёт оба раунд-трипа к БД, а не только сам запрос
 5. **Расширения** — `CREATE EXTENSION` допускается только для `hypopg` и `pg_stat_statements` и только при `write_mode=true`
+6. **Проверка по плану** — опциональная (`plan_check`, только для `access_mode=basic`, по умолчанию выключена): строит план каждого оператора и отклоняет то, что видит только в плане, но не в тексте запроса. Подробности и её ограничения — «Проверка по плану» выше
 
 ## MCP API
 

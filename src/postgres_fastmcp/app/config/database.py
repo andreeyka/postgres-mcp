@@ -157,6 +157,14 @@ class DatabaseConfig(BaseModel):
             "начинающимися с этого префикса. Игнорируется для access_mode=full."
         ),
     )
+    plan_check: bool = Field(
+        default=False,
+        description=(
+            "Только для access_mode=basic: перед выполнением SQL агента строить план (EXPLAIN VERBOSE) и отклонять "
+            "запросы, которые через представления, правила или SQL-функции читают отношения вне public/table_prefix "
+            "или табличные функции чужих схем. Лишний запрос к БД на каждый оператор. Для full игнорируется."
+        ),
+    )
     query_tag: str | None = Field(
         default=None,
         description=(

@@ -10,14 +10,17 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
+from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
+    ExplainPlanError,
     ExplainPlanExecutionError,
     HypopgNotInstalledError,
+    PlanAccessError,
     SchemaNotAllowedError,
     SystemRelationAccessError,
     TablePrefixAccessError,
@@ -135,9 +138,13 @@ class TestExplainServiceAnalyzeMode:
         mock_tool_cls: MagicMock,
         mock_db_access: MagicMock,
     ) -> None:
-        """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note."""
+        """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note.
+
+        ExplainAnalyzeNotSupportedError is a UserFacingError: _run_explain_query re-raises it unchanged
+        (not wrapped in ExplainPlanExecutionError), so the tool-level mock raises it directly too.
+        """
         mock_tool = MagicMock()
-        mock_tool.explain_analyze = AsyncMock(side_effect=ExplainPlanExecutionError(ExplainAnalyzeNotSupportedError()))
+        mock_tool.explain_analyze = AsyncMock(side_effect=ExplainAnalyzeNotSupportedError())
         plain_artifact = _make_artifact("Plain fallback")
         mock_tool.explain = AsyncMock(return_value=plain_artifact)
         mock_tool_cls.return_value = mock_tool
@@ -286,3 +293,159 @@ async def test_hypothetical_index_on_a_forbidden_table_is_rejected_before_explai
 
     sent = [c.args[0] for c in delegate.execute.await_args_list]
     assert not any("hypopg_create_index" in q for q in sent)
+
+
+def _plan_check_delegate(scanned_schema: str, scanned_relation: str) -> MagicMock:
+    """Делегат: EXPLAIN VERBOSE от PlanGuard получает план со сканом отношения, остальное — как у сервера."""
+    scan = {"Node Type": "Seq Scan", "Relation Name": scanned_relation, "Schema": scanned_schema}
+
+    async def execute(query, params=None, *, readonly=True):
+        if "pg_catalog.pg_extension" in query:
+            return [RowResult(cells={"extversion": "1.4.1"})]
+        if "EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM" in query:
+            return [RowResult(cells={"QUERY PLAN": [{"Plan": scan}]})]
+        if "EXPLAIN (VERBOSE" in query:
+            return [RowResult(cells={"QUERY PLAN": [{"Plan": {"Node Type": "Result"}}]})]
+        if "EXPLAIN" in query:
+            return [RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})]
+        return []
+
+    delegate = MagicMock()
+    delegate.execute = AsyncMock(side_effect=execute)
+    return delegate
+
+
+def _plan_check_db(monkeypatch: pytest.MonkeyPatch, delegate: MagicMock):
+    monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+    config = DatabaseConfig(
+        host="h",
+        user="u",
+        password="p",
+        name="d",
+        access_mode=AccessMode.BASIC,
+        write_mode=False,
+        table_prefix="app_",
+        plan_check=True,
+    )
+    return DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+
+async def test_hypothetical_explain_passes_the_plan_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """plan_check: строка hypopg_reset; hypopg_create_index; EXPLAIN … проверяется оператор за оператором.
+
+    Планирование SELECT hypopg_create_index(...) функцию не вызывает, а EXPLAIN агента разворачивается
+    до его запроса — гипотетические индексы для проверки по плану не нужны.
+    """
+    delegate = _plan_check_delegate("public", "app_users")
+    db = _plan_check_db(monkeypatch, delegate)
+
+    result = await ExplainService(db=db).explain(
+        "SELECT * FROM app_users WHERE name = 'x'",
+        hypothetical_indexes=[{"table": "app_users", "columns": ["name"]}],
+    )
+
+    assert "Seq Scan" in result
+    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    checks = [q.split("*/ ", 1)[1] for q in sent if "EXPLAIN (VERBOSE" in q]
+    assert checks[0] == "EXPLAIN (VERBOSE, FORMAT JSON) SELECT hypopg_reset()"
+    assert checks[1].startswith("EXPLAIN (VERBOSE, FORMAT JSON) SELECT hypopg_create_index(")
+    assert checks[2] == "EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_users WHERE name = 'x'"
+    assert len(checks) == 3
+    assert not any("standard_conforming_strings" in q for q in sent)
+    assert sent[-1].count("hypopg_create_index") == 1
+    assert "EXPLAIN (FORMAT JSON, COSTS TRUE)" in sent[-1]
+
+
+async def test_hypothetical_explain_over_a_foreign_view_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """plan_check: представление с префиксом поверх чужой схемы отклоняется до выполнения со hypopg."""
+    delegate = _plan_check_delegate("secret", "accounts")
+    db = _plan_check_db(monkeypatch, delegate)
+
+    with pytest.raises(PlanAccessError, match=r"secret\.accounts"):
+        await ExplainService(db=db).explain(
+            "SELECT * FROM app_secret_view",
+            hypothetical_indexes=[{"table": "app_secret_view", "columns": ["id"]}],
+        )
+
+    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    assert not any("hypopg_create_index" in q and "EXPLAIN (FORMAT JSON" in q for q in sent)
+
+
+class TestExplainQueryAccessErrorsAreNotWrapped:
+    """_run_explain_query re-raises UserFacingError as-is: the agent sees the real reason, not a generic error."""
+
+    async def test_explain_query_on_a_system_relation_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """explain_query без hypothetical_indexes: валидатор basic отклоняет pg_stats до обращения к БД."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock()
+        monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+        config = DatabaseConfig(
+            host="h",
+            user="u",
+            password="p",
+            name="d",
+            access_mode=AccessMode.BASIC,
+            write_mode=False,
+            table_prefix="app_",
+        )
+        db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+        with pytest.raises(SystemRelationAccessError):
+            await ExplainService(db=db).explain("SELECT * FROM pg_stats")
+
+        delegate.execute.assert_not_awaited()
+
+    async def test_explain_query_with_plan_check_on_a_foreign_relation_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """explain_query без hypothetical_indexes: plan_check отклоняет план, читающий secret.t."""
+        delegate = _plan_check_delegate("secret", "t")
+        db = _plan_check_db(monkeypatch, delegate)
+
+        with pytest.raises(PlanAccessError, match=r"secret\.t"):
+            await ExplainService(db=db).explain("SELECT * FROM app_secret_view")
+
+    async def test_explain_analyze_falls_back_to_plain_in_basic_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """basic: валидатор отклоняет EXPLAIN ANALYZE с ExplainAnalyzeNotSupportedError, сервис делает обычный EXPLAIN."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=[RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})])
+        monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+        config = DatabaseConfig(
+            host="h",
+            user="u",
+            password="p",
+            name="d",
+            access_mode=AccessMode.BASIC,
+            write_mode=False,
+            table_prefix="app_",
+        )
+        db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+        result = await ExplainService(db=db).explain("SELECT * FROM app_users", analyze=True)
+
+        assert "Seq Scan" in result
+        assert "EXPLAIN ANALYZE is not supported" in result
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [[], [RowResult(cells={})], [RowResult(cells={"QUERY PLAN": [{"Plan": {}}]})]],
+    ids=["no-rows", "no-query-plan-cell", "plan-without-node-type"],
+)
+async def test_unexpected_explain_result_is_wrapped(rows: list[RowResult]) -> None:
+    """IndexError/KeyError разбора результата EXPLAIN не уходят наружу сырыми, а оборачиваются в ошибку плана."""
+    sql_driver = MagicMock()
+    sql_driver.execute = AsyncMock(return_value=rows)
+    builder = ExplainPlanBuilder(sql_driver, catalog_driver=MagicMock())
+
+    with pytest.raises(ExplainPlanError):
+        await builder.explain("SELECT 1")
+
+
+async def test_missing_query_plan_cell_is_an_execution_error() -> None:
+    sql_driver = MagicMock()
+    sql_driver.execute = AsyncMock(return_value=[RowResult(cells={})])
+    builder = ExplainPlanBuilder(sql_driver, catalog_driver=MagicMock())
+
+    with pytest.raises(ExplainPlanExecutionError, match="QUERY PLAN"):
+        await builder.explain("SELECT 1")

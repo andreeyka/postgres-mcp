@@ -1,6 +1,6 @@
 # Дизайн: доработки после границы basic
 
-Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1–2 реализованы. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
+Дата: 2026-09-28. Статус: реализовано (PR 1–3). Продолжение `2026-09-28-basic-confinement-design.md` (§6).
 
 ## 1. Объём
 
@@ -131,25 +131,54 @@ WHERE n.nspname = 'public'
 
 - Запрос разбирается pglast; для каждого оператора:
   - `SelectStmt`, `InsertStmt`, `UpdateStmt`, `DeleteStmt` — сам оператор;
-  - `ExplainStmt` — вложенный запрос; если у EXPLAIN есть опция `generic_plan`, она переносится;
+  - `ExplainStmt` — вложенный запрос; если у EXPLAIN есть опция `generic_plan`, она переносится (только включённая: `generic_plan false`/`0`/`off` не переносится);
   - `DeclareCursorStmt` — вложенный запрос;
   - остальные (`SHOW`, `PREPARE`, `DEALLOCATE`, `FETCH`, `CLOSE`, `CREATE EXTENSION`) — пропускаются: у них нет плана или подготовленный запрос нельзя выполнить (`EXECUTE` запрещён).
-- Текст оператора — `pglast.stream.RawStream()(node)`; выполняется `EXPLAIN (VERBOSE, FORMAT JSON[, GENERIC_PLAN]) <текст>` через делегата с тем же префиксом `SET LOCAL statement_timeout …; SET LOCAL search_path = public;`, `readonly=True` (EXPLAIN без ANALYZE не исполняет DML и допустим в read-only транзакции).
-- По всему дереву плана (вложенные `Plans`, `InitPlan`/`SubPlan`) собираются пары `Schema`/`Relation Name` и `Schema`/`Function Name`:
+- Текст оператора — `pglast.stream.RawStream()(node)`; выполняется `EXPLAIN (VERBOSE, FORMAT JSON[, GENERIC_PLAN]) <текст>` через делегата с тем же префиксом `SET LOCAL statement_timeout …; SET LOCAL search_path = public;`, `readonly=True` (EXPLAIN без ANALYZE не исполняет DML и допустим в read-only транзакции). `RawStream` предполагает `standard_conforming_strings = on`; `SET LOCAL standard_conforming_strings` в той же строке бесполезен — Postgres разбирает всю строку простого протокола до выполнения `SET`. Закрепление `standard_conforming_strings` для транзакций агента делает следующее изменение слоя соединения (PR 4, ветка `claude/session-hygiene`); до него валидатор basic и `plan_check` полагаются на серверное значение по умолчанию `standard_conforming_strings = on`. Строка с несколькими операторами (`CREATE EXTENSION hypopg; SELECT hypopg_create_index(...)`) — документированное ограничение: `PlanGuard` строит план каждого оператора до выполнения первого, поэтому оператор, зависящий от результата предыдущего в той же строке, может быть отклонён ошибкой планирования, хотя без `plan_check` выполнился бы.
+- По всему документу плана (все вложенные словари и списки: `Plans` с `InitPlan`/`SubPlan` в `Parent Relationship`, `Target Tables` у `ModifyTable`) собираются пары `Schema`/`Relation Name` и `Schema`/`Function Name`:
   - отношение: схема ровно `allowed_schema`; имя не `pg_*`/`_pg_*`/`hypopg*`; с `table_prefix` — имя начинается с префикса (без учёта регистра);
-  - функция: схема `pg_catalog` или `allowed_schema`.
-- Нарушение — новая `PlanAccessError(kind, qualified_name)`: `Access to {kind} '{schema}.{name}' is not allowed in basic mode: the query reaches it through a view, rule or function. Only tables in 'public' are permitted.` (`kind` — `relation`/`function`).
+  - функция: схема `allowed_schema` или `pg_catalog`; функция `pg_catalog` — только из `BASIC_ALLOWED_FUNCTIONS` (по имени без учёта регистра), иначе представление поверх `pg_settings` (`Function Scan` `pg_catalog.pg_show_all_settings`), `pg_file_settings`, `pg_hba_file_rules`, `pg_prepared_statements`, `pg_cursors`, `pg_available_extensions`, `pg_config`, `pg_ls_dir(...)`, `pg_stat_get_activity(NULL)` проходило бы.
+- Нарушение — `PlanAccessError(kind, qualified_name, *, allowed_schema, table_prefix)`: `Access to {kind} '{schema}.{name}' is not allowed in basic mode: the query plan reads it. {hint}` — без утверждения «через представление»: так же отклоняются секции, подпланы RLS и `information_schema`. Объект называется по имени (EXPLAIN VERBOSE в `explain_query` basic и так его показывает) (`kind` — `relation`/`function`; `hint` называет `allowed_schema`, а для отношения с заданным `table_prefix` — ещё и префикс).
+- Закрыто по умолчанию (fail closed): узел сканирования, который не называет, что читает, — `PlanUnverifiableError(node_type)`, а не пропуск. `Foreign Scan`/`Custom Scan` без `Relation Name` (join или агрегат, которые `postgres_fdw` целиком пересчитал на удалённом сервере; `scanrelid = 0` при pushdown) отклоняются, даже если результат сам по себе безобиден. У каждого `Function Scan` с `Function Call` (есть при `VERBOSE`: deparse выражения, а для нескольких функций — списка через `, `) текст разбирается pglast как `SELECT <Function Call>`; разбор должен дать только список целей (без `FROM`, `WHERE`, `UNION` и прочего), иначе `PlanUnverifiableError`. `Function Scan` без `Function Name` (`ROWS FROM` из нескольких функций, в том числе `unnest(a, b)`, который Postgres переписывает в `ROWS FROM (unnest(a), unnest(b))`) проверяется по каждому `FuncCall`; у одиночной функции внешний вызов пропускается (он проверен по `Function Name`/`Schema`, а функция `public` печатается без схемы), вложенные в аргументы (`unnest(secret.get_secrets())`, `unnest(pg_ls_dir('.'))`) проверяются. Одиночная функция без `Function Call` проверяется только по `Function Name`/`Schema`. Правило для каждого проверяемого `FuncCall` — имя со схемой по правилу выше, имя без схемы (EXPLAIN идёт с `search_path = public`, это может быть и `public`, и `pg_catalog`) — только из `BASIC_ALLOWED_FUNCTIONS`. Нет `Function Call`, он не разбирается или в нём нет вызовов — `PlanUnverifiableError`. То же для документа плана, который EXPLAIN не вернул или вернул не в ожидаемой форме.
 - Ошибка планирования (например, отношения нет) приходит агенту как ошибка Postgres — та же, что дало бы выполнение.
+- Клиентский таймаут (`safe_sql_timeout` + клиентская страховка `asyncio.timeout`) покрывает EXPLAIN-проверку по плану и само выполнение одним бюджетом — оба раунд-трипа к БД идут внутри одного `_guarded`.
 
 ### 4.3. Что не покрывается
 
-Функции `SECURITY DEFINER` и PL/pgSQL непрозрачны для плана (SQL-функции, которые Postgres встраивает, видны). Цена — лишний запрос к БД на оператор. Спека `basic-confinement` §6: пункт про представления дополняется ссылкой на `plan_check`.
+План называет отношения и табличные функции, но не то, что происходит внутри них. Не закрыто:
+
+- материализованные представления в `public` поверх других схем — данные в них уже скопированы, план читает само представление;
+- сторонние таблицы в `public`, в том числе `postgres_fdw` с петлёй в ту же БД;
+- триггеры на таблицах — целях DML агента;
+- невстраиваемые функции (`VOLATILE`, `SECURITY DEFINER`, PL/pgSQL) и тела функций `public`, до которых план доходит через `Function Scan`;
+- функции в выражениях представлений (`SELECT secret.f(x)`: `Function Name` бывает только у `Function Scan`), в том числе функции, которые планировщик свернул в константу; операторы, приведения типов и агрегаты, реализованные функциями других схем;
+- функции политик RLS;
+- TOCTOU: проверка и выполнение идут в разных транзакциях (и, возможно, соединениях) — между ними возможен конкурентный `CREATE OR REPLACE VIEW`, а начальное отсечение секций по `now()` может выбрать другие секции.
+
+С `plan_check` запросы к `information_schema` отклоняются — её представления читают `pg_catalog`. Цена — лишний запрос к БД на оператор. Ошибка планирования Postgres цитирует deparse оператора со служебным префиксом EXPLAIN, а не исходный текст агента. Спека `basic-confinement` §6: пункт про представления дополняется ссылкой на `plan_check`.
+
+#### Что отклоняется, хотя легитимно
+
+- секции и дочерние таблицы наследования в другой схеме или без префикса (например, чанки TimescaleDB);
+- политики RLS с подзапросами к другим схемам;
+- временные таблицы, заслоняющие имя из `public` (схема `pg_temp_N`);
+- `Custom Scan` Citus и прочие `Custom Scan` без отношения;
+- правила `DO INSTEAD NOTHING`/`NOTIFY` — у оператора нет плана;
+- `ROWS FROM` из нескольких функций, если хотя бы одна не проверяется по имени (§4.2);
+- функции пользователя из `public`, вложенные в аргументы функции во `FROM` (`my_srf(my_helper(1))`) или перечисленные в `ROWS FROM` из нескольких функций / `unnest(a, b)`: при `search_path = public` план печатает их без схемы, и их не отличить от встроенных функций вне `BASIC_ALLOWED_FUNCTIONS`;
+- подзапросы в аргументах функций во `FROM` на PG 17+ (`(InitPlan 1).col1`, `(SubPlan 1)` в `Function Call`) — текст не разбирается.
 
 ### 4.4. Тесты
 
-- Юнит: `PlanGuard` на фальшивом делегате с заготовленными JSON-планами — представление поверх `secret.t` → `PlanAccessError`; `public.app_t` проходит; функция `secret.f` → отказ; `pg_catalog.now` проходит; вложенные `Plans`/`InitPlan`; EXPLAIN с `GENERIC_PLAN`; `SHOW`/`PREPARE` не порождают EXPLAIN; префикс.
+- Юнит: `PlanGuard` на фальшивом делегате с заготовленными JSON-планами — представление поверх `secret.t` → `PlanAccessError`; `public.app_t` проходит; функция `secret.f` → отказ; `pg_catalog.now` проходит; вложенные `Plans`/`InitPlan`/`SubPlan`, `Target Tables` у `ModifyTable`; EXPLAIN с `GENERIC_PLAN` (и с явно выключенной опцией); `SHOW`/`PREPARE` не порождают EXPLAIN; префикс; текст подсказки в сообщении.
+- Юнит: fail closed — `Foreign Scan`/`Custom Scan` без `Relation Name`, `Function Scan` без `Function Name` и без разбираемого `Function Call`, план без результата или не в ожидаемой форме → `PlanUnverifiableError`.
+- Юнит: функции `pg_catalog` вне `BASIC_ALLOWED_FUNCTIONS` (`pg_show_all_settings`, `pg_ls_dir`, `pg_stat_get_activity`, …) → `PlanAccessError`; `ROWS FROM` по `Function Call`: `unnest('{1,2}'::integer[]), unnest('{a,b}'::text[])` проходит, `secret.f(), generate_series(1, 1)` и `pg_catalog.pg_show_all_settings(), …` отклоняются.
+- Юнит: `_run_explain_query` оборачивает неожиданную форму результата (нет строк, нет ячейки `QUERY PLAN`) в `ExplainPlanExecutionError`, а не отдаёт сырой `IndexError`/`KeyError`.
+- Юнит: вложенные вызовы одиночной функции — `unnest(secret.get_secrets())`, `unnest(pg_ls_dir('.'))`, `generate_series(1, secret.f())`, `my_srf(my_helper(1))` отклоняются; `generate_series(1, 10)`, `unnest('{1,2}'::integer[])`, `json_to_recordset(...)`, `my_srf(1)` из `public` проходят; `Function Call` не только со списком целей (`... FROM secret.t`, `WHERE`, `UNION`, `(SubPlan 1)`) → `PlanUnverifiableError`.
+- Интеграция: представление поверх `pg_settings` → `PlanAccessError`; представление `unnest(secret.get_tokens())` → `PlanAccessError`; `unnest(ARRAY[1, 2], ARRAY['a', 'b'])` проходит; представление с `ROWS FROM (secret.accounts_rows(), generate_series(1, 1))` → `PlanAccessError`.
 - Юнит: `plan_check=false` — EXPLAIN не выполняется; full — не выполняется никогда.
-- Интеграция: схема `secret` с таблицей, представление `public.app_secret_view` поверх неё; basic + `plan_check=true` → `PlanAccessError`, basic без `plan_check` → данные (задокументированное поведение); `app_users` проходит в обоих.
+- Юнит: `explain_query` (`ExplainService`) не оборачивает `PlanAccessError`/`SystemRelationAccessError`/`ExplainAnalyzeNotSupportedError` из `_run_explain_query` в `ExplainPlanExecutionError` — агент видит настоящую причину; EXPLAIN ANALYZE в basic по-прежнему подменяется обычным EXPLAIN с пометкой.
+- Интеграция: схема `secret` с таблицей, представление `public.app_secret_view` поверх неё; basic + `plan_check=true` → `PlanAccessError`, basic без `plan_check` → данные (задокументированное поведение); `app_users` проходит в обоих; запрос к `information_schema.tables` с `plan_check=true` → `PlanAccessError`; INSERT планируется в read-only транзакции, сам INSERT проходит.
 
 ## 5. Изменения поведения (для заметок к PR)
 
@@ -162,4 +191,4 @@ WHERE n.nspname = 'public'
   - query string URI разбирается как в libpq: `+` больше не пробел, пустое значение сохраняется, параметр без `=` — ошибка;
   - с `reset`-callback каждый возврат соединения идёт через рабочую задачу пула: при последовательной нагрузке пул может держать одно лишнее простаивающее соединение (в пределах `max_idle`);
   - `estimated_size_bytes` у кандидатов DTA теперь настоящий размер гипотетического индекса (раньше всегда 0).
-- PR 3: новая настройка `plan_check` (по умолчанию выключена); с ней basic отклоняет запросы, план которых читает отношения вне `public`/префикса или функции чужих схем (`PlanAccessError`).
+- PR 3: новая настройка `plan_check` (по умолчанию выключена); с ней basic отклоняет запросы, план которых читает отношения вне `public`/префикса, функции чужих схем или функции `pg_catalog` вне списка функций basic (представления поверх `pg_settings`, `pg_ls_dir(...)` и т. п.) (`PlanAccessError`), а узел плана без имени читаемого — всегда (`PlanUnverifiableError`, fail closed). Вызовы из `Function Call` проверяются у каждой функции во `FROM`: вложенные в аргументы и все функции `ROWS FROM` из нескольких функций (и `unnest(a, b)`); проходят разрешённые встроенные и функции со схемой `public`, функции `public` без схемы в этих позициях отклоняются. Заодно `_run_explain_query` (`explain_query`) перестал прятать ошибки валидатора и `plan_check` за `ExplainPlanExecutionError` — агент видит настоящую причину отказа, а не generic "Error calling tool".

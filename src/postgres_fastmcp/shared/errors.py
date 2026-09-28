@@ -172,6 +172,52 @@ class SchemataTableAccessError(UserFacingError):
         self.table_name = table_name
 
 
+class PlanAccessError(UserFacingError):
+    """План запроса basic читает отношение или функцию вне разрешённого (проверка по плану, plan_check)."""
+
+    def __init__(self, kind: str, qualified_name: str, *, allowed_schema: str, table_prefix: str | None) -> None:
+        """Инициализация с видом объекта, его полным именем и правилами basic для подсказки.
+
+        Args:
+            kind: Вид объекта из плана: relation или function.
+            qualified_name: Имя со схемой из плана (schema.name).
+            allowed_schema: Разрешённая схема (public).
+            table_prefix: Обязательный префикс имён таблиц или None.
+        """
+        if kind == "function":
+            hint = f"Only functions from '{allowed_schema}' or built-in functions allowed in basic mode are permitted."
+        elif table_prefix:
+            hint = f"Only tables in '{allowed_schema}' starting with '{table_prefix}' are permitted."
+        else:
+            hint = f"Only tables in '{allowed_schema}' are permitted."
+        message = f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query plan reads it. {hint}"
+        super().__init__(message)
+        self.kind = kind
+        self.qualified_name = qualified_name
+
+
+class PlanUnverifiableError(UserFacingError):
+    """План запроса basic нельзя проверить: нет плана или узел не называет, что читает (проверка закрыта)."""
+
+    def __init__(self, node_type: str | None = None) -> None:
+        """Инициализация с типом узла плана; текст плана в сообщение не попадает.
+
+        Args:
+            node_type: Узел без имени читаемого (Foreign Scan, Custom Scan, Function Scan); None — плана нет.
+        """
+        if node_type is None:
+            reason = "EXPLAIN returned no plan"
+        else:
+            objects = "functions" if node_type == "Function Scan" else "relations"
+            reason = f"a {node_type} whose {objects} cannot be verified"
+        message = (
+            f"The query plan cannot be verified in basic mode: {reason}. "
+            "Rewrite the query to read the permitted tables directly."
+        )
+        super().__init__(message)
+        self.node_type = node_type
+
+
 class SqlParseError(UserFacingError):
     """Не удалось разобрать SQL-запрос (синтаксическая ошибка)."""
 
