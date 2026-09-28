@@ -47,6 +47,11 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "ExtensionStatusUnavailableError": lambda: errors.ExtensionStatusUnavailableError(
         "pg_stat_statements", "Unable to determine extension status."
     ),
+    "SystemRelationAccessError": lambda: errors.SystemRelationAccessError("pg_stats"),
+    "ShowParameterNotAllowedError": lambda: errors.ShowParameterNotAllowedError(
+        "app.secret", ["search_path", "timezone"]
+    ),
+    "TypeCastNotAllowedError": lambda: errors.TypeCastNotAllowedError("regclass"),
 }
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -95,6 +100,9 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("UnsupportedServerVersionError", "Use sort_by='total_time'"),
         ("ObjectNotFoundError", 'If it is a view, retry with object_type="view"'),
         ("ExtensionStatusUnavailableError", "then retry"),
+        ("SystemRelationAccessError", "Use list_objects and get_object_details"),
+        ("ShowParameterNotAllowedError", "Allowed parameters: search_path, timezone."),
+        ("TypeCastNotAllowedError", "Rewrite the query without object identifier types"),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:

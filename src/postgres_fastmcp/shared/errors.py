@@ -107,6 +107,54 @@ class TablePrefixAccessError(UserFacingError):
         self.table_prefix = table_prefix
 
 
+class SystemRelationAccessError(UserFacingError):
+    """Доступ к системному отношению (pg_*, _pg_*) в basic запрещён (валидация SQL)."""
+
+    def __init__(self, relation: str) -> None:
+        """Инициализация с именем отношения.
+
+        Args:
+            relation: Имя системного отношения из запроса.
+        """
+        message = (
+            f"Access to system relation '{relation}' is not allowed in basic mode. "
+            "Use list_objects and get_object_details to inspect tables in 'public'."
+        )
+        super().__init__(message)
+        self.relation = relation
+
+
+class ShowParameterNotAllowedError(UserFacingError):
+    """SHOW параметра вне разрешённого списка basic (валидация SQL)."""
+
+    def __init__(self, name: str, allowed: Sequence[str]) -> None:
+        """Инициализация с именем параметра и разрешённым списком.
+
+        Args:
+            name: Имя параметра из SHOW.
+            allowed: Параметры, которые basic разрешает читать.
+        """
+        message = f"SHOW {name} is not allowed in basic mode. Allowed parameters: {', '.join(sorted(allowed))}."
+        super().__init__(message)
+        self.name = name
+
+
+class TypeCastNotAllowedError(UserFacingError):
+    """Приведение к типу идентификатора объекта (reg*) в basic запрещено (валидация SQL)."""
+
+    def __init__(self, type_name: str) -> None:
+        """Инициализация с именем типа.
+
+        Args:
+            type_name: Имя reg*-типа из приведения.
+        """
+        message = (
+            f"Casts to {type_name} are not allowed in basic mode. Rewrite the query without object identifier types."
+        )
+        super().__init__(message)
+        self.type_name = type_name
+
+
 class SchemataTableAccessError(UserFacingError):
     """Доступ к information_schema.schemata в пользовательском режиме запрещён."""
 
