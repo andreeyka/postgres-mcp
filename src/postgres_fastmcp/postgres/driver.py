@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 # 57P05 — сессия завершена по idle_session_timeout. Все они рвут текущее соединение.
 _CONNECTION_SQLSTATES = frozenset({"57P01", "57P02", "57P03", "57P04", "57P05"})
 
+# Валидатор (pglast) и проверка по плану разбирают SQL так, как если бы у сервера был
+# standard_conforming_strings = on. SET LOCAL в той же строке, что и запрос, не помог бы:
+# Postgres лексит всю строку простого протокола целиком до выполнения. Поэтому параметр
+# ставится отдельной командой до запроса, но в одной транзакции с ним — в той же команде,
+# что и BEGIN, чтобы не тратить лишний круг к БД на отдельный execute.
+_BEGIN_READ_ONLY = "BEGIN TRANSACTION READ ONLY; SET LOCAL standard_conforming_strings = on"
+_BEGIN_READ_WRITE = "BEGIN; SET LOCAL standard_conforming_strings = on"
+
 
 def _is_connection_error(error: Exception) -> bool:
     """Отличить ошибку соединения (пул надо пересоздать) от ошибки самого SQL (пул исправен).
@@ -174,14 +182,17 @@ class SqlExecutor:
 
         SQL с hypopg_create_index помечает соединение пула до выполнения: пул сбросит гипотетические
         индексы при возврате соединения, даже если пакет упал после их создания.
+
+        Транзакция открывается одной командой BEGIN[...]; SET LOCAL standard_conforming_strings = on:
+        запрос пользователя выполняется отдельным execute() после неё, уже под on.
         """
         if isinstance(self.conn, DbConnPool) and "hypopg_create_index" in str(query).lower():
             self.conn.mark_hypopg_used(connection)
         async with connection.cursor(row_factory=dict_row) as cursor:
             if readonly:
-                await cursor.execute("BEGIN TRANSACTION READ ONLY")
+                await cursor.execute(_BEGIN_READ_ONLY)
             else:
-                await cursor.execute("BEGIN")
+                await cursor.execute(_BEGIN_READ_WRITE)
             try:
                 if params:
                     await cursor.execute(query, params)

@@ -259,13 +259,38 @@ class TestSqlExecutorExecuteStatement:
         result = await executor.execute_statement("SELECT 1 AS a")
 
         assert result == StatementResult(rows=[RowResult(cells={"a": 1})], status="SELECT 1", affected_rows=1)
-        assert cursor.executed == ["BEGIN TRANSACTION READ ONLY", "SELECT 1 AS a", "ROLLBACK"]
+        assert cursor.executed == [
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL standard_conforming_strings = on",
+            "SELECT 1 AS a",
+            "ROLLBACK",
+        ]
 
     async def test_execute_returns_rows_of_execute_statement(self) -> None:
         """Метод execute остаётся прежним: строки или None, без тега."""
         executor = _executor_on(_FakeCursor(("INSERT 0 2", 2, None)))
 
         assert await executor.execute("INSERT INTO t VALUES (1), (2)", readonly=False) is None
+
+    async def test_begin_read_only_pins_standard_conforming_strings(self) -> None:
+        """readonly=True: первая команда курсора — BEGIN READ ONLY со SET LOCAL в одной строке."""
+        cursor = _FakeCursor(("SELECT 1", 1, [{"a": 1}]))
+        executor = _executor_on(cursor)
+
+        await executor.execute_statement("SELECT 1 AS a", readonly=True)
+
+        assert cursor.executed[0] == "BEGIN TRANSACTION READ ONLY; SET LOCAL standard_conforming_strings = on"
+        assert cursor.executed[1] == "SELECT 1 AS a"
+
+    async def test_begin_read_write_pins_standard_conforming_strings(self) -> None:
+        """readonly=False: первая команда курсора — BEGIN со SET LOCAL в одной строке."""
+        cursor = _FakeCursor(("UPDATE 1", 1, None))
+        executor = _executor_on(cursor)
+
+        await executor.execute_statement("UPDATE t SET v = 1", readonly=False)
+
+        assert cursor.executed[0] == "BEGIN; SET LOCAL standard_conforming_strings = on"
+        assert cursor.executed[1] == "UPDATE t SET v = 1"
+        assert cursor.executed[-1] == "COMMIT"
 
 
 def _pooled_executor(cursor: _FakeCursor) -> tuple[SqlExecutor, MagicMock, MagicMock]:

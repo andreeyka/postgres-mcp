@@ -232,35 +232,44 @@ class TestDbConnPoolOptions:
         kwargs = mock_pool_cls.call_args.kwargs
         assert kwargs["max_idle"] == 42
         assert kwargs["reset"] == pool_mgr._reset_connection
+        assert kwargs["kwargs"] == {"prepare_threshold": None}
 
 
 class TestHypopgReset:
     """Гипотетические индексы живут в сессии: помеченное соединение сбрасывается при возврате в пул."""
 
-    async def test_marked_connection_gets_hypopg_reset_once(self) -> None:
+    async def test_marked_connection_gets_hypopg_reset_then_discard_all(self) -> None:
+        """Помеченное соединение: сперва hypopg_reset(), затем DISCARD ALL; пометка снимается сразу."""
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection()
         pool_mgr.mark_hypopg_used(connection)
 
         await reset(connection)
-        await reset(connection)
 
-        connection.execute.assert_awaited_once_with("SELECT hypopg_reset()")
+        assert [call.args[0] for call in connection.execute.await_args_list] == [
+            "SELECT hypopg_reset()",
+            "DISCARD ALL",
+        ]
         connection.set_autocommit.assert_not_awaited()
 
-    async def test_unmarked_connection_is_left_alone(self) -> None:
+        # Пометка снята: второй возврат того же соединения больше не трогает hypopg.
+        connection.execute.reset_mock()
+        await reset(connection)
+        connection.execute.assert_awaited_once_with("DISCARD ALL")
+
+    async def test_unmarked_open_connection_gets_exactly_discard_all(self) -> None:
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection()
 
         await reset(connection)
 
-        connection.execute.assert_not_awaited()
+        connection.execute.assert_awaited_once_with("DISCARD ALL")
         connection.set_autocommit.assert_not_awaited()
 
     async def test_reset_switches_to_autocommit_first(self) -> None:
-        """Pool требует от reset вернуть соединение в IDLE: hypopg_reset() — вне транзакции."""
+        """Pool требует от reset вернуть соединение в IDLE: hypopg_reset() и DISCARD ALL — вне транзакции."""
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection(autocommit=False)
@@ -270,10 +279,15 @@ class TestHypopgReset:
 
         connection.set_autocommit.assert_awaited_once()
         assert connection.set_autocommit.await_args.args == (True,)
-        connection.execute.assert_awaited_once_with("SELECT hypopg_reset()")
+        assert [call.args[0] for call in connection.execute.await_args_list] == [
+            "SELECT hypopg_reset()",
+            "DISCARD ALL",
+        ]
 
-    async def test_reset_failure_is_logged_and_raised(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Состояние hypopg неизвестно: ошибка поднимается, и psycopg_pool закрывает соединение."""
+    async def test_hypopg_reset_failure_is_logged_and_raised_without_discard_all(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Состояние hypopg неизвестно: ошибка поднимается, DISCARD ALL не выполняется, соединение выбрасывается."""
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection()
@@ -285,8 +299,7 @@ class TestHypopgReset:
                 await reset(connection)
 
         assert any("Failed to reset hypothetical indexes" in r.getMessage() for r in caplog.records)
-        await reset(connection)
-        connection.execute.assert_awaited_once()
+        connection.execute.assert_awaited_once_with("SELECT hypopg_reset()")
 
     async def test_missing_hypopg_reset_is_raised(self, caplog: pytest.LogCaptureFixture) -> None:
         """UndefinedFunction не значит «сбрасывать нечего»: basic создаёт индексы под SET LOCAL search_path = public,
@@ -302,6 +315,21 @@ class TestHypopgReset:
                 await reset(connection)
 
         assert any("Failed to reset hypothetical indexes" in r.getMessage() for r in caplog.records)
+        connection.execute.assert_awaited_once_with("SELECT hypopg_reset()")
+
+    async def test_discard_all_failure_is_logged_and_raised(self, caplog: pytest.LogCaptureFixture) -> None:
+        """DISCARD ALL может упасть (например, сеть); соединение с неизвестным состоянием сессии выбрасывается."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+        connection.execute = AsyncMock(side_effect=QueryCanceled("canceling statement due to statement timeout"))
+
+        with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
+            with pytest.raises(QueryCanceled):
+                await reset(connection)
+
+        assert any("Failed to discard session state" in r.getMessage() for r in caplog.records)
+        connection.execute.assert_awaited_once_with("DISCARD ALL")
 
     async def test_closed_connection_is_left_alone(self) -> None:
         """psycopg_pool вызывает reset и для соединения, которое само же закрыло (ACTIVE/сбойное при возврате):

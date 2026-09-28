@@ -78,6 +78,11 @@ class DbConnPool:
                 max_size=self.max_size,
                 max_idle=self.max_idle,
                 reset=self._reset_connection,
+                # DISCARD ALL в reset-callback включает DEALLOCATE ALL: он снимает на сервере
+                # подготовленные запросы. Автоподготовка psycopg (prepare_threshold=5 по умолчанию)
+                # держит свой клиентский кэш и после DEALLOCATE ALL ссылалась бы на запросы,
+                # которых на сервере уже нет. Отключаем автоподготовку на уровне соединений пула.
+                kwargs={"prepare_threshold": None},
                 open=False,
             )
             await self.pool.open()
@@ -138,30 +143,41 @@ class DbConnPool:
         self._hypopg_connections.add(connection)
 
     async def _reset_connection(self, connection: AsyncConnection[Any]) -> None:
-        """reset-callback пула: сбросить гипотетические индексы на помеченном соединении.
+        """reset-callback пула: соединение возвращается в пул без состояния сессии.
 
-        Непомеченное соединение не трогается (без лишнего запроса). Ошибка сброса поднимается дальше:
-        psycopg_pool закрывает такое соединение, состояние hypopg на нём неизвестно. Это касается и
-        UndefinedFunction: basic создаёт индексы под SET LOCAL search_path = public, а сброс идёт вне
-        этой транзакции, на search_path роли по умолчанию. Если hypopg лежит в public, а public нет в
-        пути роли, индексы созданы, но hypopg_reset() не найден — оставить такое соединение в пуле
-        значило бы показать чужие гипотетические индексы следующим вызовам.
+        Роль (SET ROLE), параметры (SET), временные таблицы, курсоры WITH HOLD, LISTEN,
+        advisory-блокировки, подготовленные запросы (PREPARE) — всё это иначе пережило бы
+        возврат соединения и было бы видно следующему запросу, full или basic, на том же
+        соединении. Для помеченного соединения сначала сбрасываются гипотетические индексы
+        hypopg (они живут в памяти сессии и переживают ROLLBACK), затем в любом случае —
+        DISCARD ALL. Ошибка любого из шагов поднимается дальше: psycopg_pool закрывает такое
+        соединение, состояние сессии на нём неизвестно. Это касается и UndefinedFunction:
+        basic создаёт индексы под SET LOCAL search_path = public, а сброс идёт вне этой
+        транзакции, на search_path роли по умолчанию. Если hypopg лежит в public, а public нет
+        в пути роли, индексы созданы, но hypopg_reset() не найден — оставить такое соединение в
+        пуле значило бы показать чужие гипотетические индексы следующим вызовам.
         """
-        if connection not in self._hypopg_connections:
-            return
-        self._hypopg_connections.discard(connection)
         if connection.closed:
             # psycopg_pool вызывает reset и для соединения, которое сам же закрыл при возврате
             # (ACTIVE/сбойное): выполнять запрос уже некуда, а execute на закрытом соединении
             # упал бы с вводящим в заблуждение предупреждением "Failed to reset...".
             return
+        is_hypopg = connection in self._hypopg_connections
+        self._hypopg_connections.discard(connection)
         try:
-            # Пул требует вернуть соединение в IDLE: hypopg_reset() выполняется вне транзакции.
+            # Пул требует вернуть соединение в IDLE: и hypopg_reset(), и DISCARD ALL выполняются
+            # вне транзакции.
             if not connection.autocommit:
                 await connection.set_autocommit(True)
-            await connection.execute("SELECT hypopg_reset()")
+            if is_hypopg:
+                await connection.execute("SELECT hypopg_reset()")
         except Exception as e:
             logger.warning("Failed to reset hypothetical indexes on a returned connection: %s", e)
+            raise
+        try:
+            await connection.execute("DISCARD ALL")
+        except Exception as e:
+            logger.warning("Failed to discard session state on a returned connection: %s", e)
             raise
 
 
