@@ -62,14 +62,16 @@ def test_stdio_builds_the_server_before_disabling_logs() -> None:
     """
     calls: list[str] = []
     build_auth_seen: list[bool] = []
+    check_basic_role_seen: list[bool] = []
     settings = type(
         "Settings", (), {"server": type("Server", (), {"transport": "stdio", "host": "127.0.0.1", "port": 8000})()}
     )()
     mcp = type("MCP", (), {"run": lambda self, **kw: None})()
 
-    def fake_create_server(_settings, *, build_auth=True, **_kwargs):
+    def fake_create_server(_settings, *, build_auth=True, check_basic_role=True, **_kwargs):
         calls.append("create_server")
         build_auth_seen.append(build_auth)
+        check_basic_role_seen.append(check_basic_role)
         return mcp
 
     def fake_configure_logging(**kwargs):
@@ -83,6 +85,7 @@ def test_stdio_builds_the_server_before_disabling_logs() -> None:
         app(tokens=["--transport", "stdio"], result_action="return_value")
     assert calls == ["configure_logging", "create_server", "disable_logging"]
     assert build_auth_seen == [False]
+    assert check_basic_role_seen == [False]
 
 
 def test_http_passes_build_auth_true_to_create_server() -> None:
@@ -100,6 +103,7 @@ def test_http_passes_build_auth_true_to_create_server() -> None:
     ):
         app(tokens=["--transport", "http"], result_action="return_value")
     assert mock_create_server.call_args.kwargs["build_auth"] is True
+    assert mock_create_server.call_args.kwargs["check_basic_role"] is True
 
 
 def test_stdio_cli_skips_oidc_discovery_and_warns(

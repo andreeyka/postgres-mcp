@@ -132,6 +132,11 @@ class DbAccessService:
             connection_id=self._pool.connection_url or "",
         )
 
+    @property
+    def catalog_driver(self) -> QueryExecutorPort:
+        """Исполнитель шаблонов каталога (канал сервера), тот же, что в каждом view(); для проверок при старте."""
+        return self._catalog
+
     async def ping(self) -> None:
         """SELECT 1 на отдельном соединении; исключение psycopg, если БД не отвечает."""
         url = self._config.database_uri

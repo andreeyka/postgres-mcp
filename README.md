@@ -170,6 +170,51 @@ uv run postgres-fastmcp
 
 **Что закрыто в access_mode=basic для SQL агента:** системные отношения `pg_*` (в том числе `pg_catalog.*`, `pg_stats`, `pg_stat_activity` и представления расширений в `public`, например `pg_stat_statements`), функции интроспекции сервера и объектов (`current_setting`, `pg_get_functiondef`, `pg_relation_size`, `has_*_privilege`, `to_regclass` и др.), `SHOW` параметров вне короткого списка (`search_path`, `TimeZone`, `server_version` и т. п.), типы, резолвящие имена объектов (`reg*` и `aclitem`, в том числе их массивы), в любой позиции — не только касты, но и списки колонок табличных функций (`json_to_record(...) AS x(a regclass)`) и аргументы `PREPARE`; имена типов и collation из других схем (`NULL::secret.accounts`, `COLLATE secret.coll`) и строковые типы системных отношений (`NULL::pg_authid`); операторы и методы `TABLESAMPLE` из других схем (`OPERATOR(secret.=)`, `TABLESAMPLE secret.m(1)`); `pg_typeof`/`pg_basetype`, `currval`/`lastval`; `hypopg_create_index` по таблицам вне `public` или без префикса. Гипотетические индексы в basic (`hypothetical_indexes` в `explain_query` и сам `hypopg_create_index`) допускают только простые столбцы таблиц `public` с нужным префиксом — без выражений, `WHERE`, opclass и `TABLESPACE`. Функции `ts_stat`/`ts_rewrite` закрыты во всех режимах. Основная граница доступа — права роли в БД; basic — защита в глубину поверх них. Статически basic закрыть не может всё: представление в `public` поверх таблиц другой схемы отдаёт данные этой схемы, а `information_schema` показывает метаданные других схем в пределах прав роли. Полный список принятых ограничений — `docs/superpowers/specs/2026-09-28-basic-confinement-design.md`, §6. Представления расширений в `public` с именами `pg_*` и `hypopg*` (`pg_stat_statements`, `hypopg_list_indexes` и т. п.) в basic закрыты. Для `hypothetical_indexes` в basic расширение hypopg должно быть установлено в `public`: basic выставляет `search_path = public` и не принимает функции с явной схемой.
 
+#### Роль для basic
+
+`access_mode=basic` — защита в глубину: валидатор SQL отклоняет обращения вне `public`, но настоящая граница — права роли, под которой сервер подключается к БД. Роли для basic достаточно `SELECT` на таблицы `public` (и DML на них при `write_mode=true`):
+
+```sql
+CREATE ROLE mcp_basic LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+GRANT CONNECT ON DATABASE mydb TO mcp_basic;
+GRANT USAGE ON SCHEMA public TO mcp_basic;
+-- все таблицы public (без table_prefix):
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_basic;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_basic;
+-- с table_prefix = 'app_': только таблицы с префиксом
+DO $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'app\_%' LOOP
+    EXECUTE format('GRANT SELECT ON public.%I TO mcp_basic', t.tablename);
+  END LOOP;
+END $$;
+-- write_mode = true: добавить INSERT, UPDATE, DELETE на те же таблицы и USAGE на их последовательности
+```
+
+Про сам скрипт:
+
+- цикл `DO $$ ... $$` выше проходит по `pg_tables` и грантует только таблицы; представления и материализованные представления с тем же префиксом (`pg_views`/`pg_matviews`) им не покрыты — на них `SELECT` нужно выдавать отдельно;
+- `ALTER DEFAULT PRIVILEGES` действует только на объекты, которые создаёт **та роль, что его выполнила**; если таблицы с префиксом создаёт другая роль (например, `app_owner`), нужен `ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public GRANT SELECT ON TABLES TO mcp_basic`;
+- на PostgreSQL ≤14 у `PUBLIC` по умолчанию есть `CREATE` на схему `public` (с PG15 это уже не так по умолчанию); если это лишнее — дополнительно `REVOKE CREATE ON SCHEMA public FROM PUBLIC`.
+
+Чего роли для basic не давать:
+
+- членства в `pg_read_all_data`, `pg_read_all_settings`, `pg_read_all_stats`, `pg_monitor` (и других предопределённых ролях с доступом к данным или серверу) — проверка при старте (ниже) находит и косвенное членство: например, `pg_monitor` подразумевает `pg_read_all_settings` и `pg_read_all_stats`;
+- `CREATEROLE`: на PostgreSQL ≤15 эта привилегия позволяет роли выдать себе членство в предопределённых ролях самостоятельно;
+- прав на `pg_stat_statements`: расширение лучше ставить в отдельную схему, на которую у роли нет `USAGE`;
+- `SELECT` на представления в `public` поверх таблиц других схем, если эти данные агенту не нужны: представление отдаёт данные схемы, над которой построено, каждому, кому выдан `SELECT` на само представление.
+
+При старте с достижимым basic (потолок `basic`, свой `access_resolver` или `access_policy.enforced=true`) сервер в фоне проверяет права роли и пишет одну строку WARNING, если роль может больше, например:
+
+```text
+Database role 'app' has privileges beyond basic mode: BYPASSRLS; member of pg_read_all_data; USAGE on schemas: billing, secret; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).
+```
+
+Сервер при этом стартует. Если БД на старте недоступна, проверка пропускается с одной строкой INFO `Basic role check skipped: ...`; сам пул при этом ещё отдельно логирует свои предупреждения о повторных попытках подключения (`psycopg_pool`, около 30 секунд) — это его штатное поведение, а не часть проверки. Прочая ошибка Postgres при самой проверке — WARNING `Basic role check failed: ...`; программная ошибка проверки (а не БД) — ERROR `Basic role check crashed` в лог, сервер тоже не останавливается.
+
+Проверка и её строка в логе видны только при включённом логировании, то есть на транспорте HTTP: в `stdio` логи отключены (см. «Транспорты»), и фоновая проверка там не запускается. В `stdio` права роли можно проверить вручную теми же запросами (`src/postgres_fastmcp/postgres/catalog.py`, шаблоны `QUERY_ROLE_*`) либо один раз временно поднять сервер с `--transport http`.
+
 ### Транспорты
 
 Поддерживаются транспорты **http** и **stdio**.
@@ -391,7 +436,8 @@ claude mcp add --transport http postgres https://mcp.example.com/mcp --header "A
 
 - транспорт HTTP, аутентификации нет, а `host` не `127.0.0.1`/`localhost`/`::1` — любой, кто достучится до порта, получит все права из `database`;
 - транспорт `stdio`, а аутентификация включена — в `stdio` она не действует;
-- `access_policy.enforced=true`, а аутентификации нет — без токена политика ничего не сужает.
+- `access_policy.enforced=true`, а аутентификации нет — без токена политика ничего не сужает;
+- basic достижим (и проверка роли включена, см. «Роль для basic»), а роль БД может больше, чем таблицы `public` (суперпользователь, `BYPASSRLS`, `CREATEROLE`, предопределённые роли вроде `pg_read_all_data`, `USAGE` на другие схемы, таблицы `public` без `table_prefix`) — см. «Роль для basic».
 
 ## Права по claim
 
@@ -463,7 +509,7 @@ MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
 
 Пулом соединений владеет `PostgresProvider`, его жизненный цикл привязан к lifespan сервера FastMCP:
 
-- Пул открывается при первом запросе к БД
+- Пул открывается при первом запросе к БД; если достижим basic — сразу при старте, фоновой проверкой прав роли (она не задерживает старт и отменяется при остановке)
 - Соединения закрываются при остановке сервера
 - Обработка сигналов (SIGINT, SIGTERM)
 

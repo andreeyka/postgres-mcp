@@ -82,6 +82,7 @@ def _server_with_rows(
             self.sql_driver.execute_statement = AsyncMock(
                 return_value=StatementResult(rows=rows, status=f"SELECT {len(rows)}", affected_rows=len(rows))
             )
+            self.catalog_driver = MagicMock()
 
         def view(self, access: object) -> "FakeDb":
             return self

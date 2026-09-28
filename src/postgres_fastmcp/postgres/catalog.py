@@ -91,6 +91,42 @@ WHERE name = {}
 
 QUERY_SERVER_VERSION = "SHOW server_version"
 
+# Права роли подключения для предупреждения при старте basic (domains/role_check.py).
+QUERY_ROLE_ATTRIBUTES = """
+SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole
+FROM pg_catalog.pg_roles AS r
+WHERE r.rolname = current_user
+"""
+
+QUERY_ROLE_PREDEFINED_MEMBERSHIPS = """
+SELECT r.rolname
+FROM pg_catalog.pg_roles AS r
+WHERE r.rolname IN ('pg_read_all_data', 'pg_write_all_data', 'pg_read_all_settings', 'pg_read_all_stats',
+                    'pg_read_server_files', 'pg_write_server_files', 'pg_execute_server_program', 'pg_monitor')
+  AND pg_catalog.pg_has_role(current_user, r.oid, 'MEMBER')
+ORDER BY r.rolname
+"""
+
+QUERY_ROLE_FOREIGN_SCHEMAS = r"""
+SELECT n.nspname
+FROM pg_catalog.pg_namespace AS n
+WHERE n.nspname NOT IN ('public', 'information_schema')
+  AND n.nspname NOT LIKE 'pg\_%'
+  AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
+ORDER BY n.nspname
+"""
+
+# Параметр — table_prefix (str): сравнение без учёта регистра, как у валидатора.
+QUERY_ROLE_UNPREFIXED_TABLES = """
+SELECT count(*) AS unprefixed
+FROM pg_catalog.pg_class AS c
+JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+  AND NOT starts_with(lower(c.relname), lower({}))
+  AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
+"""
+
 # Единственные шаблоны, которые выполняет CatalogSqlExecutor: сравнение по тексту до подстановки параметров.
 CATALOG_QUERIES: frozenset[str] = frozenset(
     {
@@ -107,5 +143,9 @@ CATALOG_QUERIES: frozenset[str] = frozenset(
         QUERY_EXTENSION_INSTALLED,
         QUERY_EXTENSION_AVAILABLE,
         QUERY_SERVER_VERSION,
+        QUERY_ROLE_ATTRIBUTES,
+        QUERY_ROLE_PREDEFINED_MEMBERSHIPS,
+        QUERY_ROLE_FOREIGN_SCHEMAS,
+        QUERY_ROLE_UNPREFIXED_TABLES,
     }
 )

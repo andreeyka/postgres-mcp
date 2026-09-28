@@ -1,7 +1,10 @@
 """Тесты create_server: visibility BASIC/FULL, расширения, базовая корректность."""
 
+import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
 from fastmcp.server.auth import AuthProvider
 from fastmcp.server.auth.oidc_proxy import OIDCProxy
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
@@ -105,6 +108,30 @@ async def test_create_server_adds_extra_providers() -> None:
     server = create_server(_settings(), extra_providers=[extra])
     names = {t.name for t in await server.list_tools()}
     assert {"ping", "execute_sql"} <= names
+
+
+async def test_create_server_check_basic_role_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """По умолчанию (как для HTTP) фоновая проверка роли запускается."""
+    called = asyncio.Event()
+
+    async def fake_check(*_args: object) -> None:
+        called.set()
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", fake_check)
+    server = create_server(_settings(access_mode=AccessMode.BASIC))
+    async with Client(server) as client:
+        await client.list_tools()
+        await asyncio.wait_for(called.wait(), timeout=1)
+
+
+async def test_create_server_check_basic_role_false_skips_the_role_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """check_basic_role=False (используется для stdio) не запускает фоновую проверку роли."""
+    check = AsyncMock()
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    server = create_server(_settings(access_mode=AccessMode.BASIC), check_basic_role=False)
+    async with Client(server) as client:
+        await client.list_tools()
+    check.assert_not_called()
 
 
 async def test_create_server_passes_access_resolver_to_provider() -> None:

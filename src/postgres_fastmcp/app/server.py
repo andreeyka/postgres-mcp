@@ -153,6 +153,7 @@ def create_server(  # noqa: PLR0913
     access_resolver: AccessResolver | None = None,
     extra_providers: Sequence[Provider] = (),
     extra_middleware: Sequence[Middleware] = (),
+    check_basic_role: bool = True,
 ) -> FastMCP:
     """Собрать FastMCP-сервер: PostgresProvider + auth + middleware.
 
@@ -175,6 +176,10 @@ def create_server(  # noqa: PLR0913
         extra_providers: Дополнительные FastMCP-провайдеры от потребителя библиотеки.
         extra_middleware: Дополнительные middleware (встают после встроенных; бюджет ответа
             стоит первым и проверяет и их результат).
+        check_basic_role: Передаётся в PostgresProvider как есть (по умолчанию True, как
+            build_auth — независимо от settings.server.transport). CLI передаёт False только
+            для реально запускаемого stdio: там лог фоновой проверки всё равно не виден
+            (configure_logging(disable=True)), а пул она открывала бы впустую при каждом запуске.
 
     Returns:
         Готовый FastMCP, на котором можно сразу вызывать `.run(...)`.
@@ -193,6 +198,7 @@ def create_server(  # noqa: PLR0913
         settings.database,
         access_policy=settings.auth.access_policy,
         access_resolver=access_resolver,
+        check_basic_role=check_basic_role,
     )
     # Эффективный потолок прав и auth видны на старте; секретов тут нет (префикс и имя класса — не секреты)
     logger.info(
