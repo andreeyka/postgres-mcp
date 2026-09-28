@@ -150,6 +150,10 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT 'a' COLLATE secret.coll",
     "SELECT NULL::pg_authid",
     "SELECT json_populate_record(NULL::pg_class, '{}')",
+    # аргумент currval приводится через regclass — оракул существования последовательности
+    "SELECT currval('secret.accounts')",
+    "SELECT currval('users')",
+    "SELECT lastval()",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.

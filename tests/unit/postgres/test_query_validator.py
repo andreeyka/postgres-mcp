@@ -274,6 +274,15 @@ class TestBasicPolicy:
         with pytest.raises(FunctionNotAllowedError, match="current_setting"):
             self.BASIC.validate("SELECT current_setting('app.jwt_secret')")
 
+    @pytest.mark.parametrize(
+        ("sql", "func"),
+        [("SELECT currval('secret.accounts')", "currval"), ("SELECT lastval()", "lastval")],
+    )
+    def test_sequence_state_functions_rejected(self, sql: str, func: str) -> None:
+        """Аргумент currval приводится через regclass: оракул существования, как 'x'::regclass."""
+        with pytest.raises(FunctionNotAllowedError, match=func):
+            self.BASIC.validate(sql)
+
     def test_show_outside_the_list_names_allowed_parameters(self) -> None:
         with pytest.raises(ShowParameterNotAllowedError) as exc_info:
             self.BASIC.validate("SHOW app.jwt_secret")

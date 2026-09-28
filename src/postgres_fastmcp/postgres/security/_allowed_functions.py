@@ -607,6 +607,10 @@ INTROSPECTION_FUNCTIONS: frozenset[str] = frozenset(
         "aclexplode",
         "makeaclitem",
         "pg_options_to_table",
+        # аргумент currval приводится через regclass — оракул существования последовательности в чужой
+        # схеме; lastval закрыт симметрично: на пуловом соединении он отдаёт значение чужого nextval
+        "currval",
+        "lastval",
         # с типом reg* во втором аргументе разрешают имена объектов через функцию ввода типа (обход R4)
         "pg_input_is_valid",
         "pg_input_error_info",
