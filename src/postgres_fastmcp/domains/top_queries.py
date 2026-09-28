@@ -7,7 +7,7 @@ from psycopg.errors import ObjectNotInPrerequisiteState
 
 from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 from postgres_fastmcp.shared.errors import (
     ExtensionStatusUnavailableError,
     InvalidSortCriteriaError,
@@ -33,16 +33,19 @@ class TopQueriesCalc:
     def __init__(
         self,
         sql_driver: SqlDriverPort,
+        *,
+        catalog_driver: QueryExecutorPort,
         connection_id: str = "",
     ) -> None:
         """Инициализация.
 
         Args:
-            sql_driver: SQL-драйвер для запросов (и шаблон для проверки расширений).
+            sql_driver: SQL-драйвер для запросов к pg_stat_statements.
+            catalog_driver: Исполнитель служебных запросов (проверка расширений и версии).
             connection_id: Стабильный id подключения для кэша расширений и версии.
         """
         self.sql_driver = sql_driver
-        self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
+        self._ext_inspector = ExtensionInspectorAdapter(catalog_driver, connection_id)
 
     async def _server_version(self) -> int:
         """Мажорная версия PostgreSQL после проверки, что pg_stat_statements установлено.
@@ -206,7 +209,7 @@ async def get_top_queries(
         InvalidSortCriteriaError: Если указан недопустимый sort_by.
         PgStatStatementsNotInstalledError: Если pg_stat_statements не установлено.
     """
-    calc = TopQueriesCalc(sql_driver=db.sql_driver, connection_id=db.connection_id)
+    calc = TopQueriesCalc(sql_driver=db.sql_driver, catalog_driver=db.catalog_driver, connection_id=db.connection_id)
 
     if sort_by == "resources":
         return await calc.get_top_resource_queries(limit=limit)

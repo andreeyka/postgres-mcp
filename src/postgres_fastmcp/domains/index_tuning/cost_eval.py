@@ -9,7 +9,7 @@ from pglast.ast import SelectStmt
 
 from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.postgres.models import IndexDefinition
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 
 from .models import candidate_str
 
@@ -62,6 +62,8 @@ class CostEvaluator:
     def __init__(
         self,
         sql_driver: SqlDriverPort,
+        *,
+        catalog_driver: QueryExecutorPort,
         connection_id: str = "",
         trace: Callable[[str], None] | None = None,
     ) -> None:
@@ -69,10 +71,12 @@ class CostEvaluator:
 
         Args:
             sql_driver: SQL исполнитель для доступа к базе данных.
+            catalog_driver: Исполнитель служебных запросов (проверка расширений и версии).
             connection_id: Стабильный идентификатор соединения для кэша версии/расширения.
             trace: Необязательный обработчик трассировочных сообщений (например, dta_trace).
         """
         self.sql_driver = sql_driver
+        self._catalog_driver = catalog_driver
         self._connection_id = connection_id
         self._trace: Callable[[str], None] = trace if trace is not None else logger.debug
 
@@ -106,7 +110,9 @@ class CostEvaluator:
         if existing_plan:
             return existing_plan
 
-        explain_plan_tool = ExplainPlanBuilder(self.sql_driver, connection_id=self._connection_id)
+        explain_plan_tool = ExplainPlanBuilder(
+            self.sql_driver, catalog_driver=self._catalog_driver, connection_id=self._connection_id
+        )
         plan = await explain_plan_tool.generate_explain_plan_with_hypothetical_indexes(
             query_text, indexes, use_generic_plan=False, trace=self._trace
         )

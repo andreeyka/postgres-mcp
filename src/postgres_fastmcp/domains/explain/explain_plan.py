@@ -7,7 +7,7 @@ from typing import Any
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.models import IndexDefinition
 from postgres_fastmcp.postgres.params.replacer import SqlParamReplacer
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 from postgres_fastmcp.shared.errors import ExplainPlanError, ExplainPlanExecutionError
 
 from .artifacts import ExplainPlanArtifact
@@ -37,16 +37,19 @@ class ExplainPlanBuilder:
     def __init__(
         self,
         sql_driver: SqlDriverPort,
+        *,
+        catalog_driver: QueryExecutorPort,
         connection_id: str = "",
     ) -> None:
         """Инициализация инструмента объяснения планов.
 
         Args:
             sql_driver: SQL-исполнитель для доступа к БД (и как шаблон для подстановки параметров).
+            catalog_driver: Исполнитель служебных запросов (проверка расширений и версии).
             connection_id: Стабильный идентификатор соединения для кэша версии/расширений.
         """
         self.sql_driver = sql_driver
-        self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
+        self._ext_inspector = ExtensionInspectorAdapter(catalog_driver, connection_id)
         self._param_replacer = SqlParamReplacer(sql_driver, sql_driver)
 
     async def replace_query_parameters_if_needed(self, sql_query: str) -> tuple[str, bool]:

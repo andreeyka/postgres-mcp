@@ -56,6 +56,8 @@ MUST_BLOCK_EVERYWHERE = [
     "SELECT txid_current()",
     "SELECT pg_notify('c', 'p')",
     "SELECT query_to_xml('select 1', true, false, '')",
+    "SELECT * FROM ts_stat('SELECT to_tsvector(c) FROM other.secret')",
+    "SELECT ts_rewrite('a'::tsquery, 'SELECT t, s FROM other.aliases')",
 ]
 
 # Запись: блокируется в read-only, разрешена в BASIC_WRITE.

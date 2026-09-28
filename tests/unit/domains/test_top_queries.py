@@ -24,7 +24,7 @@ def _calc(
     mock_executor: MagicMock, *, installed: bool = True, pg_version: int = 16, catalog_error: str | None = None
 ) -> TopQueriesCalc:
     """TopQueriesCalc с подменённой проверкой расширения и версией PostgreSQL (по умолчанию 16)."""
-    calc = TopQueriesCalc(sql_driver=mock_executor, connection_id="test")
+    calc = TopQueriesCalc(sql_driver=mock_executor, catalog_driver=mock_executor, connection_id="test")
     calc._ext_inspector = MagicMock()
     status = ExtensionStatus(
         is_installed=installed,

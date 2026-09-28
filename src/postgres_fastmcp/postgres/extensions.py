@@ -2,9 +2,12 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Literal
 
-from postgres_fastmcp.postgres.ports import QueryExecutorPort, QueryTemplatePort
+import psycopg
+
+from postgres_fastmcp.postgres.catalog import QUERY_EXTENSION_AVAILABLE, QUERY_EXTENSION_INSTALLED, QUERY_SERVER_VERSION
+from postgres_fastmcp.postgres.ports import QueryExecutorPort
 
 
 @dataclass
@@ -58,29 +61,30 @@ async def get_postgres_version(executor: QueryExecutorPort, connection_id: str) 
     if cached is not None:
         return cached
     try:
-        rows = await executor.execute("SHOW server_version", params=None, readonly=True)
-        if not rows:
-            logger.warning("Could not determine PostgreSQL version")
-            return 0
-        version_string = rows[0].cells.get("server_version")
-        if version_string is None:
-            return 0
-        if isinstance(version_string, bytes):
-            version_string = version_string.decode("utf-8")
-        if not isinstance(version_string, str):
-            version_string = str(version_string)
-        major = version_string.split(".")[0]
+        rows = await executor.execute(QUERY_SERVER_VERSION, params=None, readonly=True)
+    except psycopg.Error as e:
+        logger.warning("Error determining PostgreSQL version: %s", e)
+        return 0
+    if not rows:
+        logger.warning("Could not determine PostgreSQL version")
+        return 0
+    version_string = rows[0].cells.get("server_version")
+    if version_string is None:
+        return 0
+    if isinstance(version_string, bytes):
+        version_string = version_string.decode("utf-8")
+    if not isinstance(version_string, str):
+        version_string = str(version_string)
+    major = version_string.split(".")[0]
+    try:
         version = int(major)
-        _version_registry.set(connection_id, version)
-    except Exception as e:
+    except ValueError as e:
         logger.warning("Error determining PostgreSQL version: %s", e)
         return 0
     else:
+        _version_registry.set(connection_id, version)
         return version
 
-
-EXT_INSTALLED_QUERY = "SELECT extversion FROM pg_extension WHERE extname = {}"
-EXT_AVAILABLE_QUERY = "SELECT default_version FROM pg_available_extensions WHERE name = {}"
 
 CATALOG_ERROR_MESSAGE = (
     "Unable to determine extension status: the extension catalog reported an error. "
@@ -91,20 +95,11 @@ CATALOG_ERROR_MESSAGE = (
 
 
 class ExtensionInspectorAdapter:
-    """Адаптер проверки расширений и версии PostgreSQL поверх исполнителя SQL и идентификатора подключения."""
+    """Проверка расширений и версии PostgreSQL через исполнитель служебных запросов (catalog_driver)."""
 
-    def __init__(
-        self,
-        executor: QueryExecutorPort,
-        template: QueryTemplatePort,
-        connection_id: str,
-    ) -> None:
-        """Инициализация с исполнителем, шаблоном (для параметризованных запросов).
-
-        Идентификатор подключения используется для кэша.
-        """
+    def __init__(self, executor: QueryExecutorPort, connection_id: str) -> None:
+        """Инициализация с исполнителем служебных запросов (catalog_driver) и идентификатором подключения для кэша."""
         self._executor = executor
-        self._template = template
         self._connection_id = connection_id
 
     async def get_postgres_version(self) -> int:
@@ -120,11 +115,6 @@ class ExtensionInspectorAdapter:
             f"Для этой функции ({feature_name}) требуется PostgreSQL {min_version} или выше. "
             f"Ваша текущая версия PostgreSQL {version or 'неизвестна'}."
         )
-
-    async def _run_param(self, query: str, params: list[Any]) -> list[Any] | None:
-        rendered = self._template.render(query, params)
-        result = await self._executor.execute(rendered, params=None, readonly=True)
-        return cast("list[Any] | None", result)
 
     async def check_extension(  # noqa: C901
         self,
@@ -151,8 +141,8 @@ class ExtensionInspectorAdapter:
             default_version=None,
         )
         try:
-            installed = await self._run_param(EXT_INSTALLED_QUERY, [extension_name])
-        except Exception as e:
+            installed = await self._executor.execute(QUERY_EXTENSION_INSTALLED, params=[extension_name], readonly=True)
+        except psycopg.Error as e:
             logger.warning("Extension catalog query failed (pg_extension): %s", e)
             result.catalog_error = CATALOG_ERROR_MESSAGE
             return result
@@ -168,8 +158,8 @@ class ExtensionInspectorAdapter:
             return result
 
         try:
-            available = await self._run_param(EXT_AVAILABLE_QUERY, [extension_name])
-        except Exception as e:
+            available = await self._executor.execute(QUERY_EXTENSION_AVAILABLE, params=[extension_name], readonly=True)
+        except psycopg.Error as e:
             logger.warning("Extension catalog query failed (pg_available_extensions): %s", e)
             result.catalog_error = CATALOG_ERROR_MESSAGE
             return result

@@ -57,6 +57,7 @@ class ExplainService:
     def _make_tool(self) -> ExplainPlanBuilder:
         return ExplainPlanBuilder(
             sql_driver=self.db.sql_driver,
+            catalog_driver=self.db.catalog_driver,
             connection_id=self.db.connection_id,
         )
 
@@ -90,7 +91,7 @@ class ExplainService:
             result = await tool.explain(sql)
             return result.to_text()
 
-        ext_inspector = ExtensionInspectorAdapter(self.db.sql_driver, self.db.sql_driver, self.db.connection_id)
+        ext_inspector = ExtensionInspectorAdapter(self.db.catalog_driver, self.db.connection_id)
         is_hypopg_installed, hypopg_message = await ext_inspector.check_hypopg_installation_status()
         if not is_hypopg_installed:
             raise HypopgNotInstalledError(hypopg_message)

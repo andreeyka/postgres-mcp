@@ -5,8 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import postgres_fastmcp.domains.db_access as db_access_module
+from postgres_fastmcp.access import EffectiveAccess
+from postgres_fastmcp.app.config.database import DatabaseConfig
+from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
 from postgres_fastmcp.domains.explain.service import ExplainService
+from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
@@ -208,3 +214,37 @@ class TestExplainServiceErrorPropagation:
         with pytest.raises(ValueError) as exc_info:
             await service.explain("INVALID SQL")
         assert "Parse error" in str(exc_info.value)
+
+
+_SEQ_SCAN_PLAN = [
+    {"Plan": {"Node Type": "Seq Scan", "Total Cost": 1.0, "Startup Cost": 0.0, "Plan Rows": 1, "Plan Width": 4}}
+]
+
+
+async def test_hypothetical_explain_works_in_basic_with_table_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Проверка hypopg идёт по каналу сервера: валидатор агента с table_prefix её не отклоняет."""
+
+    async def execute(query, params=None, *, readonly=True):
+        if "pg_catalog.pg_extension" in query:
+            return [RowResult(cells={"extversion": "1.4.1"})]
+        if "EXPLAIN" in query:
+            return [RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})]
+        return []
+
+    delegate = MagicMock()
+    delegate.execute = AsyncMock(side_effect=execute)
+    monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+    config = DatabaseConfig(
+        host="h", user="u", password="p", name="d", access_mode=AccessMode.BASIC, write_mode=False, table_prefix="app_"
+    )
+    db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+    result = await ExplainService(db=db).explain(
+        "SELECT * FROM app_users WHERE name = 'x'",
+        hypothetical_indexes=[{"table": "app_users", "columns": ["name"]}],
+    )
+
+    assert "Seq Scan" in result
+    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    assert any("pg_catalog.pg_extension" in q for q in sent)
+    assert any("hypopg_create_index" in q and "EXPLAIN" in q for q in sent)
