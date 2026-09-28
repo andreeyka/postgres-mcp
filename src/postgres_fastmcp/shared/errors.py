@@ -139,18 +139,16 @@ class ShowParameterNotAllowedError(UserFacingError):
         self.name = name
 
 
-class TypeCastNotAllowedError(UserFacingError):
-    """Приведение к типу идентификатора объекта (reg*) в basic запрещено (валидация SQL)."""
+class TypeNotAllowedError(UserFacingError):
+    """Тип, резолвящий имена объектов (reg*, aclitem), в basic запрещён в любой позиции (валидация SQL)."""
 
     def __init__(self, type_name: str) -> None:
         """Инициализация с именем типа.
 
         Args:
-            type_name: Имя reg*-типа из приведения.
+            type_name: Имя типа из запроса (приведение, колонка табличной функции, аргумент PREPARE).
         """
-        message = (
-            f"Casts to {type_name} are not allowed in basic mode. Rewrite the query without object identifier types."
-        )
+        message = f"Type {type_name} is not allowed in basic mode. Rewrite the query without object identifier types."
         super().__init__(message)
         self.type_name = type_name
 

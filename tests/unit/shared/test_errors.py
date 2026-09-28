@@ -51,7 +51,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "ShowParameterNotAllowedError": lambda: errors.ShowParameterNotAllowedError(
         "app.secret", ["search_path", "timezone"]
     ),
-    "TypeCastNotAllowedError": lambda: errors.TypeCastNotAllowedError("regclass"),
+    "TypeNotAllowedError": lambda: errors.TypeNotAllowedError("regclass"),
 }
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
@@ -102,7 +102,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("ExtensionStatusUnavailableError", "then retry"),
         ("SystemRelationAccessError", "Use list_objects and get_object_details"),
         ("ShowParameterNotAllowedError", "Allowed parameters: search_path, timezone."),
-        ("TypeCastNotAllowedError", "Rewrite the query without object identifier types"),
+        ("TypeNotAllowedError", "Rewrite the query without object identifier types"),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:

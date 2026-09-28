@@ -15,7 +15,7 @@ from postgres_fastmcp.shared.errors import (
     StatementTypeNotAllowedError,
     SystemRelationAccessError,
     TablePrefixAccessError,
-    TypeCastNotAllowedError,
+    TypeNotAllowedError,
     UserFacingError,
 )
 
@@ -282,14 +282,105 @@ class TestBasicPolicy:
 
     @pytest.mark.parametrize("sql", ["SELECT 't'::regclass", "SELECT 't'::pg_catalog.REGCLASS[]"])
     def test_reg_cast_rejected(self, sql: str) -> None:
-        with pytest.raises(TypeCastNotAllowedError, match="regclass"):
+        with pytest.raises(TypeNotAllowedError, match="regclass"):
             self.BASIC.validate(sql)
 
     def test_reg_type_rejected_outside_cast(self) -> None:
         """R4 не должен сводиться к проверке только TypeCast: reg* в типе колонки табличной
         функции тоже отдаёт Postgres имя объекта на вход input-функции типа."""
-        with pytest.raises(TypeCastNotAllowedError, match="regclass"):
+        with pytest.raises(TypeNotAllowedError, match="regclass"):
             self.BASIC.validate("""SELECT * FROM json_to_record('{"a":"secret.t"}') AS x(a regclass)""")
+
+    @pytest.mark.parametrize(
+        ("sql", "type_name"),
+        [
+            ("SELECT '{secret.t}'::_regclass", "_regclass"),
+            ("SELECT '{secret.t}'::pg_catalog._regclass", "_regclass"),
+            ("""SELECT * FROM json_to_record('{"a":["secret.t"]}') AS x(a _regclass)""", "_regclass"),
+            ("PREPARE p(_regrole) AS SELECT 1", "_regrole"),
+            ("SELECT '{x}'::_regnamespace", "_regnamespace"),
+            ("SELECT 'secretrole=r/postgres'::aclitem", "aclitem"),
+            ("SELECT '{secretrole=r/postgres}'::pg_catalog._aclitem", "_aclitem"),
+        ],
+    )
+    def test_name_lookup_types_rejected_including_arrays(self, sql: str, type_name: str) -> None:
+        """Массив reg*-типа и aclitem тоже резолвят имена объектов через функцию ввода типа."""
+        with pytest.raises(TypeNotAllowedError) as exc_info:
+            self.BASIC.validate(sql)
+        assert str(exc_info.value) == (
+            f"Type {type_name} is not allowed in basic mode. Rewrite the query without object identifier types."
+        )
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT json_populate_record(NULL::secret.accounts, '{}')",
+            "SELECT enum_range(NULL::secret.status)",
+            "SELECT ROW(1)::secret.accounts",
+            "SELECT NULL::secret.accounts[]",
+            "SELECT NULL::secret._accounts",
+            "SELECT NULL::secret.pg_lsn",
+            "SELECT NULL::mydb.secret.accounts",
+            "SELECT 'a' COLLATE secret.coll",
+            """SELECT * FROM json_to_record('{"a":1}') AS x(a secret.t)""",
+        ],
+    )
+    def test_type_or_collation_from_another_schema_rejected(self, sql: str) -> None:
+        with pytest.raises(SchemaNotAllowedError, match="'secret'"):
+            self.BASIC.validate(sql)
+        with pytest.raises(SchemaNotAllowedError, match="'secret'"):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        ("sql", "relation"),
+        [
+            ("SELECT NULL::pg_authid", "pg_authid"),
+            ("SELECT json_populate_record(NULL::pg_class, '{}')", "pg_class"),
+            ("SELECT NULL::pg_catalog.pg_class", "pg_class"),
+            ("SELECT NULL::PG_AUTHID[]", "pg_authid"),
+            ("SELECT NULL::_pg_authid", "_pg_authid"),
+            ("SELECT NULL::information_schema._pg_user_mappings", "_pg_user_mappings"),
+            ("SELECT NULL::public.pg_stat_statements", "pg_stat_statements"),
+        ],
+    )
+    def test_system_row_type_rejected(self, sql: str, relation: str) -> None:
+        """Строковый тип системного отношения — то же, что само отношение (R1)."""
+        with pytest.raises(SystemRelationAccessError, match=f"'{relation}'"):
+            self.BASIC.validate(sql)
+        with pytest.raises(SystemRelationAccessError, match=f"'{relation}'"):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT '0/0'::pg_lsn",
+            "SELECT NULL::pg_catalog.pg_lsn",
+            "SELECT '{0/0}'::pg_lsn[]",
+            "SELECT NULL::pg_snapshot",
+            "SELECT NULL::public.app_t",
+            "SELECT NULL::PUBLIC.app_t",
+            "SELECT 'a' COLLATE \"C\"",
+            "SELECT 'a' COLLATE pg_catalog.\"default\"",
+            "SELECT 'a' COLLATE public.app_coll",
+            "SELECT '{1,2}'::int[], 1::bigint, now()::timestamp with time zone, 'a'::pg_catalog.varchar(3)",
+        ],
+    )
+    def test_builtin_and_allowed_schema_types_pass(self, sql: str) -> None:
+        self.BASIC.validate(sql)
+        self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT '{secret.t}'::_regclass",
+            "SELECT 'secretrole=r/postgres'::aclitem",
+            "SELECT json_populate_record(NULL::secret.accounts, '{}')",
+            "SELECT 'a' COLLATE secret.coll",
+            "SELECT NULL::pg_authid",
+        ],
+    )
+    def test_full_keeps_every_type_name(self, sql: str) -> None:
+        QueryValidator(read_only=True).validate(sql)
 
     def test_full_is_unchanged(self) -> None:
         full = QueryValidator(read_only=True)

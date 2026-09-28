@@ -7,6 +7,7 @@ import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
+    CollateClause,
     CreateExtensionStmt,
     DefElem,
     ExplainStmt,
@@ -29,10 +30,11 @@ from postgres_fastmcp.postgres.security.policies import (
     ALLOWED_FUNCTIONS,
     ALLOWED_NODE_TYPES,
     BASIC_ALLOWED_FUNCTIONS,
+    BASIC_PG_SCALAR_TYPES,
     BASIC_SHOW_PARAMETERS,
-    REG_TYPES,
+    NAME_LOOKUP_TYPES,
 )
-from postgres_fastmcp.postgres.security.schema_guard import validate_schema_access
+from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name, validate_schema_access
 from postgres_fastmcp.postgres.security.statement_policies import ALLOWED_STMT_TYPES, WRITE_NODE_TYPES, WRITE_STMT_TYPES
 from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
@@ -42,10 +44,12 @@ from postgres_fastmcp.shared.errors import (
     FunctionNotAllowedError,
     LikePatternNotConstantError,
     LockingClauseProhibitedError,
+    SchemaNotAllowedError,
     ShowParameterNotAllowedError,
     SqlParseError,
     StatementTypeNotAllowedError,
-    TypeCastNotAllowedError,
+    SystemRelationAccessError,
+    TypeNotAllowedError,
 )
 
 
@@ -54,11 +58,9 @@ logger = logging.getLogger(__name__)
 PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
 
 
-def _type_name_of(type_name: TypeName) -> str:
-    """Имя типа без схемы, в нижнем регистре ('pg_catalog.regclass[]' -> 'regclass')."""
-    names = type_name.names or ()
-    last = names[-1] if names else None
-    return str(getattr(last, "sval", "") or "").lower()
+def _name_parts(names: tuple[Node, ...] | None) -> list[str]:
+    """Части составного имени (тип, collation) как строки: ('pg_catalog', 'int4')."""
+    return [str(getattr(part, "sval", "") or "") for part in names or ()]
 
 
 def _is_plain_index_elem(elem: object) -> bool:
@@ -138,8 +140,8 @@ class _NodeValidationVisitor(Visitor):
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
-            TypeCastNotAllowedError: reg*-тип в любой позиции TypeName (каст, колонка
-                табличной функции, аргумент PREPARE) в basic.
+            TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName
+                (каст, колонка табличной функции, аргумент PREPARE) в basic.
         """
         if not isinstance(node, self._allowed_node_types):
             raise DisallowedNodeTypeError(type(node))
@@ -182,9 +184,10 @@ class _NodeValidationVisitor(Visitor):
                 raise ShowParameterNotAllowedError(name, sorted(BASIC_SHOW_PARAMETERS))
 
         if self._basic and isinstance(node, TypeName):
-            type_name = _type_name_of(node)
-            if type_name in REG_TYPES:
-                raise TypeCastNotAllowedError(type_name)
+            self._validate_type_name(node)
+
+        if self._basic and isinstance(node, CollateClause):
+            self._validate_name_qualifier(_name_parts(node.collname))
 
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
@@ -196,6 +199,47 @@ class _NodeValidationVisitor(Visitor):
 
         if isinstance(node, CreateExtensionStmt):
             self._validate_create_extension(node)
+
+    def _validate_type_name(self, node: TypeName) -> None:
+        """R4 в basic: имя типа не резолвит объекты по имени и не выводит за allowed_schema.
+
+        Функция ввода reg*-типов и aclitem ищет объекты по имени из строки; строковый тип системного
+        отношения (NULL::pg_authid) — то же отношение, что закрывает R1; тип или домен чужой схемы
+        (NULL::secret.accounts, enum_range(NULL::secret.status)) раскрывает её объекты. Массив
+        (_regclass, pg_catalog._aclitem, secret.t[]) проверяется по имени элемента.
+
+        Raises:
+            TypeNotAllowedError: Тип reg* или aclitem (в том числе массив).
+            SystemRelationAccessError: Имя pg_*/_pg_* вне скалярных BASIC_PG_SCALAR_TYPES.
+            SchemaNotAllowedError: Схема типа — не allowed_schema и не pg_catalog.
+        """
+        names = _name_parts(node.names)
+        if not names:
+            return
+        type_name = names[-1].lower()
+        element = type_name.removeprefix("_")
+        if element in NAME_LOOKUP_TYPES:
+            raise TypeNotAllowedError(type_name)
+        if is_system_relation_name(element) and element not in BASIC_PG_SCALAR_TYPES:
+            raise SystemRelationAccessError(type_name)
+        self._validate_name_qualifier(names)
+
+    def _validate_name_qualifier(self, names: list[str]) -> None:
+        """Схема составного имени (тип, collation) — allowed_schema или pg_catalog, если указана.
+
+        Неквалифицированное имя не проверяется: без каталога встроенный тип (int4) не отличить
+        от строкового типа таблицы без префикса (спека basic-confinement §6).
+
+        Raises:
+            SchemaNotAllowedError: Явная схема — не allowed_schema и не pg_catalog.
+        """
+        allowed_schema = self._allowed_schema
+        qualifiers = names[:-1]
+        if allowed_schema is None or not qualifiers:
+            return
+        schema = qualifiers[-1]
+        if schema.lower() not in (allowed_schema.lower(), "pg_catalog"):
+            raise SchemaNotAllowedError(schema, allowed_schema)
 
     def _validate_hypopg_create_index(self, node: FuncCall) -> None:
         """В basic аргумент hypopg_create_index — CREATE INDEX по разрешённой таблице из простых столбцов.
@@ -294,8 +338,8 @@ class QueryValidator:
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
-            TypeCastNotAllowedError: reg*-тип в любой позиции TypeName (каст, колонка
-                табличной функции, аргумент PREPARE) в basic.
+            TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName
+                (каст, колонка табличной функции, аргумент PREPARE) в basic.
         """
         try:
             parsed = pglast.parse_sql(query)

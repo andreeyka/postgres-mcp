@@ -14,6 +14,7 @@ from postgres_fastmcp.shared.errors import UserFacingError
 FULL_READ_ONLY = QueryValidator(read_only=True, allow_explain_analyze=True)
 BASIC_READ_ONLY = QueryValidator(allowed_schema="public", table_prefix="app_", read_only=True)
 BASIC_WRITE = QueryValidator(allowed_schema="public", read_only=False)
+BASIC_NO_PREFIX = QueryValidator(allowed_schema="public", read_only=True)
 
 # Попытки записи или побочных эффектов: блокируются в ЛЮБОМ ограниченном режиме.
 MUST_BLOCK_EVERYWHERE = [
@@ -134,6 +135,21 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')",
     "SELECT hypopg_create_index('CREATE INDEX ON app_t ((''secret.t''::regclass))')",
     "SELECT hypopg_hide_index(12345)",
+    # массивы reg*-типов и aclitem: функция ввода тоже резолвит имена объектов
+    "SELECT '{secret.t}'::_regclass",
+    "SELECT '{secret.t}'::pg_catalog._regclass",
+    """SELECT * FROM json_to_record('{"a":["secret.t"]}') AS x(a _regclass)""",
+    "PREPARE p(_regrole) AS SELECT 1",
+    "SELECT '{x}'::_regnamespace",
+    "SELECT 'secretrole=r/postgres'::aclitem",
+    "SELECT '{secretrole=r/postgres}'::_aclitem",
+    # имена типов и collation из чужих схем, строковые типы системных отношений
+    "SELECT json_populate_record(NULL::secret.accounts, '{}')",
+    "SELECT enum_range(NULL::secret.status)",
+    "SELECT ROW(1)::secret.accounts",
+    "SELECT 'a' COLLATE secret.coll",
+    "SELECT NULL::pg_authid",
+    "SELECT json_populate_record(NULL::pg_class, '{}')",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.
@@ -145,11 +161,18 @@ BASIC_ALLOWED_EXTRA = [
     "SHOW TRANSACTION ISOLATION LEVEL",
     "SHOW server_version",
     "SELECT '1'::int, 'a'::text",
+    "SELECT NULL::public.app_t",
+    "SELECT 'a' COLLATE \"C\"",
+    "SELECT '0/0'::pg_lsn",
+    "SELECT '{1,2}'::int[]",
 ]
 
 
 @pytest.mark.parametrize("sql", BASIC_BLOCKED_FULL_ALLOWED)
 def test_basic_blocks_introspection(sql: str) -> None:
+    # Без префикса: иначе регрессию правил §4 могла бы скрыть ошибка префикса.
+    with pytest.raises(UserFacingError):
+        BASIC_NO_PREFIX.validate(sql)
     with pytest.raises(UserFacingError):
         BASIC_READ_ONLY.validate(sql)
     with pytest.raises(UserFacingError):

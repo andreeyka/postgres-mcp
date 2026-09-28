@@ -31,9 +31,12 @@ BASIC_SHOW_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
-# Типы идентификаторов объектов: приведение 'other.t'::regclass сообщает о существовании объекта без прав на него.
-REG_TYPES: frozenset[str] = frozenset(
+# Типы, чья функция ввода резолвит имена объектов по каталогу: 'other.t'::regclass сообщает о существовании
+# объекта без прав на него, 'secretrole=r/postgres'::aclitem — о существовании роли. Массивы (_regclass,
+# _aclitem) валидатор сводит к имени элемента до проверки.
+NAME_LOOKUP_TYPES: frozenset[str] = frozenset(
     {
+        "aclitem",
         "regclass",
         "regproc",
         "regprocedure",
@@ -48,12 +51,17 @@ REG_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Скалярные встроенные типы с префиксом pg_: остальные pg_*/_pg_* имена типов в basic — строковые типы
+# системных отношений (pg_authid, pg_class), их закрывает R1.
+BASIC_PG_SCALAR_TYPES: frozenset[str] = frozenset({"pg_lsn", "pg_snapshot"})
+
 __all__ = [
     "ALLOWED_EXTENSIONS",
     "ALLOWED_FUNCTIONS",
     "ALLOWED_NODE_TYPES",
     "BASIC_ALLOWED_FUNCTIONS",
+    "BASIC_PG_SCALAR_TYPES",
     "BASIC_SHOW_PARAMETERS",
     "INTROSPECTION_FUNCTIONS",
-    "REG_TYPES",
+    "NAME_LOOKUP_TYPES",
 ]

@@ -16,6 +16,11 @@ from postgres_fastmcp.shared.errors import (
 _SYSTEM_RELATION_PREFIXES = ("pg_", "_pg_")
 
 
+def is_system_relation_name(name: str) -> bool:
+    """Имя системного отношения (или его строкового типа) по правилу R1, без учёта регистра."""
+    return name.lower().startswith(_SYSTEM_RELATION_PREFIXES)
+
+
 def validate_schema_access(
     range_var: RangeVar,
     *,
@@ -39,7 +44,7 @@ def validate_schema_access(
         return
 
     relname = range_var.relname or ""
-    if relname.lower().startswith(_SYSTEM_RELATION_PREFIXES):
+    if is_system_relation_name(relname):
         raise SystemRelationAccessError(relname)
 
     schemaname = range_var.schemaname
