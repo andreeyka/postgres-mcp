@@ -1,6 +1,7 @@
 """Тесты PostgresProvider: видимость тулов, права запроса, lifespan и namespace."""
 
 import asyncio
+import logging
 import time
 from pathlib import Path
 from typing import Self
@@ -339,3 +340,18 @@ async def test_slow_basic_role_check_is_cancelled_at_shutdown(
 
     assert cancelled.is_set()
     assert fake_service.instances[0].closed == 1
+
+
+async def test_crashing_basic_role_check_is_logged_and_does_not_raise(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Программная ошибка самой проверки (не БД) не должна ронять lifespan: гасится и логируется отдельно."""
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", AsyncMock(side_effect=ValueError("boom")))
+
+    with caplog.at_level(logging.ERROR, logger="postgres_fastmcp.provider"):
+        async with Client(FastMCP("t", providers=[PostgresProvider(_database(AccessMode.BASIC))])) as client:
+            await client.list_tools()
+
+    [record] = [r for r in caplog.records if r.name == "postgres_fastmcp.provider"]
+    assert record.levelname == "ERROR"
+    assert record.getMessage() == "Basic role check crashed"

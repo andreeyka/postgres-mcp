@@ -1,6 +1,6 @@
 # Дизайн: доработки после границы basic
 
-Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты), к реализации. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
+Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1 реализован. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
 
 ## 1. Объём
 
@@ -84,10 +84,10 @@ WHERE n.nspname = 'public'
   AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
 ```
 
-- Логика — модуль `domains/role_check.py`: функция `async def basic_role_findings(catalog: QueryExecutorPort, table_prefix: str | None) -> list[str]` возвращает список находок (английские фразы), функция `async def warn_about_basic_role(...)` пишет одну строку `WARNING`:
+- Логика — модуль `domains/role_check.py`: функция `async def basic_role_findings(catalog: QueryExecutorPort, table_prefix: str | None) -> RoleFindings` возвращает имя роли и список находок (английские фразы); у суперпользователя находка одна — `superuser` (`has_*_privilege` у него всегда true). Функция `async def warn_about_basic_role(catalog, table_prefix)` пишет одну строку `WARNING`:
   `Database role '<role>' has privileges beyond basic mode: superuser; member of pg_read_all_data; USAGE on schemas: a, b; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).`
   Схем — не больше 10, дальше `…`.
-- Ошибка БД (`psycopg.Error`, `ConnectionFailedError`, таймаут) — одна строка `INFO` `Basic role check skipped: <маскированная ошибка>`, сервер работает.
+- Недоступность БД на старте (`OperationalError`/`ConnectionFailedError`/`ConnectionNotEstablishedError`/таймаут/отмена) — одна строка `INFO` `Basic role check skipped: <маскированная ошибка>`, сервер работает; прочая ошибка Postgres при выполнении шаблонов (`psycopg.Error`) — одна строка `WARNING` `Basic role check failed: <маскированная ошибка>`, а не тихий пропуск (иначе реальная дыра в проверке выглядела бы как штатный пропуск); программная ошибка самой проверки (не БД) ловится в обёртке `PostgresProvider._check_basic_role` и пишет `ERROR` `Basic role check crashed`, фоновая задача не падает незаметно и сервер не останавливается.
 - Тесты: юнит на находки (фальшивый исполнитель по шаблонам), на текст предупреждения, на пропуск при ошибке; юнит на условие запуска в провайдере; интеграция: суперпользователь CI (`postgres`) даёт `superuser` в находках.
 
 ## 3. Слой подключения (PR 2)
@@ -149,6 +149,6 @@ WHERE n.nspname = 'public'
 
 ## 5. Изменения поведения (для заметок к PR)
 
-- PR 1: при старте basic с широкими правами роли — `WARNING` в лог; README — раздел «Роль для basic».
+- PR 1: при старте basic с широкими правами роли — `WARNING` в лог; БД недоступна на старте — `INFO` `Basic role check skipped`; прочая ошибка Postgres при проверке — `WARNING` `Basic role check failed`; программная ошибка самой проверки — `ERROR` `Basic role check crashed` (сервер не падает); в basic пул открывается при старте (фоновая проверка), а не при первом запросе; README — раздел «Роль для basic».
 - PR 2: параметры libpq из URI (`target_session_attrs`, `options`, `connect_timeout`, `sslrootcert`, …) доходят до подключения — раньше молча отбрасывались; поле `extra_kwargs` удалено, новое `connect_options`; `max_inactive_connection_lifetime` работает (`max_idle` пула); гипотетические индексы сбрасываются при возврате соединения в пул.
 - PR 3: новая настройка `plan_check` (по умолчанию выключена); с ней basic отклоняет запросы, план которых читает отношения вне `public`/префикса или функции чужих схем (`PlanAccessError`).
