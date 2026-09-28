@@ -1,15 +1,21 @@
 # mypy: ignore-errors
 """Integration tests for table_prefix (postgres_fastmcp: DbAccess, AccessMode, SafeSqlExecutor)."""
 
+import logging
+
 import pytest
 
 from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
+from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import ObjectNotFoundError, SchemaNotAllowedError, TablePrefixAccessError
+
+
+logger = logging.getLogger(__name__)
 
 
 async def setup_test_tables(driver: DbAccess) -> None:
@@ -352,3 +358,24 @@ async def test_agent_sql_still_cannot_read_system_catalogs(db_user_prefix: DbAcc
         await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_indexes", readonly=True)
     with pytest.raises(SchemaNotAllowedError):
         await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_catalog.pg_indexes", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_explain_with_hypothetical_index_in_basic_with_prefix(
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
+) -> None:
+    """Basic + table_prefix: проверка hypopg идёт по каналу сервера, план с гипотетическим индексом строится."""
+    await setup_test_tables(db_full)
+    try:
+        await db_full.sql_driver.execute("CREATE EXTENSION IF NOT EXISTS hypopg", readonly=False)
+    except Exception as e:
+        logger.warning("hypopg not available: %s", e)
+        pytest.skip("hypopg extension is not available")
+
+    result = await ExplainService(db_user_prefix).explain(
+        "SELECT * FROM app_users WHERE name = 'x'",
+        hypothetical_indexes=[{"table": "app_users", "columns": ["name"]}],
+    )
+
+    assert "app_users" in result
