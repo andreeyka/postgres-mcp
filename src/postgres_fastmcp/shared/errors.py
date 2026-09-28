@@ -172,6 +172,25 @@ class SchemataTableAccessError(UserFacingError):
         self.table_name = table_name
 
 
+class PlanAccessError(UserFacingError):
+    """План запроса basic читает отношение или функцию вне разрешённого (проверка по плану, plan_check)."""
+
+    def __init__(self, kind: str, qualified_name: str) -> None:
+        """Инициализация с видом объекта и его полным именем.
+
+        Args:
+            kind: Вид объекта из плана: relation или function.
+            qualified_name: Имя со схемой из плана (schema.name).
+        """
+        message = (
+            f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query reaches it through "
+            "a view, rule or function. Only tables in 'public' are permitted."
+        )
+        super().__init__(message)
+        self.kind = kind
+        self.qualified_name = qualified_name
+
+
 class SqlParseError(UserFacingError):
     """Не удалось разобрать SQL-запрос (синтаксическая ошибка)."""
 

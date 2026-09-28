@@ -16,6 +16,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "SchemaNotAllowedError": lambda: errors.SchemaNotAllowedError("private", "public"),
     "TablePrefixAccessError": lambda: errors.TablePrefixAccessError("foo", "bar_"),
     "SchemataTableAccessError": lambda: errors.SchemataTableAccessError("information_schema", "schemata"),
+    "PlanAccessError": lambda: errors.PlanAccessError("relation", "secret.accounts"),
     "SqlParseError": errors.SqlParseError,
     "StatementTypeNotAllowedError": lambda: errors.StatementTypeNotAllowedError(
         read_only=True, stmt_type_name="CreateStmt"
@@ -103,6 +104,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("SystemRelationAccessError", "Use list_objects and get_object_details"),
         ("ShowParameterNotAllowedError", "Allowed parameters: search_path, timezone."),
         ("TypeNotAllowedError", "Rewrite the query without object identifier types"),
+        ("PlanAccessError", "Only tables in 'public' are permitted."),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:
