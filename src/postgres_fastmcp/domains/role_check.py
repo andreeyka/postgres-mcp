@@ -5,7 +5,10 @@
 
 from dataclasses import dataclass
 
-from psycopg import Error as PsycopgError
+from psycopg import (
+    Error as PsycopgError,
+    OperationalError,
+)
 
 from postgres_fastmcp.postgres.catalog import (
     QUERY_ROLE_ATTRIBUTES,
@@ -14,7 +17,12 @@ from postgres_fastmcp.postgres.catalog import (
     QUERY_ROLE_UNPREFIXED_TABLES,
 )
 from postgres_fastmcp.postgres.ports import QueryExecutorPort
-from postgres_fastmcp.shared.errors import ConnectionFailedError, QueryCancelledError, QueryTimeoutError
+from postgres_fastmcp.shared.errors import (
+    ConnectionFailedError,
+    ConnectionNotEstablishedError,
+    QueryCancelledError,
+    QueryTimeoutError,
+)
 from postgres_fastmcp.shared.logger import get_logger
 from postgres_fastmcp.shared.utils import obfuscate_password
 
@@ -24,8 +32,16 @@ logger = get_logger(__name__)
 # Длинный список схем в одной строке лога не читается: первые MAX_LISTED_SCHEMAS и многоточие.
 MAX_LISTED_SCHEMAS = 10
 
-# БД недоступна, запрос отменён или не успел: проверка пропускается, сервер работает дальше.
-_SKIP_ERRORS = (PsycopgError, ConnectionFailedError, QueryTimeoutError, QueryCancelledError, TimeoutError)
+# БД недоступна, запрос отменён или не успел: проверка пропускается тихо, сервер работает дальше.
+# OperationalError — база и для сбоя подключения, и для psycopg_pool.PoolTimeout (его подкласс).
+_UNREACHABLE_ERRORS = (
+    OperationalError,
+    ConnectionFailedError,
+    ConnectionNotEstablishedError,
+    QueryTimeoutError,
+    QueryCancelledError,
+    TimeoutError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +108,14 @@ async def _unprefixed_table_findings(catalog: QueryExecutorPort, table_prefix: s
 
 
 async def warn_about_basic_role(catalog: QueryExecutorPort, table_prefix: str | None) -> None:
-    """Одна строка WARNING, если роль может больше, чем basic; ошибка БД — одна строка INFO.
+    """Одна строка WARNING, если роль может больше, чем basic.
+
+    БД недоступна (подключение, таймаут, отмена) — одна строка INFO, сервер стартует дальше:
+    это ожидаемо на старте и не повод шуметь. Любая другая ошибка Postgres при выполнении
+    шаблонов каталога (например, баг в одном из них) — одна строка WARNING «failed», а не
+    тихий пропуск: иначе реальная дыра в проверке выглядела бы как штатный пропуск.
+    ValueError/TypeError CatalogSqlExecutor — ошибка кода, а не БД, — не перехватываются здесь
+    и доходят до вызывающего.
 
     Args:
         catalog: Исполнитель шаблонов каталога (канал сервера).
@@ -100,8 +123,10 @@ async def warn_about_basic_role(catalog: QueryExecutorPort, table_prefix: str | 
     """
     try:
         result = await basic_role_findings(catalog, table_prefix)
-    except _SKIP_ERRORS as e:
+    except _UNREACHABLE_ERRORS as e:
         logger.info("Basic role check skipped: %s", obfuscate_password(str(e) or type(e).__name__))
+    except PsycopgError as e:
+        logger.warning("Basic role check failed: %s", obfuscate_password(str(e) or type(e).__name__))
     else:
         if result.findings:
             logger.warning(

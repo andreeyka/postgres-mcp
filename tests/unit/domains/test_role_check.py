@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from psycopg import OperationalError
+from psycopg.errors import UndefinedFunction
 
 from postgres_fastmcp.domains.role_check import RoleFindings, basic_role_findings, warn_about_basic_role
 from postgres_fastmcp.postgres.catalog import (
@@ -14,7 +15,12 @@ from postgres_fastmcp.postgres.catalog import (
     QUERY_ROLE_UNPREFIXED_TABLES,
 )
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.shared.errors import ConnectionFailedError, QueryTimeoutError
+from postgres_fastmcp.shared.errors import (
+    ConnectionFailedError,
+    ConnectionNotEstablishedError,
+    QueryCancelledError,
+    QueryTimeoutError,
+)
 
 
 _LOGGER = "postgres_fastmcp.domains.role_check"
@@ -154,11 +160,14 @@ async def test_no_findings_no_log(caplog: pytest.LogCaptureFixture) -> None:
     [
         OperationalError("connection to server at postgresql://u:hunter2@db/d failed"),
         ConnectionFailedError("postgresql://u:****@db/d refused"),
+        ConnectionNotEstablishedError(),
         QueryTimeoutError(30),
+        QueryCancelledError(),
         TimeoutError(),
     ],
 )
 async def test_database_error_skips_the_check_with_info(caplog: pytest.LogCaptureFixture, error: Exception) -> None:
+    """БД недоступна, запрос отменён или не успел: тихий пропуск, сервер стартует дальше."""
     with caplog.at_level(logging.INFO, logger=_LOGGER):
         await warn_about_basic_role(_FailingCatalog(error), "app_")
 
@@ -166,3 +175,23 @@ async def test_database_error_skips_the_check_with_info(caplog: pytest.LogCaptur
     assert record.levelname == "INFO"
     assert record.getMessage().startswith("Basic role check skipped: ")
     assert "hunter2" not in record.getMessage()
+
+
+async def test_other_database_error_fails_with_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Ошибка не в доступности БД, а в самом запросе (например, баг в шаблоне каталога) — не тихий пропуск."""
+    error = UndefinedFunction("function pg_catalog.starts_with(text, text) does not exist")
+
+    with caplog.at_level(logging.INFO, logger=_LOGGER):
+        await warn_about_basic_role(_FailingCatalog(error), "app_")
+
+    [record] = [r for r in caplog.records if r.name == _LOGGER]
+    assert record.levelname == "WARNING"
+    assert record.getMessage() == (
+        "Basic role check failed: function pg_catalog.starts_with(text, text) does not exist"
+    )
+
+
+async def test_programming_bug_propagates() -> None:
+    """ValueError/TypeError CatalogSqlExecutor — ошибка кода, не БД: должна дойти до вызывающего, а не потеряться."""
+    with pytest.raises(ValueError, match="boom"):
+        await warn_about_basic_role(_FailingCatalog(ValueError("boom")), "app_")
