@@ -192,19 +192,28 @@ END $$;
 -- write_mode = true: добавить INSERT, UPDATE, DELETE на те же таблицы и USAGE на их последовательности
 ```
 
+Про сам скрипт:
+
+- цикл `DO $$ ... $$` выше проходит по `pg_tables` и грантует только таблицы; представления и материализованные представления с тем же префиксом (`pg_views`/`pg_matviews`) им не покрыты — на них `SELECT` нужно выдавать отдельно;
+- `ALTER DEFAULT PRIVILEGES` действует только на объекты, которые создаёт **та роль, что его выполнила**; если таблицы с префиксом создаёт другая роль (например, `app_owner`), нужен `ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public GRANT SELECT ON TABLES TO mcp_basic`;
+- на PostgreSQL ≤14 у `PUBLIC` по умолчанию есть `CREATE` на схему `public` (с PG15 это уже не так по умолчанию); если это лишнее — дополнительно `REVOKE CREATE ON SCHEMA public FROM PUBLIC`.
+
 Чего роли для basic не давать:
 
-- членства в `pg_read_all_data`, `pg_read_all_settings`, `pg_read_all_stats`, `pg_monitor` (и других предопределённых ролях с доступом к данным или серверу);
+- членства в `pg_read_all_data`, `pg_read_all_settings`, `pg_read_all_stats`, `pg_monitor` (и других предопределённых ролях с доступом к данным или серверу) — проверка при старте (ниже) находит и косвенное членство: например, `pg_monitor` подразумевает `pg_read_all_settings` и `pg_read_all_stats`;
+- `CREATEROLE`: на PostgreSQL ≤15 эта привилегия позволяет роли выдать себе членство в предопределённых ролях самостоятельно;
 - прав на `pg_stat_statements`: расширение лучше ставить в отдельную схему, на которую у роли нет `USAGE`;
 - `SELECT` на представления в `public` поверх таблиц других схем, если эти данные агенту не нужны: представление отдаёт данные схемы, над которой построено, каждому, кому выдан `SELECT` на само представление.
 
 При старте с достижимым basic (потолок `basic`, свой `access_resolver` или `access_policy.enforced=true`) сервер в фоне проверяет права роли и пишет одну строку WARNING, если роль может больше, например:
 
 ```text
-Database role 'app' has privileges beyond basic mode: superuser; member of pg_read_all_data; USAGE on schemas: billing, secret; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).
+Database role 'app' has privileges beyond basic mode: BYPASSRLS; member of pg_read_all_data; USAGE on schemas: billing, secret; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).
 ```
 
-Сервер при этом стартует. Если БД на старте недоступна, проверка пропускается с одной строкой INFO `Basic role check skipped: ...`; прочая ошибка Postgres при самой проверке — WARNING `Basic role check failed: ...`; программная ошибка проверки (а не БД) — ERROR `Basic role check crashed` в лог, сервер тоже не останавливается.
+Сервер при этом стартует. Если БД на старте недоступна, проверка пропускается с одной строкой INFO `Basic role check skipped: ...`; сам пул при этом ещё отдельно логирует свои предупреждения о повторных попытках подключения (`psycopg_pool`, около 30 секунд) — это его штатное поведение, а не часть проверки. Прочая ошибка Postgres при самой проверке — WARNING `Basic role check failed: ...`; программная ошибка проверки (а не БД) — ERROR `Basic role check crashed` в лог, сервер тоже не останавливается.
+
+Проверка и её строка в логе видны только при включённом логировании, то есть на транспорте HTTP: в `stdio` логи отключены (см. «Транспорты»), и фоновая проверка там не запускается. В `stdio` права роли можно проверить вручную теми же запросами (`src/postgres_fastmcp/postgres/catalog.py`, шаблоны `QUERY_ROLE_*`) либо один раз временно поднять сервер с `--transport http`.
 
 ### Транспорты
 
