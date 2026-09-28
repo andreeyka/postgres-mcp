@@ -434,8 +434,6 @@ ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "ts_parse",
         "ts_rank",
         "ts_rank_cd",
-        "ts_rewrite",
-        "ts_stat",
         "ts_token_type",
         "tsvector_to_array",
         "websearch_to_tsquery",
