@@ -204,8 +204,9 @@ def build_settings_from_cli(  # noqa: PLR0913
     Приоритет: явно заданный флаг > config.json > env/.env > значения по умолчанию. None означает
     «флаг не задан» и ничего не переопределяет. Флаги накладываются на секции config.json поле
     за полем; database_uri задаёт только поля подключения (host, port, user, password, name,
-    sslmode и client_encoding, если они есть в URI), они перекрывают те же поля config.json,
-    а остальная секция database из config.json сохраняется. JSON-конфиг подхватывается только при
+    sslmode, client_encoding и connect_options — если они есть в URI; connect_options из URI
+    заменяет словарь config.json целиком), они перекрывают те же поля config.json, а остальная
+    секция database из config.json сохраняется. JSON-конфиг подхватывается только при
     использовании как CLI: по умолчанию — `./config.json` из CWD; для библиотечного использования
     стройте Settings напрямую или передавайте явный путь.
     """

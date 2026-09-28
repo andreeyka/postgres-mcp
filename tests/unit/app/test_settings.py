@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 from pydantic import ValidationError
 
 from postgres_fastmcp.app.config import Settings, build_settings_from_cli
@@ -255,3 +256,168 @@ def test_database_uri_round_trips_ipv6_host_and_database_name(host: str, name: s
 def test_database_uri_keeps_an_already_bracketed_ipv6_host() -> None:
     uri = DatabaseConfig(host="[::1]", user="u", password="pw", name="d").database_uri
     assert uri.startswith("postgresql://u:pw@[::1]:5432/d?")
+
+
+def test_uri_query_parameters_go_to_connect_options() -> None:
+    """Параметры libpq из query string доходят до подключения; у sslmode и client_encoding свои поля."""
+    fields = DatabaseConfig.uri_fields(
+        "postgresql://u:p@h/d?sslmode=require&client_encoding=LATIN1&target_session_attrs=read-write"
+        "&options=-c%20statement_timeout%3D5000&connect_timeout=5&connect_timeout=7"
+    )
+    assert fields["connect_options"] == {
+        "target_session_attrs": "read-write",
+        "options": "-c statement_timeout=5000",
+        "connect_timeout": "7",
+    }
+    assert (fields["sslmode"], fields["client_encoding"]) == ("require", "LATIN1")
+
+
+def test_uri_without_libpq_parameters_sets_no_connect_options() -> None:
+    """URI без лишних параметров не стирает connect_options из config.json."""
+    assert "connect_options" not in DatabaseConfig.uri_fields("postgresql://u:p@h/d?sslmode=require")
+
+
+def test_database_uri_carries_connect_options_to_libpq() -> None:
+    config = DatabaseConfig(
+        **_CONNECTION,
+        connect_options={
+            "options": "-c statement_timeout=5000",
+            "target_session_attrs": "read-write",
+            "sslrootcert": "/etc/ssl/ca.pem",
+        },
+    )
+    params = conninfo_to_dict(config.database_uri)
+    assert params["options"] == "-c statement_timeout=5000"
+    assert params["target_session_attrs"] == "read-write"
+    assert params["sslrootcert"] == "/etc/ssl/ca.pem"
+    assert params["client_encoding"] == "UTF8"
+
+
+def test_connect_options_round_trip_through_from_uri() -> None:
+    config = DatabaseConfig(**_CONNECTION, connect_options={"application_name": "mcp x&y=z"})
+    assert DatabaseConfig.from_uri(config.database_uri).connect_options == {"application_name": "mcp x&y=z"}
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("host", "host"),
+        ("hostaddr", "host"),
+        ("port", "port"),
+        ("dbname", "name"),
+        ("user", "user"),
+        ("password", "password"),
+        ("sslmode", "sslmode"),
+        ("ssl", "sslmode"),
+        ("requiressl", "sslmode"),
+        ("client_encoding", "client_encoding"),
+    ],
+)
+def test_connect_options_reject_keys_that_have_their_own_field(key: str, field: str) -> None:
+    with pytest.raises(ValidationError, match=f"use the database field '{field}'") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("key", ["sslpassword", "passfile", "oauth_client_secret", "sslkeylogfile"])
+def test_connect_options_reject_secrets(key: str) -> None:
+    with pytest.raises(ValidationError, match="must not carry secrets") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("PASSWORD", "password"),
+        ("Host", "host"),
+        ("SslMode", "sslmode"),
+    ],
+)
+def test_connect_options_reject_field_keys_case_insensitively(key: str, field: str) -> None:
+    """Libpq отверг бы 'PASSWORD' и сам, но только при подключении; проверка без учёта регистра даёт понятную ошибку сразу."""
+    with pytest.raises(ValidationError, match=f"use the database field '{field}'") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_connect_options_reject_secret_keys_case_insensitively() -> None:
+    with pytest.raises(ValidationError, match="must not carry secrets") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={"SslPassword": _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_password_parameter_is_rejected_without_leaking_it() -> None:
+    with pytest.raises(ValidationError, match="use the database field 'password'") as exc_info:
+        DatabaseConfig.from_uri(f"postgresql://u:p@h/d?password={_SECRET_PASSWORD}")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_database_settings_reads_connect_options_json_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_CONNECT_OPTIONS", '{"application_name": "from-env", "connect_timeout": "5"}')
+    assert DatabaseSettings().connect_options == {"application_name": "from-env", "connect_timeout": "5"}
+
+
+def test_extra_kwargs_field_is_gone() -> None:
+    assert "extra_kwargs" not in DatabaseConfig.model_fields
+
+
+@pytest.mark.parametrize("key", ["oauth_client_secret", "sslkeylogfile"])
+def test_secret_connect_options_are_libpq_keywords(key: str) -> None:
+    """Запрещённые секреты — настоящие параметры libpq 18: без запрета они дошли бы до подключения."""
+    assert conninfo_to_dict(f"postgresql://u@h/d?{key}=x")[key] == "x"
+
+
+@pytest.mark.parametrize("key", ["prepared_statement_cache_size", "schema", "pgbouncer"])
+def test_uri_with_a_parameter_unknown_to_libpq_fails_config(key: str) -> None:
+    """Параметры SQLAlchemy/asyncpg/Prisma libpq не знает: ошибка при загрузке конфига, а не таймаут пула."""
+    with pytest.raises(ValidationError, match=f"'{key}'") as exc_info:
+        DatabaseConfig.from_uri(f"postgresql://u:{_SECRET_PASSWORD}@h/d?{key}=true")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_connect_options_unknown_to_libpq_fail_without_leaking_the_value() -> None:
+    with pytest.raises(ValidationError, match="'no_such_option'") as exc_info:
+        DatabaseConfig(**{**_CONNECTION, "password": _SECRET_PASSWORD}, connect_options={"no_such_option": "v"})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_ssl_true_points_to_sslmode() -> None:
+    """ssl=true из URI asyncpg/JDBC libpq понимает как sslmode=require: второе значение sslmode запрещено."""
+    with pytest.raises(ValidationError, match="use the database field 'sslmode'"):
+        DatabaseConfig.from_uri("postgresql://u:p@h/d?ssl=true")
+
+
+def test_uri_query_plus_is_not_a_space() -> None:
+    """Libpq не декодирует '+' как пробел: путь с '+' проходит from_uri -> database_uri без изменений."""
+    config = DatabaseConfig.from_uri("postgresql://u:p@h/d?sslrootcert=/etc/ssl/a+b.pem")
+    assert config.connect_options == {"sslrootcert": "/etc/ssl/a+b.pem"}
+    assert conninfo_to_dict(config.database_uri)["sslrootcert"] == "/etc/ssl/a+b.pem"
+
+
+def test_uri_query_keeps_an_empty_value() -> None:
+    """Пустое значение — тоже значение для libpq (application_name= сбрасывает имя из env)."""
+    config = DatabaseConfig.from_uri("postgresql://u:p@h/d?application_name=")
+    assert config.connect_options == {"application_name": ""}
+    assert conninfo_to_dict(config.database_uri)["application_name"] == ""
+
+
+def test_uri_query_repeated_key_takes_the_last_value_and_keeps_percent_decoding() -> None:
+    fields = DatabaseConfig.uri_fields("postgresql://u:p@h/d?application_name=a&application_name=b%20c%2Bd&")
+    assert fields["connect_options"] == {"application_name": "b c+d"}
+
+
+def test_uri_query_parameter_without_a_value_separator_fails() -> None:
+    """Libpq отвергает параметр без '=': ошибка сразу, а не молча пропущенный параметр."""
+    with pytest.raises(ValueError, match="without '='") as exc_info:
+        DatabaseConfig.uri_fields(f"postgresql://u:p@h/d?{_SECRET_PASSWORD}")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_query_with_invalid_utf8_fails_without_echoing_it() -> None:
+    """Libpq тоже отвергает байты, которые не декодируются: ошибка сразу, значение в сообщение не попадает."""
+    with pytest.raises(ValueError, match="UTF-8") as exc_info:
+        DatabaseConfig.uri_fields("postgresql://u:p@h/d?application_name=%FFsecret")
+    assert "secret" not in str(exc_info.value)
+    assert "%FF" not in str(exc_info.value)

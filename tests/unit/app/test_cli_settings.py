@@ -229,3 +229,18 @@ def test_no_write_mode_flag_beats_config_json_through_the_cli(monkeypatch: pytes
     (tmp_path / "config.json").write_text(json.dumps({"database": {"write_mode": True}}), encoding="utf-8")
     settings, _ = _run_cli(["--no-write-mode"], monkeypatch, tmp_path)
     assert settings.database.write_mode is False
+
+
+def test_database_uri_parameters_replace_config_connect_options(tmp_path: Path) -> None:
+    """Словарь из URI заменяет connect_options config.json целиком; URI без параметров его не трогает."""
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"database": {"connect_options": {"application_name": "cfg", "connect_timeout": "3"}}}),
+        encoding="utf-8",
+    )
+
+    kept = build_settings_from_cli(database_uri="postgresql://a:b@db/app", config_path=path)
+    replaced = build_settings_from_cli(database_uri="postgresql://a:b@db/app?application_name=uri", config_path=path)
+
+    assert kept.database.connect_options == {"application_name": "cfg", "connect_timeout": "3"}
+    assert replaced.database.connect_options == {"application_name": "uri"}

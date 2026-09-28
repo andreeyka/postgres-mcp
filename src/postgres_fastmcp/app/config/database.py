@@ -1,9 +1,12 @@
 """Конфигурация базы данных: DatabaseConfig для кода библиотеки, DatabaseSettings для env/.env."""
 
+import re
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from postgres_fastmcp.shared.enums import AccessMode, SslMode
@@ -15,13 +18,69 @@ ERROR_DATABASE_URI_NOT_SET = (
     "or pass --database-uri, or ensure config.json 'database' section has full connection params."
 )
 
+# Параметры libpq, у которых есть свои поля DatabaseConfig: в connect_options они дали бы второе значение.
+_CONNECT_OPTION_FIELDS: dict[str, str] = {
+    "host": "host",
+    "hostaddr": "host",
+    "port": "port",
+    "dbname": "name",
+    "user": "user",
+    "password": "password",
+    "sslmode": "sslmode",
+    # ssl=true (совместимость с JDBC) и устаревший requiressl=1 — синонимы sslmode=require в libpq
+    "ssl": "sslmode",
+    "requiressl": "sslmode",
+    "client_encoding": "client_encoding",
+}
+
+# Секрет, путь к секретам или файл с ключами TLS-сессий: URI подключения может попасть в логи и
+# сообщения об ошибках.
+_SECRET_CONNECT_OPTIONS = frozenset({"sslpassword", "passfile", "oauth_client_secret", "sslkeylogfile"})
+
+# Сообщение PQconninfoParse о неизвестном параметре URI: в кавычках только ключ, без значения.
+_LIBPQ_UNKNOWN_PARAMETER = re.compile(r'invalid URI query parameter: "(?P<key>[^"]*)"')
+
+# Параметры query string URI со своими полями: в connect_options не попадают.
+_URI_FIELD_PARAMETERS = frozenset({"sslmode", "client_encoding"})
+
+
+def _parse_uri_query(query: str) -> dict[str, str]:
+    """Query string URI так, как её читает libpq (conninfo_uri_parse_params).
+
+    В отличие от parse_qs: '+' не превращается в пробел (путь /etc/ssl/a+b.pem), пустое значение
+    сохраняется (application_name=). Ключ и значение делятся по первому '='; повтор ключа —
+    последнее значение. Пустые сегменты (a=1&&b=2, завершающий '&') пропускаются.
+
+    Мягче libpq в двух местах: '=' внутри значения (a=b=c) libpq отвергает, здесь оно остаётся в
+    значении; некорректный %-токен (%zz, обрезанный %2) проходит буквально. database_uri кодирует
+    такие значения заново, и libpq получает их корректно закодированными.
+
+    Raises:
+        ValueError: Сегмент без '=' или %-последовательность, которая не декодируется как UTF-8
+            (libpq отвергает оба случая); сам сегмент и значение в сообщение не попадают.
+    """
+    params: dict[str, str] = {}
+    for segment in query.split("&"):
+        if not segment:
+            continue
+        key, separator, value = segment.partition("=")
+        if not separator:
+            msg = "Database URI query parameter without '=' separator; expected key=value"
+            raise ValueError(msg)
+        try:
+            params[unquote(key, errors="strict")] = unquote(value, errors="strict")
+        except UnicodeDecodeError:
+            msg = "Database URI query parameter is not valid UTF-8 after percent-decoding"
+            raise ValueError(msg) from None
+    return params
+
 
 class DatabaseConfig(BaseModel):
     """Конфигурация одной базы данных (одна БД на MCP-сервер) для кода библиотеки.
 
     Берёт только переданные значения: env и .env не читаются, поэтому окружение хоста не может
     молча поднять потолок прав (access_mode, write_mode). Неизвестное поле — ошибка.
-    URI формируется из компонентов: host, port, user, password, name.
+    URI формируется из компонентов: host, port, user, password, name; параметры libpq — из connect_options.
     """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -56,13 +115,18 @@ class DatabaseConfig(BaseModel):
     )
     max_inactive_connection_lifetime: int = Field(
         default=300,
-        description="Максимальное время жизни неактивного соединения в секундах",
+        description="Через сколько секунд простоя пул закрывает соединение сверх pool_min_size (max_idle пула)",
         ge=1,
     )
 
-    extra_kwargs: dict[str, str] = Field(
+    connect_options: dict[str, str] = Field(
         default_factory=dict,
-        description="Дополнительные именованные аргументы",
+        description=(
+            "Параметры libpq в query string URI подключения (target_session_attrs, options, connect_timeout, "
+            "sslrootcert, application_name и т.д.). Ключи со своими полями (host, hostaddr, port, dbname, user, "
+            "password, sslmode, ssl, requiressl, client_encoding) и секреты (sslpassword, passfile, "
+            "oauth_client_secret, sslkeylogfile) запрещены; параметр, неизвестный libpq, — ошибка конфигурации."
+        ),
     )
     write_mode: bool = Field(
         default=False,
@@ -106,11 +170,12 @@ class DatabaseConfig(BaseModel):
         """Поля подключения из URI (postgresql:// или postgresql+asyncpg://).
 
         Возвращает только то, что в URI есть: host, port (5432, если не указан), user, password,
-        name, а из query string — sslmode и client_encoding. Отсутствующее (например пароль) не
+        name, а из query string — sslmode, client_encoding и остальные параметры libpq
+        (connect_options; разбор как в libpq, см. _parse_uri_query). Отсутствующее (например пароль) не
         попадает в словарь, и его дополняют config.json или env. Остальные поля URI не задаёт.
         """
         parsed = urlparse(uri)
-        qs = parse_qs(parsed.query)
+        qs = _parse_uri_query(parsed.query)
         candidates: dict[str, Any] = {
             "host": parsed.hostname,
             "port": parsed.port or 5432,
@@ -122,16 +187,21 @@ class DatabaseConfig(BaseModel):
         # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
         # явное значение перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
         # Неизвестный sslmode — ошибка: иначе libpq молча откатился бы на prefer. Значение не секрет.
-        raw_sslmode = qs.get("sslmode", [None])[0]
+        raw_sslmode = qs.get("sslmode")
         if raw_sslmode is not None:
             allowed = [mode.value for mode in SslMode]
             if raw_sslmode not in allowed:
                 msg = f"Unknown sslmode {raw_sslmode!r} in database URI; expected one of: {', '.join(allowed)}"
                 raise ValueError(msg)
             fields["sslmode"] = SslMode(raw_sslmode)
-        client_encoding = qs.get("client_encoding", [None])[0]
+        client_encoding = qs.get("client_encoding")
         if client_encoding:
             fields["client_encoding"] = client_encoding
+        # Остальные параметры query string — параметры libpq (target_session_attrs, options, connect_timeout, ...).
+        # Ключ connect_options — только если они есть: иначе URI стёр бы connect_options из config.json.
+        connect_options = {key: value for key, value in qs.items() if key not in _URI_FIELD_PARAMETERS}
+        if connect_options:
+            fields["connect_options"] = connect_options
         return fields
 
     @classmethod
@@ -147,6 +217,28 @@ class DatabaseConfig(BaseModel):
             Экземпляр DatabaseConfig с заполненными host, port, user, password, name.
         """
         return cls(**{**cls.uri_fields(uri), **overrides})
+
+    @field_validator("connect_options")
+    @classmethod
+    def _check_connect_options(cls, value: dict[str, str]) -> dict[str, str]:
+        """Параметры libpq без дублей полей конфига и без секретов; неизвестные ключи ловит _check_database_uri.
+
+        Ключи сравниваются без учёта регистра ради ранней и понятной ошибки: libpq различает регистр и
+        'PASSWORD' отверг бы сам, но как неизвестный параметр, без подсказки нужного поля.
+        """
+        for key in value:
+            lowered = key.lower()
+            if lowered in _CONNECT_OPTION_FIELDS:
+                field = _CONNECT_OPTION_FIELDS[lowered]
+                msg = f"connect_options cannot set {key!r}: use the database field {field!r}"
+                raise ValueError(msg)
+            if lowered in _SECRET_CONNECT_OPTIONS:
+                msg = (
+                    f"connect_options cannot set {key!r}: the connection URI may reach logs and error messages, "
+                    "so it must not carry secrets or paths to them"
+                )
+                raise ValueError(msg)
+        return value
 
     @property
     def is_configured(self) -> bool:
@@ -164,15 +256,15 @@ class DatabaseConfig(BaseModel):
         )
 
     def _connection_query_params(self) -> dict[str, str]:
-        """Параметры query string для URI подключения (sslmode, client_encoding)."""
-        params: dict[str, str] = {"client_encoding": self.client_encoding}
+        """Параметры query string URI подключения: connect_options, client_encoding и sslmode."""
+        params: dict[str, str] = {**self.connect_options, "client_encoding": self.client_encoding}
         if self.sslmode is not None:
             params["sslmode"] = self.sslmode
         return params
 
     @property
     def database_uri(self) -> str | None:
-        """URI подключения к базе данных (с sslmode и client_encoding из настроек).
+        """URI подключения к базе данных (connect_options, sslmode и client_encoding в query string).
 
         Returns:
             URI подключения (postgresql://) или None если БД не настроена.
@@ -185,14 +277,34 @@ class DatabaseConfig(BaseModel):
         # IPv6-адрес без скобок libpq прочитал бы как host:port
         host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
         name = quote(self.name, safe="")
-        query = urlencode(self._connection_query_params())
+        # quote, а не quote_plus: libpq не декодирует '+' как пробел (options=-c statement_timeout=5000)
+        query = urlencode(self._connection_query_params(), quote_via=quote)
         return f"postgresql://{user}:{password}@{host}:{self.port}/{name}?{query}"
 
     @model_validator(mode="after")
     def _check_database_uri(self) -> "DatabaseConfig":
-        """Проверяет, что заданы все поля для подключения (host, port, user, password, name)."""
-        if self.user is None or self.password is None or self.host is None or self.port is None or self.name is None:
+        """Проверяет, что заданы все поля для подключения и что libpq примет URI.
+
+        Разбор URI — PQconninfoParse без обращения к сети. Параметр, неизвестный libpq (частые в URI
+        SQLAlchemy, asyncpg и Prisma: prepared_statement_cache_size, ssl, schema, pgbouncer), иначе
+        всплыл бы только при подключении как таймаут пула через 30 секунд. В сообщении — только ключ:
+        текст libpq называет ключ без значения, а URI с паролем в ошибку не попадает.
+        """
+        uri = self.database_uri
+        if uri is None:
             raise ValueError(ERROR_DATABASE_URI_NOT_SET)
+        try:
+            conninfo_to_dict(uri)
+        except ProgrammingError as e:
+            match = _LIBPQ_UNKNOWN_PARAMETER.search(str(e))
+            if match is None:
+                msg = "libpq cannot parse the database connection URI"
+                raise ValueError(msg) from None
+            msg = (
+                f"Unknown libpq connection parameter {match['key']!r} in the database URI or connect_options; "
+                "remove it (driver-specific parameters such as SQLAlchemy or asyncpg options are not libpq's)"
+            )
+            raise ValueError(msg) from None
         return self
 
 

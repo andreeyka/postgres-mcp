@@ -91,7 +91,9 @@ uv run postgres-fastmcp \
 uv run postgres-fastmcp
 ```
 
-Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`.
+Подключение к БД задаётся полями (`host`, `port`, `user`, `password`, `name`). Опционально: `access_mode`, `write_mode`, `table_prefix`, `sslmode`, `client_encoding`, `pool_min_size`, `pool_max_size`, `safe_sql_timeout`, `query_tag`, `connect_options`, `max_inactive_connection_lifetime`.
+
+`connect_options` — параметры libpq, которые попадают в query string URI подключения: `{"target_session_attrs": "read-write", "options": "-c statement_timeout=5000", "sslrootcert": "/etc/ssl/ca.pem", "application_name": "mcp"}`. Значения — строки. Ключи, у которых есть свои поля (`host`, `hostaddr`, `port`, `dbname`, `user`, `password`, `sslmode`, `ssl`, `requiressl`, `client_encoding`), и секреты (`sslpassword`, `passfile`, `oauth_client_secret`, `sslkeylogfile` — последний пишет на диск ключи TLS-сессий) отклоняются: URI подключения может попасть в логи и сообщения об ошибках. Параметр, которого libpq не знает (например `prepared_statement_cache_size` или `pgbouncer` из URI SQLAlchemy, asyncpg или Prisma), — ошибка при загрузке конфигурации; в сообщении назван только ключ. В env — JSON-объект: `MCP_DATABASE_CONNECT_OPTIONS='{"application_name": "mcp"}'`. `max_inactive_connection_lifetime` (секунды, по умолчанию 300) — через сколько простоя пул закрывает соединения сверх `pool_min_size`.
 
 Опционально в `server`: `response_max_tokens` — предел ответа инструмента в токенах (по умолчанию `20000`, минимум `1000`). Ответ больше предела заменяется ошибкой с просьбой уточнить запрос.
 
@@ -126,7 +128,7 @@ uv run postgres-fastmcp
 
 Особенности `--database-uri`:
 
-- Задаёт только то, что есть в URI: `host`, `port`, `user`, `password`, `name`, а также `sslmode` и `client_encoding` из query string; остальные поля секции `database` (например `table_prefix`) берутся из `config.json`/env как обычно.
+- Задаёт только то, что есть в URI: `host`, `port`, `user`, `password`, `name`, `sslmode` и `client_encoding` из query string, а остальные параметры query string (`target_session_attrs`, `options`, `connect_timeout`, `sslrootcert`, …) — как `connect_options`; словарь из URI заменяет `connect_options` из `config.json` целиком. Query string разбирается как в libpq: `+` остаётся плюсом, пустое значение (`application_name=`) сохраняется, при повторе ключа берётся последнее значение, параметр без `=` — ошибка. Остальные поля секции `database` (например `table_prefix`) берутся из `config.json`/env как обычно.
 - Сам по себе **не** переключает сервер в режим только чтения: `write_mode` по-прежнему берётся из `config.json`/env (по умолчанию `false`). Чтобы принудительно оставить только чтение вместе с `--database-uri`, добавьте `--no-write-mode` — именно он отвечает за режим SQL. `--access-mode basic` — независимый параметр: он сужает видимость до схемы `public` и базовых инструментов, но не отключает запись сам по себе (`basic` + `write_mode=true` по-прежнему разрешает DML, см. таблицу ниже).
 - Если в URI нет пароля, он берётся из `config.json` или переменных окружения — даже если host или user в URI отличаются от заданных там же.
 - Если в URI не указан порт, подставляется `5432`; это значение перекрывает порт, заданный в `config.json` или env.
@@ -510,6 +512,7 @@ MCP_AUTH_ACCESS_POLICY__FULL_VALUES='["dba"]'
 Пулом соединений владеет `PostgresProvider`, его жизненный цикл привязан к lifespan сервера FastMCP:
 
 - Пул открывается при первом запросе к БД; если достижим basic — сразу при старте, фоновой проверкой прав роли (она не задерживает старт и отменяется при остановке)
+- Гипотетические индексы hypopg (`explain_query` с `hypothetical_indexes`, `hypopg_create_index` в `execute_sql`) сбрасываются, когда соединение возвращается в пул: следующий запрос на том же соединении их не видит
 - Соединения закрываются при остановке сервера
 - Обработка сигналов (SIGINT, SIGTERM)
 

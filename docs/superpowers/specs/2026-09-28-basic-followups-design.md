@@ -1,6 +1,6 @@
 # Дизайн: доработки после границы basic
 
-Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1 реализован. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
+Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1–2 реализованы. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
 
 ## 1. Объём
 
@@ -96,8 +96,10 @@ WHERE n.nspname = 'public'
 ### 3.1. Параметры libpq
 
 - Поле `extra_kwargs` (не используется) удаляется. Новое поле `connect_options: dict[str, str]` — параметры libpq, которые попадают в query string `database_uri`.
-- `uri_fields` кладёт в `connect_options` все параметры query string, кроме `sslmode` и `client_encoding` (у них свои поля); повторяющийся ключ — последнее значение.
-- Валидация `connect_options`: ключи `host`, `hostaddr`, `port`, `dbname`, `user`, `password`, `sslmode`, `client_encoding` запрещены (у них поля) — `ValueError` с подсказкой поля; `sslpassword` и `passfile` запрещены (секрет или путь к секретам в URI, который попадает в логи и ошибки). Остальное не проверяется: неизвестный параметр отклонит libpq при подключении.
+- `uri_fields` кладёт в `connect_options` все параметры query string, кроме `sslmode` и `client_encoding` (у них свои поля). Query string разбирается как в libpq, а не `parse_qs`: деление по `&` и первому `=`, `unquote` (а не `unquote_plus` — `+` остаётся плюсом), пустое значение сохраняется, повторяющийся ключ — последнее значение, сегмент без `=` и %-последовательность, не декодируемая как UTF-8, — `ValueError` без значения в тексте. Мягче libpq: `=` внутри значения и некорректный %-токен проходят буквально (`database_uri` кодирует их заново).
+- `database_uri` кодирует query string через `quote` (пробел — `%20`): `urlencode` по умолчанию даёт `+`, который libpq не декодирует. `connect_options` попадает в поля URI, только если в query string есть параметры кроме `sslmode`/`client_encoding`.
+- Валидация `connect_options`: ключи `host`, `hostaddr`, `port`, `dbname`, `user`, `password`, `sslmode`, `ssl` и `requiressl` (синонимы `sslmode=require` в libpq), `client_encoding` запрещены (у них поля) — `ValueError` с подсказкой поля; `sslpassword`, `passfile`, `oauth_client_secret` и `sslkeylogfile` (пишет ключи TLS-сессий на диск) запрещены: URI может попасть в логи и сообщения об ошибках. Ключи сравниваются без учёта регистра ради ранней понятной ошибки (libpq регистр различает и `PASSWORD` отверг бы сам, но без подсказки поля).
+- Неизвестный libpq параметр — ошибка конфигурации: `model_validator` разбирает собранный `database_uri` через `conninfo_to_dict` (PQconninfoParse, без сети). Иначе параметры из URI SQLAlchemy/asyncpg/Prisma (`prepared_statement_cache_size`, `schema`, `pgbouncer`) всплывали бы при подключении как таймаут пула через 30 секунд. В сообщении — только ключ (libpq называет ключ без значения; прочие ошибки разбора — общий текст без URI).
 - `DatabaseSettings` читает `MCP_DATABASE_CONNECT_OPTIONS` как JSON-объект (стандарт pydantic-settings); `config.json` — `database.connect_options`. URI и конфиг не сливаются: словарь из URI заменяет словарь конфига целиком (как остальные поля URI).
 
 ### 3.2. `max_inactive_connection_lifetime`
@@ -108,7 +110,8 @@ WHERE n.nspname = 'public'
 
 - `DbConnPool` хранит `weakref.WeakSet` соединений, на которых создавались гипотетические индексы, и метод `mark_hypopg_used(connection)`.
 - `SqlExecutor._execute_with_connection` при выполнении SQL, содержащего `hypopg_create_index` (без учёта регистра), помечает соединение. Покрывает `explain_query` и прямой вызов агента.
-- Пул создаётся с `reset=` callback: для помеченного соединения — `SELECT hypopg_reset()` (соединение в autocommit) и снятие пометки; у остальных — ничего (без лишнего запроса). Ошибка сброса — `WARNING` в лог и повторный подъём исключения: psycopg_pool выбрасывает такое соединение, состояние hypopg на нём неизвестно.
+- Пул создаётся с `reset=` callback: для помеченного соединения — `SELECT hypopg_reset()` (соединение в autocommit) и снятие пометки; у остальных — ничего (без лишнего запроса). Ошибка сброса — `WARNING` в лог и повторный подъём исключения: psycopg_pool выбрасывает такое соединение, состояние hypopg на нём неизвестно. Помеченное соединение, чей сброс не удался, выбрасывается всегда — в том числе при `UndefinedFunction`, когда hypopg не установлен или не лежит в `search_path` роли по умолчанию: basic создаёт индексы под `SET LOCAL search_path = public`, а сброс идёт вне этой транзакции, так что индексы могут быть созданы, а `hypopg_reset()` не найден. Состояние hypopg не переживает возврат соединения в пул. При заданном `reset` psycopg_pool возвращает соединения в пул рабочей задачей.
+- `CandidateGenerator._estimate_hypothetical_index_sizes` создаёт индексы и читает размеры одним оператором `unnest({}::text[]) WITH ORDINALITY … LATERAL hypopg_create_index(...)` и сопоставляет размер с кандидатом по позиции: имя от hypopg (`<oid>btree_…`) с `IndexRecommendation.name` (`dba_idx_…`) не совпадает, поэтому прежнее сопоставление по имени всегда давало `estimated_size_bytes = 0`.
 - Спека `basic-confinement` §6: пункт про отложенную очистку помечается как выполненный.
 
 ### 3.4. Тесты
@@ -151,5 +154,12 @@ WHERE n.nspname = 'public'
 ## 5. Изменения поведения (для заметок к PR)
 
 - PR 1: при старте basic с широкими правами роли — `WARNING` в лог; БД недоступна на старте — `INFO` `Basic role check skipped`; прочая ошибка Postgres при проверке — `WARNING` `Basic role check failed`; программная ошибка самой проверки — `ERROR` `Basic role check crashed` (сервер не падает); в basic пул открывается при старте (фоновая проверка), а не при первом запросе; README — раздел «Роль для basic».
-- PR 2: параметры libpq из URI (`target_session_attrs`, `options`, `connect_timeout`, `sslrootcert`, …) доходят до подключения — раньше молча отбрасывались; поле `extra_kwargs` удалено, новое `connect_options`; `max_inactive_connection_lifetime` работает (`max_idle` пула); гипотетические индексы сбрасываются при возврате соединения в пул.
+- PR 2: параметры libpq из URI (`target_session_attrs`, `options`, `connect_timeout`, `sslrootcert`, …) доходят до подключения — раньше молча отбрасывались; поле `extra_kwargs` удалено, новое `connect_options`; `max_inactive_connection_lifetime` работает (`max_idle` пула); гипотетические индексы сбрасываются при возврате соединения в пул. Ломающие изменения и смена поведения:
+  - URI с параметром, которого libpq не знает (`prepared_statement_cache_size`, `schema`, `pgbouncer` из URI SQLAlchemy/asyncpg/Prisma), не проходит валидацию конфигурации — раньше такие параметры молча отбрасывались;
+  - запрещённые ключи в query string URI (`password`, `host`, `ssl`, `requiressl`, `sslpassword`, `sslkeylogfile`, …) — ошибка конфигурации;
+  - `config.json` с `database.extra_kwargs` не загружается (`extra="forbid"`);
+  - протокол `DatabaseConfigPort` получил обязательный атрибут `max_inactive_connection_lifetime` — затрагивает библиотечные реализации протокола;
+  - query string URI разбирается как в libpq: `+` больше не пробел, пустое значение сохраняется, параметр без `=` — ошибка;
+  - с `reset`-callback каждый возврат соединения идёт через рабочую задачу пула: при последовательной нагрузке пул может держать одно лишнее простаивающее соединение (в пределах `max_idle`);
+  - `estimated_size_bytes` у кандидатов DTA теперь настоящий размер гипотетического индекса (раньше всегда 0).
 - PR 3: новая настройка `plan_check` (по умолчанию выключена); с ней basic отклоняет запросы, план которых читает отношения вне `public`/префикса или функции чужих схем (`PlanAccessError`).
