@@ -18,6 +18,9 @@ from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeWithHypotheticalError,
     ExplainPlanExecutionError,
     HypopgNotInstalledError,
+    SchemaNotAllowedError,
+    SystemRelationAccessError,
+    TablePrefixAccessError,
 )
 
 
@@ -248,3 +251,38 @@ async def test_hypothetical_explain_works_in_basic_with_table_prefix(monkeypatch
     sent = [c.args[0] for c in delegate.execute.await_args_list]
     assert any("pg_catalog.pg_extension" in q for q in sent)
     assert any("hypopg_create_index" in q and "EXPLAIN" in q for q in sent)
+
+
+@pytest.mark.parametrize(
+    ("table", "error"),
+    [
+        ("secret.accounts", SchemaNotAllowedError),
+        ("users", TablePrefixAccessError),
+        ("pg_stats", SystemRelationAccessError),
+    ],
+)
+async def test_hypothetical_index_on_a_forbidden_table_is_rejected_before_explain(
+    monkeypatch: pytest.MonkeyPatch, table: str, error: type[Exception]
+) -> None:
+    """Определение гипотетического индекса проходит валидатор агента: чужая таблица не доходит до hypopg."""
+
+    async def execute(query, params=None, *, readonly=True):
+        if "pg_catalog.pg_extension" in query:
+            return [RowResult(cells={"extversion": "1.4.1"})]
+        return []
+
+    delegate = MagicMock()
+    delegate.execute = AsyncMock(side_effect=execute)
+    monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+    config = DatabaseConfig(
+        host="h", user="u", password="p", name="d", access_mode=AccessMode.BASIC, write_mode=False, table_prefix="app_"
+    )
+    db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+    with pytest.raises(error):
+        await ExplainService(db=db).explain(
+            "SELECT * FROM app_users", hypothetical_indexes=[{"table": table, "columns": ["id"]}]
+        )
+
+    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    assert not any("hypopg_create_index" in q for q in sent)

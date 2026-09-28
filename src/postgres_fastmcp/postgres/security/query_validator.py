@@ -11,10 +11,12 @@ from pglast.ast import (
     DefElem,
     ExplainStmt,
     FuncCall,
+    IndexStmt,
     Node,
     RangeVar,
     RawStmt,
     SelectStmt,
+    String,
     TypeName,
     VariableShowStmt,
 )
@@ -143,6 +145,8 @@ class _NodeValidationVisitor(Visitor):
             unqualified = match.group(1) if match else func_name
             if unqualified not in self._allowed_functions:
                 raise FunctionNotAllowedError(func_name)
+            if self._basic and unqualified == "hypopg_create_index":
+                self._validate_hypopg_create_index(node)
 
         if self._basic and isinstance(node, VariableShowStmt):
             name = node.name or ""
@@ -164,6 +168,32 @@ class _NodeValidationVisitor(Visitor):
 
         if isinstance(node, CreateExtensionStmt):
             self._validate_create_extension(node)
+
+    def _validate_hypopg_create_index(self, node: FuncCall) -> None:
+        """В basic аргумент hypopg_create_index — одна строковая константа с одним CREATE INDEX по разрешённой таблице.
+
+        Строку hypopg разбирает сам, валидатор её иначе не видит: без этой проверки агент узнавал бы,
+        существуют ли таблицы и колонки чужих схем, и получал бы оценку их размера.
+
+        Raises:
+            FunctionNotAllowedError: Аргумент не строковая константа или не ровно один CREATE INDEX.
+            SystemRelationAccessError: Индекс на системном отношении.
+            SchemaNotAllowedError: Индекс на таблице другой схемы.
+            TablePrefixAccessError: Имя таблицы не соответствует префиксу.
+        """
+        func_name = "hypopg_create_index"
+        args = node.args or ()
+        value = args[0].val if len(args) == 1 and isinstance(args[0], A_Const) else None
+        if not isinstance(value, String) or value.sval is None:
+            raise FunctionNotAllowedError(func_name)
+        try:
+            statements = pglast.parse_sql(value.sval)
+        except pglast.parser.ParseError as e:
+            raise FunctionNotAllowedError(func_name) from e
+        index = statements[0].stmt if len(statements) == 1 else None
+        if not isinstance(index, IndexStmt) or index.relation is None:
+            raise FunctionNotAllowedError(func_name)
+        validate_schema_access(index.relation, allowed_schema=self._allowed_schema, table_prefix=self._table_prefix)
 
     def _validate_create_extension(self, node: CreateExtensionStmt) -> None:
         """Разрешить только расширения из allowlist, без CASCADE и без SCHEMA при ограничении схемы.

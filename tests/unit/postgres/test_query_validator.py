@@ -296,3 +296,38 @@ class TestBasicPolicy:
         full.validate("SELECT * FROM pg_stats")
         full.validate("SHOW app.jwt_secret")
         full.validate("SELECT 't'::regclass, current_setting('work_mem')")
+
+    PREFIXED = QueryValidator(read_only=True, allowed_schema="public", table_prefix="app_")
+
+    @pytest.mark.parametrize(
+        ("sql", "error"),
+        [
+            ("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')", SchemaNotAllowedError),
+            ("SELECT hypopg_create_index('CREATE INDEX ON users (c)')", TablePrefixAccessError),
+            ("SELECT hypopg_create_index('CREATE INDEX ON pg_class (relname)')", SystemRelationAccessError),
+            ("SELECT hypopg_create_index('SELECT 1')", FunctionNotAllowedError),
+            (
+                "SELECT hypopg_create_index('CREATE INDEX ON app_t (c); CREATE INDEX ON secret.t (c)')",
+                FunctionNotAllowedError,
+            ),
+            ("SELECT hypopg_create_index('not sql')", FunctionNotAllowedError),
+            ("SELECT hypopg_create_index(concat('CREATE INDEX ON ', 'secret.t (c)'))", FunctionNotAllowedError),
+            ("SELECT hypopg_create_index(stmt) FROM app_defs", FunctionNotAllowedError),
+        ],
+    )
+    def test_hypopg_create_index_target_is_checked(self, sql: str, error: type[Exception]) -> None:
+        with pytest.raises(error):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t (c)')",
+            "SELECT hypopg_create_index('CREATE INDEX idx ON public.app_t USING btree (a, b)')",
+        ],
+    )
+    def test_hypopg_create_index_on_allowed_table_passes(self, sql: str) -> None:
+        self.PREFIXED.validate(sql)
+
+    def test_full_does_not_parse_hypopg_argument(self) -> None:
+        QueryValidator(read_only=True).validate("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')")

@@ -131,6 +131,7 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     """SELECT * FROM ROWS FROM (json_to_record('{"a":"x"}') AS (a regclass))""",
     "SELECT * FROM XMLTABLE('/r' PASSING '<r><a>secret.t</a></r>' COLUMNS a regclass PATH 'a')",
     "PREPARE p(regclass) AS SELECT $1",
+    "SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.
