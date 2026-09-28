@@ -15,7 +15,7 @@ from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.server import ServerSettings
 from postgres_fastmcp.app.middleware.response_budget import BYTES_PER_TOKEN, ResponseBudgetMiddleware, estimate_tokens
 from postgres_fastmcp.app.server import create_server
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import ResponseTooLargeAfterWriteError, ResponseTooLargeError
 
@@ -79,6 +79,9 @@ def _server_with_rows(
             self.write_mode = write_mode
             self.sql_driver = MagicMock()
             self.sql_driver.execute = AsyncMock(return_value=rows)
+            self.sql_driver.execute_statement = AsyncMock(
+                return_value=StatementResult(rows=rows, status=f"SELECT {len(rows)}", affected_rows=len(rows))
+            )
 
         def view(self, access: object) -> "FakeDb":
             return self

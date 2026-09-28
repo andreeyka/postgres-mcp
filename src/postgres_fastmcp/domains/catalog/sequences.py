@@ -47,7 +47,7 @@ class SequencesService:
             objects = [o for o in objects if o["name"].lower().startswith(prefix)]
         return objects
 
-    async def get_details(self, schema_name: str, object_name: str) -> dict[str, Any]:
+    async def get_details(self, schema_name: str, object_name: str) -> dict[str, Any] | None:
         """Получить детали последовательности.
 
         Args:
@@ -55,7 +55,7 @@ class SequencesService:
             object_name: Имя последовательности.
 
         Returns:
-            Словарь с полями schema, name, data_type, start_value, increment.
+            Словарь с полями schema, name, data_type, start_value, increment; None, если последовательности нет.
         """
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(
@@ -72,4 +72,4 @@ class SequencesService:
                 "start_value": decode_bytes_to_utf8(row.cells["start_value"]),
                 "increment": decode_bytes_to_utf8(row.cells["increment"]),
             }
-        return {}
+        return None

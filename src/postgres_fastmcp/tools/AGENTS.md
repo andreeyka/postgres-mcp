@@ -58,6 +58,10 @@ Russian is allowed only for comments and module/helper docstrings that never rea
 - Register the tool with `"output_schema": None`; otherwise FastMCP wraps the answer into
   `{"result": ...}` and duplicates it.
 - Never return Markdown and a JSON copy of the same data in one response.
+- A statement without a result set is not an empty table. `execute_sql` gets the Postgres command tag from
+  `SqlDriverPort.execute_statement` and returns `statement_result()`: `UPDATE 3: 3 rows affected.` or
+  `CREATE TABLE: done.`; in JSON `status` and `affected_rows` (null for DDL) sit next to the empty `rows`.
+  Other domains keep calling `execute`.
 - Do not cut rows or wrap SQL in `LIMIT`: `ResponseBudgetMiddleware` (`app/middleware/response_budget.py`)
   replaces an answer above `MCP_SERVER_RESPONSE_MAX_TOKENS` with an error that asks the agent to refine the request.
   If the tool's annotations say `read_only_hint=False` (`execute_sql` with `write_mode`), the error is worded

@@ -16,7 +16,7 @@ from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.auth import AuthSettings
 from postgres_fastmcp.app.server import create_server
 from postgres_fastmcp.domains.db_access import DbAccess
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.shared.enums import AccessMode
 
 
@@ -42,6 +42,9 @@ class FakeService:
         self.views: list[EffectiveAccess] = []
         self.sql_driver = MagicMock()
         self.sql_driver.execute = AsyncMock(return_value=[RowResult(cells={"n": 1})])
+        self.sql_driver.execute_statement = AsyncMock(
+            return_value=StatementResult(rows=[RowResult(cells={"n": 1})], status="SELECT 1", affected_rows=1)
+        )
         FakeService.instances.append(self)
 
     def view(self, access: EffectiveAccess) -> DbAccess:

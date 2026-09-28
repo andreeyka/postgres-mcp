@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from mcp.types import TextContent
 
-from postgres_fastmcp.tools.rendering import rows_result, sections_result
+from postgres_fastmcp.tools.rendering import rows_result, sections_result, statement_result
 
 
 def _text(result: object) -> str:
@@ -49,11 +49,6 @@ def test_empty_rows_render_without_table() -> None:
     assert _text(rows_result([], "table")) == "0 rows."
 
 
-def test_title_goes_above_the_table() -> None:
-    text = _text(rows_result([], "table", title="Statement executed."))
-    assert text == "Statement executed.\n\n0 rows."
-
-
 def test_json_has_rows_and_row_count_without_markdown() -> None:
     rows = [{"id": 1, "amount": Decimal("1.50"), "at": dt.date(2026, 9, 26), "note": None}]
     result = rows_result(rows, "json")
@@ -65,13 +60,39 @@ def test_json_has_rows_and_row_count_without_markdown() -> None:
 
 
 def test_json_empty_rows() -> None:
-    result = rows_result([], "json", title="ignored in json")
+    result = rows_result([], "json")
     assert result.structured_content == {"rows": [], "row_count": 0}
     assert json.loads(_text(result)) == {"rows": [], "row_count": 0}
 
 
 def test_json_keeps_non_ascii_readable() -> None:
     assert "имя" in _text(rows_result([{"name": "имя"}], "json"))
+
+
+def test_statement_table_shows_status_and_affected_rows() -> None:
+    result = statement_result("UPDATE 3", 3, "table")
+    assert _text(result) == "UPDATE 3: 3 rows affected."
+    assert result.structured_content is None
+
+
+def test_statement_table_without_count_says_done() -> None:
+    assert _text(statement_result("CREATE TABLE", None, "table")) == "CREATE TABLE: done."
+
+
+def test_statement_table_with_zero_rows_is_not_hidden() -> None:
+    assert _text(statement_result("DELETE 0", 0, "table")) == "DELETE 0: 0 rows affected."
+
+
+def test_statement_json_keeps_row_keys_and_adds_status() -> None:
+    result = statement_result("INSERT 0 5", 5, "json")
+    expected = {"rows": [], "row_count": 0, "status": "INSERT 0 5", "affected_rows": 5}
+    assert result.structured_content == expected
+    assert json.loads(_text(result)) == expected
+
+
+def test_statement_json_ddl_has_null_affected_rows() -> None:
+    result = statement_result("CREATE TABLE", None, "json")
+    assert result.structured_content == {"rows": [], "row_count": 0, "status": "CREATE TABLE", "affected_rows": None}
 
 
 def test_sections_table_has_header_lines_and_one_table_per_non_empty_section() -> None:

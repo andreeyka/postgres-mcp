@@ -10,7 +10,7 @@ from fastmcp.server.providers import LocalProvider
 
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.database import DatabaseConfig
-from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
 from postgres_fastmcp.tools.definitions import ToolSet
@@ -201,6 +201,9 @@ async def test_execute_sql_output_over_mcp() -> None:
     db = MagicMock()
     db.write_mode = False
     db.sql_driver.execute = AsyncMock(return_value=[RowResult(cells={"n": 1})])
+    db.sql_driver.execute_statement = AsyncMock(
+        return_value=StatementResult(rows=[RowResult(cells={"n": 1})], status="SELECT 1", affected_rows=1)
+    )
     mcp = FastMCP(name="test", providers=[_provider(_database(AccessMode.FULL), db)])
     async with Client(mcp) as client:
         table = await client.call_tool("execute_sql", {"sql": "SELECT 1 AS n"})

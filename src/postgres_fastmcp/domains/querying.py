@@ -3,13 +3,11 @@
 from typing import Any
 
 from postgres_fastmcp.domains.db_access import DbAccessPort
+from postgres_fastmcp.postgres.models import StatementResult
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 
-SUCCESS_NO_ROWS = "Statement executed successfully; no rows were returned."
-
-
-async def execute_sql(db: DbAccessPort, sql: str) -> list[dict[str, Any]] | None:
+async def execute_sql(db: DbAccessPort, sql: str) -> list[dict[str, Any]] | StatementResult:
     """Выполнить SQL запрос к базе данных.
 
     Режим транзакции (только чтение / чтение-запись) определяется правами
@@ -17,18 +15,18 @@ async def execute_sql(db: DbAccessPort, sql: str) -> list[dict[str, Any]] | None
     транзакция открывается на запись, поэтому DML/DDL реально применяются.
     Без права записи запись блокируется на уровне валидатора и транзакции.
 
-    Операторы без результирующего набора (INSERT/UPDATE/DELETE/DDL без RETURNING)
-    считаются успешно выполненными и возвращают None, а не ошибку; тул выводит
-    для них SUCCESS_NO_ROWS.
+    Оператор без результирующего набора (INSERT/UPDATE/DELETE без RETURNING, DDL)
+    возвращает StatementResult с тегом команды Postgres ("UPDATE 3", "CREATE TABLE"):
+    агент видит, сколько строк затронуто, а не пустой список.
 
     Args:
         db: Доступ к БД для текущего запроса (DbAccessPort).
         sql: SQL запрос для выполнения.
 
     Returns:
-        Список строк результата (list[dict]) либо None для оператора без результирующего набора.
+        Строки результата (list[dict]) либо StatementResult (rows=None) для оператора без результирующего набора.
     """
-    rows = await db.sql_driver.execute(sql, params=None, readonly=not db.write_mode)
-    if rows is None:
-        return None
-    return [decode_bytes_to_utf8(r.cells) for r in rows]
+    result = await db.sql_driver.execute_statement(sql, params=None, readonly=not db.write_mode)
+    if result.rows is None:
+        return result
+    return [decode_bytes_to_utf8(r.cells) for r in result.rows]

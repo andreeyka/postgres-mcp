@@ -275,6 +275,10 @@ class UnsupportedObjectTypeError(UserFacingError):
         self.object_type = object_type
 
 
+# Для ObjectNotFoundError: таблица <-> представление
+_OTHER_RELATION_TYPE = {"table": "view", "view": "table"}
+
+
 class ObjectNotFoundError(UserFacingError):
     """Объект каталога не найден: get_object_details не должен выглядеть как успешный поиск."""
 
@@ -288,7 +292,13 @@ class ObjectNotFoundError(UserFacingError):
         """
         # Расширения не принадлежат схеме: схему в тексте не показываем
         qualified = object_name if object_type == "extension" else f"{schema_name}.{object_name}"
-        super().__init__(f"Object not found: {qualified} ({object_type}). Use list_objects to see existing objects.")
+        # Таблицу и представление легко перепутать (по умолчанию object_type="table"): подсказываем другой тип
+        other_type = _OTHER_RELATION_TYPE.get(object_type)
+        if other_type is not None:
+            hint = f'If it is a {other_type}, retry with object_type="{other_type}"; use list_objects'
+        else:
+            hint = "Use list_objects"
+        super().__init__(f"Object not found: {qualified} ({object_type}). {hint} to see existing objects.")
         self.schema_name = schema_name
         self.object_name = object_name
         self.object_type = object_type

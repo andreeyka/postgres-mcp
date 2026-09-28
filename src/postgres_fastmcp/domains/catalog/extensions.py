@@ -39,14 +39,14 @@ class ExtensionsService:
             else []
         )
 
-    async def get_details(self, object_name: str) -> dict[str, Any]:
+    async def get_details(self, object_name: str) -> dict[str, Any] | None:
         """Получить детали расширения.
 
         Args:
             object_name: Имя расширения.
 
         Returns:
-            Словарь с полями name, version, relocatable.
+            Словарь с полями name, version, relocatable; None, если расширение не установлено.
         """
         sql_driver = self.db.sql_driver
         rows = await sql_driver.execute(QUERY_GET_EXTENSION_DETAILS, params=[object_name], readonly=True)
@@ -57,4 +57,4 @@ class ExtensionsService:
                 "version": cast("str", decode_bytes_to_utf8(row.cells["extversion"])),
                 "relocatable": decode_bytes_to_utf8(row.cells["extrelocatable"]),
             }
-        return {}
+        return None

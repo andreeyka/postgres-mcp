@@ -20,6 +20,15 @@ WHERE table_schema = {} AND table_type = {}
 ORDER BY table_name
 """
 
+# Существование таблицы/представления: тот же источник и тот же table_type, что у QUERY_LIST_TABLES_VIEWS
+# ('BASE TABLE' = relkind r/p, 'VIEW' = v). information_schema проходит валидатор BASIC и с table_prefix,
+# а pg_class — нет (TablePrefixAccessError без схемы, SchemaNotAllowedError с pg_catalog).
+QUERY_TABLE_EXISTS = """
+SELECT 1 AS present
+FROM information_schema.tables
+WHERE table_schema = {} AND table_name = {} AND table_type = {}
+"""
+
 QUERY_LIST_SEQUENCES = """
 SELECT sequence_schema, sequence_name, data_type
 FROM information_schema.sequences
