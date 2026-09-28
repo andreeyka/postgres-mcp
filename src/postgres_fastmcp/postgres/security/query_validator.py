@@ -15,9 +15,11 @@ from pglast.ast import (
     IndexElem,
     IndexStmt,
     Node,
+    RangeTableSample,
     RangeVar,
     RawStmt,
     SelectStmt,
+    SortBy,
     String,
     TypeName,
     VariableShowStmt,
@@ -189,6 +191,15 @@ class _NodeValidationVisitor(Visitor):
         if self._basic and isinstance(node, CollateClause):
             self._validate_name_qualifier(_name_parts(node.collname))
 
+        # Операторы и методы TABLESAMPLE резолвятся по имени, как типы: OPERATOR(secret.+),
+        # ORDER BY ... USING OPERATOR(secret.<), TABLESAMPLE secret.m(1).
+        if self._basic and isinstance(node, A_Expr):
+            self._validate_name_qualifier(_name_parts(node.name))
+        if self._basic and isinstance(node, SortBy):
+            self._validate_name_qualifier(_name_parts(node.useOp))
+        if self._basic and isinstance(node, RangeTableSample):
+            self._validate_name_qualifier(_name_parts(node.method))
+
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
 
@@ -225,10 +236,11 @@ class _NodeValidationVisitor(Visitor):
         self._validate_name_qualifier(names)
 
     def _validate_name_qualifier(self, names: list[str]) -> None:
-        """Схема составного имени (тип, collation) — allowed_schema или pg_catalog, если указана.
+        """Схема составного имени (тип, collation, оператор, метод TABLESAMPLE) — allowed_schema или pg_catalog.
 
         Неквалифицированное имя не проверяется: без каталога встроенный тип (int4) не отличить
-        от строкового типа таблицы без префикса (спека basic-confinement §6).
+        от строкового типа таблицы без префикса (спека basic-confinement §6). Сравнение точное:
+        pglast уже свернул имена без кавычек, а "PUBLIC" в кавычках — другая схема.
 
         Raises:
             SchemaNotAllowedError: Явная схема — не allowed_schema и не pg_catalog.
@@ -238,7 +250,7 @@ class _NodeValidationVisitor(Visitor):
         if allowed_schema is None or not qualifiers:
             return
         schema = qualifiers[-1]
-        if schema.lower() not in (allowed_schema.lower(), "pg_catalog"):
+        if schema not in (allowed_schema, "pg_catalog"):
             raise SchemaNotAllowedError(schema, allowed_schema)
 
     def _validate_hypopg_create_index(self, node: FuncCall) -> None:
@@ -272,7 +284,7 @@ class _NodeValidationVisitor(Visitor):
         validate_schema_access(index.relation, allowed_schema=self._allowed_schema, table_prefix=self._table_prefix)
         schema = index.relation.schemaname
         allowed_schema = self._allowed_schema
-        if schema is not None and allowed_schema is not None and schema.lower() != allowed_schema.lower():
+        if schema is not None and allowed_schema is not None and schema != allowed_schema:
             raise SchemaNotAllowedError(schema, allowed_schema)
         if not _is_plain_index(index):
             raise FunctionNotAllowedError(func_name)

@@ -379,6 +379,65 @@ class TestBasicPolicy:
         self.PREFIXED.validate(sql)
 
     @pytest.mark.parametrize(
+        ("sql", "func"),
+        [
+            ("SELECT pg_basetype('secret.accounts')", "pg_basetype"),
+            ("SELECT pg_typeof(1) = 'secret.accounts'", "pg_typeof"),
+            ("SELECT COALESCE(pg_typeof(1), 'secret.accounts')", "pg_typeof"),
+        ],
+    )
+    def test_regtype_functions_rejected(self, sql: str, func: str) -> None:
+        """Аргумент или результат regtype приводит строковый литерал через regtypein — оракул типов."""
+        with pytest.raises(FunctionNotAllowedError, match=func):
+            self.BASIC.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1 OPERATOR(secret.+) 2",
+            "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (ARRAY[1])",
+            "SELECT * FROM app_t ORDER BY name USING OPERATOR(secret.<)",
+            "SELECT * FROM app_t TABLESAMPLE secret.m(1)",
+        ],
+    )
+    def test_operator_or_tablesample_method_from_another_schema_rejected(self, sql: str) -> None:
+        with pytest.raises(SchemaNotAllowedError, match="'secret'"):
+            self.BASIC.validate(sql)
+        with pytest.raises(SchemaNotAllowedError, match="'secret'"):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            'SELECT * FROM "PUBLIC".app_t',
+            'SELECT NULL::"PUBLIC".t',
+            """SELECT 'a' COLLATE "PUBLIC".x""",
+            """SELECT hypopg_create_index('CREATE INDEX ON "PUBLIC".app_t (c)')""",
+            'SELECT 1 OPERATOR("PG_CATALOG".+) 2',
+        ],
+    )
+    def test_schema_name_matches_exactly(self, sql: str) -> None:
+        """Схема в кавычках с другим регистром — отдельная схема; pglast уже свернул имена без кавычек."""
+        with pytest.raises(SchemaNotAllowedError):
+            self.BASIC.validate(sql)
+        with pytest.raises(SchemaNotAllowedError):
+            self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM PUBLIC.app_t",
+            'SELECT * FROM "public".app_t',
+            "SELECT NULL::PUBLIC.app_t",
+            "SELECT hypopg_create_index('CREATE INDEX ON PUBLIC.app_t (c)')",
+            "SELECT * FROM PUBLIC.APP_T",
+        ],
+    )
+    def test_unquoted_schema_folds_and_prefix_stays_case_insensitive(self, sql: str) -> None:
+        self.BASIC.validate(sql)
+        self.PREFIXED.validate(sql)
+
+    @pytest.mark.parametrize(
         "sql",
         [
             "SELECT '{secret.t}'::_regclass",

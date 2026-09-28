@@ -56,17 +56,16 @@ def validate_schema_access(
             raise TablePrefixAccessError(range_var.relname, table_prefix)
         return
 
-    schemaname_lower = schemaname.lower()
-
-    if schemaname_lower == "pg_catalog":
+    # Сравнение схемы точное: pglast уже свернул имена без кавычек, "PUBLIC" в кавычках — другая схема.
+    if schemaname == "pg_catalog":
         raise SchemaNotAllowedError(schemaname, allowed_schema)
 
-    if schemaname_lower == "information_schema":
+    if schemaname == "information_schema":
         if range_var.relname and range_var.relname.lower() == "schemata":
             raise SchemataTableAccessError(schemaname, range_var.relname)
         return
 
-    if schemaname_lower != allowed_schema.lower():
+    if schemaname != allowed_schema:
         raise SchemaNotAllowedError(schemaname, allowed_schema)
 
     if table_prefix and range_var.relname and not range_var.relname.lower().startswith(table_prefix.lower()):

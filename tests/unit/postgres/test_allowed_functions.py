@@ -44,7 +44,6 @@ def test_no_function_runs_sql_from_a_string() -> None:
 # Новая pg_*-функция в общем списке без решения по basic роняет тест.
 BASIC_PG_FUNCTIONS = frozenset(
     {
-        "pg_typeof",
         "pg_column_size",
         "pg_column_compression",
         "pg_size_pretty",
@@ -52,7 +51,6 @@ BASIC_PG_FUNCTIONS = frozenset(
         "pg_client_encoding",
         "pg_encoding_to_char",
         "pg_char_to_encoding",
-        "pg_basetype",
         "pg_get_keywords",
         "pg_trigger_depth",
     }

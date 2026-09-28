@@ -623,6 +623,10 @@ INTROSPECTION_FUNCTIONS: frozenset[str] = frozenset(
         "hypopg_get_indexdef",
         "hypopg_list_indexes",
         "hypopg_relation_size",
+        # аргумент или результат типа regtype: сравнение и COALESCE приводят строковый литерал через
+        # regtypein (pg_typeof(1) = 'secret.accounts', pg_basetype('secret.accounts')) — оракул типов
+        "pg_basetype",
+        "pg_typeof",
     )
 )
 

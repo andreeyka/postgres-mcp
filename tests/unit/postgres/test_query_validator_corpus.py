@@ -161,12 +161,27 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT hypopg_get_indexdef(1)",
     "SELECT hypopg_relation_size(1)",
     "SELECT hypopg_create_index('CREATE INDEX ON information_schema.sql_features (feature_id)')",
+    # regtype-аргумент или результат приводит литерал через regtypein
+    "SELECT pg_basetype('secret.accounts')",
+    "SELECT pg_typeof(1) = 'secret.accounts'",
+    "SELECT 'secret.accounts' IN (pg_typeof(1))",
+    "SELECT COALESCE(pg_typeof(1), 'secret.accounts')",
+    # операторы и методы TABLESAMPLE чужой схемы
+    "SELECT 1 OPERATOR(secret.+) 2",
+    "SELECT 1 FROM app_t WHERE a OPERATOR(secret.=) ANY (ARRAY[1])",
+    "SELECT * FROM app_t ORDER BY name USING OPERATOR(secret.<)",
+    "SELECT * FROM app_t TABLESAMPLE secret.m(1)",
+    # схема в кавычках с другим регистром — другая схема
+    'SELECT * FROM "PUBLIC".app_t',
+    'SELECT NULL::"PUBLIC".t',
+    """SELECT 'a' COLLATE "PUBLIC".x""",
+    """SELECT hypopg_create_index('CREATE INDEX ON "PUBLIC".app_t (c)')""",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.
 BASIC_ALLOWED_EXTRA = [
     "SELECT current_user, session_user, current_database(), version()",
-    "SELECT pg_typeof(1), pg_size_pretty(1024::bigint)",
+    "SELECT pg_size_pretty(1024::bigint), pg_column_size(1)",
     "SHOW search_path",
     "SHOW TIME ZONE",
     "SHOW TRANSACTION ISOLATION LEVEL",
@@ -176,6 +191,17 @@ BASIC_ALLOWED_EXTRA = [
     "SELECT 'a' COLLATE \"C\"",
     "SELECT '0/0'::pg_lsn",
     "SELECT '{1,2}'::int[]",
+    # операторы и методы TABLESAMPLE без схемы или с pg_catalog
+    "SELECT 1 OPERATOR(pg_catalog.+) 2",
+    "SELECT 1 + 2, 'a' LIKE 'b', 1 BETWEEN 0 AND 2",
+    "SELECT * FROM app_t ORDER BY name USING <",
+    "SELECT * FROM app_t ORDER BY name USING OPERATOR(pg_catalog.<)",
+    "SELECT * FROM app_t TABLESAMPLE system(1)",
+    "SELECT * FROM app_t TABLESAMPLE pg_catalog.bernoulli(1)",
+    # регистр схемы: без кавычек сворачивается в public
+    "SELECT * FROM PUBLIC.app_t",
+    'SELECT * FROM "public".app_t',
+    "SELECT NULL::PUBLIC.app_t",
 ]
 
 

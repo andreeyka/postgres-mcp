@@ -51,8 +51,10 @@ NAME_LOOKUP_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Скалярные встроенные типы с префиксом pg_: остальные pg_*/_pg_* имена типов в basic — строковые типы
-# системных отношений (pg_authid, pg_class), их закрывает R1.
+# Скалярные встроенные типы с префиксом pg_, открытые в basic. Остальные pg_*/_pg_* имена типов
+# отклоняются: это строковые типы системных отношений (pg_authid, pg_class — их закрывает R1) и
+# внутренние скалярные типы (pg_node_tree, pg_ndistinct, pg_mcv_list, pg_dependencies, pg_brin_*),
+# которые агенту не нужны, так что их отказ безвреден.
 BASIC_PG_SCALAR_TYPES: frozenset[str] = frozenset({"pg_lsn", "pg_snapshot"})
 
 __all__ = [
