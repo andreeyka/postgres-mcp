@@ -147,29 +147,38 @@ class CandidateGenerator:
         self._trace(f"Filtered to {len(filtered_candidates)} after removing existing indexes.")
         self._trace(f"Filtered to {len(condition_filtered1)} after removing unused columns.")
         self._trace(f"Filtered to {len(condition_filtered)} after removing long text columns.")
-        # Batch create all hypothetical indexes and store their size estimates
-        if len(condition_filtered) > 0:
-            query = "SELECT hypopg_create_index({});" * len(condition_filtered)
-            await self.sql_driver.execute(
-                query,
-                params=[idx.definition for idx in condition_filtered],
-                readonly=True,
-            )
-
-            # Get estimated sizes without resetting indexes yet
-            result = await self.sql_driver.execute(
-                "SELECT index_name, hypopg_relation_size(indexrelid) as index_size FROM hypopg_list_indexes;",
-                params=None,
-                readonly=True,
-            )
-            if result is not None:
-                index_map = {r.cells["index_name"]: r.cells["index_size"] for r in result}
-                for idx in condition_filtered:
-                    if idx.name in index_map:
-                        idx.estimated_size_bytes = index_map[idx.name]
-
-            await self.sql_driver.execute("SELECT hypopg_reset();", params=None, readonly=True)
+        await self._estimate_hypothetical_index_sizes(condition_filtered)
         return condition_filtered
+
+    async def _estimate_hypothetical_index_sizes(self, candidates: list[IndexRecommendation]) -> None:
+        """Создать гипотетические индексы и прочитать их размеры одним запросом на одном соединении.
+
+        hypopg-индексы живут в памяти сессии, а пул сбрасывает их на соединении сразу после того,
+        как оно освобождается (reset-callback DbConnPool): раздельные execute для создания индексов
+        и для чтения hypopg_list_indexes получили бы для чтения уже другое, чистое соединение из
+        пула, и estimated_size_bytes остался бы 0. Один SQL с обоими операторами гарантирует одно
+        и то же соединение для обоих; сбрасывать индексы явно здесь не нужно — это сделает пул при
+        возврате соединения (SqlExecutor помечает его, видя hypopg_create_index в запросе).
+
+        Args:
+            candidates: Кандидаты индексов; у совпавших по имени с hypopg_list_indexes проставляется
+                estimated_size_bytes.
+        """
+        if not candidates:
+            return
+        query = "SELECT hypopg_create_index({});" * len(candidates)
+        query += "SELECT index_name, hypopg_relation_size(indexrelid) AS index_size FROM hypopg_list_indexes;"
+        result = await self.sql_driver.execute(
+            query,
+            params=[idx.definition for idx in candidates],
+            readonly=True,
+        )
+        if result is None:
+            return
+        index_map = {r.cells["index_name"]: r.cells["index_size"] for r in result}
+        for idx in candidates:
+            if idx.name in index_map:
+                idx.estimated_size_bytes = index_map[idx.name]
 
     def _collect_condition_columns(
         self, workload: list[tuple[str, SelectStmt, float]], column_cache: dict[str, set[str]]

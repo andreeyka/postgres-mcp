@@ -324,6 +324,27 @@ def test_connect_options_reject_secrets(key: str) -> None:
     assert _SECRET_PASSWORD not in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("PASSWORD", "password"),
+        ("Host", "host"),
+        ("SslMode", "sslmode"),
+    ],
+)
+def test_connect_options_reject_field_keys_case_insensitively(key: str, field: str) -> None:
+    """Libpq сам не различает регистр параметров; без этого 'PASSWORD' дошло бы до подключения как есть."""
+    with pytest.raises(ValidationError, match=f"use the database field '{field}'") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_connect_options_reject_secret_keys_case_insensitively() -> None:
+    with pytest.raises(ValidationError, match="must not carry secrets") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={"SslPassword": _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
 def test_uri_password_parameter_is_rejected_without_leaking_it() -> None:
     with pytest.raises(ValidationError, match="use the database field 'password'") as exc_info:
         DatabaseConfig.from_uri(f"postgresql://u:p@h/d?password={_SECRET_PASSWORD}")

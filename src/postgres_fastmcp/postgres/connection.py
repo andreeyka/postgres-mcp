@@ -146,6 +146,11 @@ class DbConnPool:
         if connection not in self._hypopg_connections:
             return
         self._hypopg_connections.discard(connection)
+        if connection.closed:
+            # psycopg_pool вызывает reset и для соединения, которое сам же закрыл при возврате
+            # (ACTIVE/сбойное): выполнять запрос уже некуда, а execute на закрытом соединении
+            # упал бы с вводящим в заблуждение предупреждением "Failed to reset...".
+            return
         try:
             # Пул требует вернуть соединение в IDLE: hypopg_reset() выполняется вне транзакции.
             if not connection.autocommit:

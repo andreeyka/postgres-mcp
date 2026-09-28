@@ -210,9 +210,10 @@ async def _reset_callback(pool_mgr: DbConnPool) -> Callable[[MagicMock], Awaitab
     return mock_pool_cls.call_args.kwargs["reset"]
 
 
-def _returned_connection(*, autocommit: bool = True) -> MagicMock:
+def _returned_connection(*, autocommit: bool = True, closed: bool = False) -> MagicMock:
     connection = MagicMock()
     connection.autocommit = autocommit
+    connection.closed = closed
     connection.set_autocommit = AsyncMock()
     connection.execute = AsyncMock()
     return connection
@@ -286,3 +287,16 @@ class TestHypopgReset:
         assert any("Failed to reset hypothetical indexes" in r.getMessage() for r in caplog.records)
         await reset(connection)
         connection.execute.assert_awaited_once()
+
+    async def test_closed_connection_is_left_alone(self) -> None:
+        """psycopg_pool вызывает reset и для соединения, которое само же закрыло (ACTIVE/сбойное при возврате):
+        запрос на закрытом соединении ничего не даёт и упал бы с вводящим в заблуждение предупреждением."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection(closed=True)
+        pool_mgr.mark_hypopg_used(connection)
+
+        await reset(connection)
+
+        connection.set_autocommit.assert_not_awaited()
+        connection.execute.assert_not_awaited()

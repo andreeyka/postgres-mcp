@@ -180,12 +180,18 @@ class DatabaseConfig(BaseModel):
     @field_validator("connect_options")
     @classmethod
     def _check_connect_options(cls, value: dict[str, str]) -> dict[str, str]:
-        """Параметры libpq без дублей полей конфига и без секретов; остальное проверит libpq при подключении."""
+        """Параметры libpq без дублей полей конфига и без секретов; остальное проверит libpq при подключении.
+
+        Ключи сравниваются без учёта регистра: libpq сам их не различает, поэтому 'PASSWORD' или
+        'SslPassword' обошли бы проверку и дошли бы до подключения как есть.
+        """
         for key in value:
-            if key in _CONNECT_OPTION_FIELDS:
-                msg = f"connect_options cannot set {key!r}: use the database field {_CONNECT_OPTION_FIELDS[key]!r}"
+            lowered = key.lower()
+            if lowered in _CONNECT_OPTION_FIELDS:
+                field = _CONNECT_OPTION_FIELDS[lowered]
+                msg = f"connect_options cannot set {key!r}: use the database field {field!r}"
                 raise ValueError(msg)
-            if key in _SECRET_CONNECT_OPTIONS:
+            if lowered in _SECRET_CONNECT_OPTIONS:
                 msg = (
                     f"connect_options cannot set {key!r}: the connection URI reaches logs and error messages, "
                     "so it must not carry secrets or paths to them"
