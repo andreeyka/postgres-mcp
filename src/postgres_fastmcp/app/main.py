@@ -65,8 +65,12 @@ def main(  # noqa: PLR0913
     # build_auth=False только для stdio: CLI-флаг transport уже объединён в settings.server.transport
     # (build_settings_from_cli), так что оба места видят одно и то же значение; в stdio auth всё равно
     # не действует, и не нужно трогать сеть/диск ради oidc.
-    mcp = create_server(settings, build_auth=settings.server.transport != "stdio")
-    if settings.server.transport == "stdio":
+    # check_basic_role=False по той же причине: в stdio логи сейчас отключаются (ниже) и строку
+    # WARNING/INFO проверки всё равно не будет видно, а фоновая проверка открывала бы пул впустую
+    # при каждом запуске.
+    is_stdio = settings.server.transport == "stdio"
+    mcp = create_server(settings, build_auth=not is_stdio, check_basic_role=not is_stdio)
+    if is_stdio:
         configure_logging(disable=True)
 
     try:

@@ -32,6 +32,10 @@ from postgres_fastmcp.tools.registry import register_tools
 
 logger = get_logger(__name__)
 
+# Сколько ждать отмены фоновой проверки роли при остановке, прежде чем всё равно закрыть пул:
+# проверка не должна держать shutdown вечно, если не откликается на отмену сразу.
+ROLE_CHECK_CANCEL_TIMEOUT_SECONDS = 5
+
 
 class PostgresProvider(LocalProvider):
     """Тулы одной базы PostgreSQL с правами не выше потолка из ``database``.
@@ -47,6 +51,7 @@ class PostgresProvider(LocalProvider):
         *,
         access_policy: AccessPolicy | None = None,
         access_resolver: AccessResolver | None = None,
+        check_basic_role: bool = True,
     ) -> None:
         """Создать провайдер и зарегистрировать тулы.
 
@@ -58,6 +63,9 @@ class PostgresProvider(LocalProvider):
                 Результат всегда ограничивается потолком. Вызывается на каждый list_tools
                 для каждого full-тула, на каждой проверке доступа full-тула и на каждом
                 вызове get_db — должен быть дешёвым и детерминированным.
+            check_basic_role: Запускать ли фоновую проверку прав роли при достижимом basic
+                (см. ``lifespan``); False — не открывать ради неё пул и не писать её лог
+                (нужно там, где лог всё равно не виден, например в stdio).
         """
         super().__init__(on_duplicate="error")
         # basic достижим: потолок basic или права сужаются по токену до basic
@@ -66,6 +74,7 @@ class PostgresProvider(LocalProvider):
             or access_resolver is not None
             or (access_policy is not None and access_policy.enforced)
         )
+        self._check_basic_role = check_basic_role
         self._table_prefix = database.table_prefix
         ceiling = EffectiveAccess(database.access_mode, write_mode=database.write_mode)
         if access_resolver is None:
@@ -98,16 +107,21 @@ class PostgresProvider(LocalProvider):
 
         Проверка не задерживает старт: одна строка WARNING о правах шире basic или INFO, если БД недоступна.
         """
-        role_check = asyncio.create_task(self._check_basic_role()) if self._basic_reachable else None
+        role_check = (
+            asyncio.create_task(self._run_basic_role_check())
+            if self._basic_reachable and self._check_basic_role
+            else None
+        )
         try:
             yield
         finally:
             if role_check is not None:
                 role_check.cancel()
-                await asyncio.wait({role_check})
+                # Проверка может не откликнуться на отмену сразу: не держать shutdown дольше таймаута.
+                await asyncio.wait({role_check}, timeout=ROLE_CHECK_CANCEL_TIMEOUT_SECONDS)
             await self._db.close()
 
-    async def _check_basic_role(self) -> None:
+    async def _run_basic_role_check(self) -> None:
         """Обёртка фоновой задачи: программная ошибка проверки не должна ронять сервер.
 
         Сама проверка гасит ошибки БД; ValueError/TypeError (баг в шаблоне каталога) доходят

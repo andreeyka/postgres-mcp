@@ -291,30 +291,61 @@ async def test_basic_role_check_runs_only_when_basic_is_reachable(
     *,
     reachable: bool,
 ) -> None:
-    check = AsyncMock()
-    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    called = asyncio.Event()
+    calls: list[tuple[object, object]] = []
+
+    async def fake_check(catalog: object, table_prefix: object) -> None:
+        calls.append((catalog, table_prefix))
+        called.set()
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", fake_check)
     provider = PostgresProvider(_database(ceiling), **options)
 
     async with Client(FastMCP("t", providers=[provider])) as client:
         await client.list_tools()
+        if reachable:
+            # Ждём именно сигнала о вызове, а не полагаемся на то, что фоновая задача
+            # успела выполниться до выхода из ``async with`` (было бы недетерминированно).
+            await asyncio.wait_for(called.wait(), timeout=1)
 
     if reachable:
-        check.assert_called_once_with(fake_service.instances[0].catalog_driver, None)
+        assert calls == [(fake_service.instances[0].catalog_driver, None)]
     else:
-        check.assert_not_called()
+        assert calls == []
 
 
 async def test_basic_role_check_gets_the_table_prefix(
     fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    check = AsyncMock()
-    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    called = asyncio.Event()
+    calls: list[tuple[object, object]] = []
+
+    async def fake_check(catalog: object, table_prefix: object) -> None:
+        calls.append((catalog, table_prefix))
+        called.set()
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", fake_check)
     database = DatabaseConfig(host="h", user="u", password="p", name="d", table_prefix="app_")
 
     async with Client(FastMCP("t", providers=[PostgresProvider(database)])) as client:
         await client.list_tools()
+        await asyncio.wait_for(called.wait(), timeout=1)
 
-    check.assert_called_once_with(fake_service.instances[0].catalog_driver, "app_")
+    assert calls == [(fake_service.instances[0].catalog_driver, "app_")]
+
+
+async def test_check_basic_role_false_skips_the_check_even_if_basic_is_reachable(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check_basic_role=False (используется для stdio) отключает фоновую проверку независимо от _basic_reachable."""
+    check = AsyncMock()
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", check)
+    provider = PostgresProvider(_database(AccessMode.BASIC), check_basic_role=False)
+
+    async with Client(FastMCP("t", providers=[provider])) as client:
+        await client.list_tools()
+
+    check.assert_not_called()
 
 
 async def test_slow_basic_role_check_is_cancelled_at_shutdown(
@@ -339,6 +370,32 @@ async def test_slow_basic_role_check_is_cancelled_at_shutdown(
         await asyncio.wait_for(started.wait(), timeout=1)
 
     assert cancelled.is_set()
+    assert fake_service.instances[0].closed == 1
+
+
+async def test_shutdown_does_not_wait_for_the_role_check_past_the_cancel_timeout(
+    fake_service: type[FakeService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверка может не откликнуться на отмену сразу: shutdown всё равно закрывает пул по таймауту."""
+    monkeypatch.setattr("postgres_fastmcp.provider.ROLE_CHECK_CANCEL_TIMEOUT_SECONDS", 0.05)
+    started = asyncio.Event()
+
+    async def slow_to_cancel_check(*_args: object) -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.3)
+            raise
+
+    monkeypatch.setattr("postgres_fastmcp.provider.warn_about_basic_role", slow_to_cancel_check)
+
+    started_at = time.monotonic()
+    async with Client(FastMCP("t", providers=[PostgresProvider(_database(AccessMode.BASIC))])) as client:
+        await client.list_tools()
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert time.monotonic() - started_at < 0.3
     assert fake_service.instances[0].closed == 1
 
 
