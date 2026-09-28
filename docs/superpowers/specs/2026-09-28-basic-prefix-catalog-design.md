@@ -1,6 +1,6 @@
 # Дизайн: каталог в режиме basic с `table_prefix`
 
-Дата: 2026-09-28. Статус: согласовано, к реализации. Ветка `claude/basic-prefix-catalog` от `main` `66056b1`.
+Дата: 2026-09-28. Статус: реализовано. Ветка `claude/basic-prefix-catalog` от `main` `66056b1`.
 
 ## 1. Проблема
 
@@ -81,6 +81,7 @@
 - basic + `table_prefix`: `list_objects(object_type="extension")` работает (раньше — ошибка про `pg_extension`).
 - basic + `write_mode=true`: запросы каталога идут в read-only транзакции (раньше `SafeSqlExecutor` игнорировал `readonly=True` и открывал пишущую).
 - full + `write_mode=true`: запросы каталога проходят AST-валидацию read-only и получают `statement_timeout` (раньше шли через `SqlExecutor` без проверок и таймаута; транзакция и тогда была read-only).
+- Все режимы: колонки ограничений в `get_object_details` берутся только из запрошенной таблицы (раньше соединение `key_column_usage` шло по имени ограничения и схеме, и одноимённые FK/CHECK других таблиц схемы подмешивали свои колонки).
 
 ## 5. Тесты
 
@@ -106,7 +107,8 @@
 - `other_users` → `TablePrefixAccessError`; `app_ghost` → `ObjectNotFoundError`;
 - `app_users_id_seq` → детали; `other_users_id_seq` → `TablePrefixAccessError`;
 - `plpgsql` (установлен всегда) → детали; `list_objects(extension)` содержит `plpgsql`;
-- `execute_sql` через `sql_driver`: `pg_indexes` и `pg_catalog.pg_indexes` по-прежнему отклоняются.
+- `execute_sql` через `sql_driver`: `pg_indexes` и `pg_catalog.pg_indexes` по-прежнему отклоняются;
+- две таблицы с одноимённым FK `fk_owner` → у `app_shipments` в ограничении только свои колонки.
 
 Локально интеграция пропускается (нет Docker) — проверяется статически по коду; в CI идёт на Postgres 15/16.
 
@@ -114,4 +116,4 @@
 
 - (!) В basic **без** префикса валидатор пропускает неквалифицированные системные отношения: `SELECT * FROM pg_class`, `pg_roles`, `pg_stat_activity`. Запрещено только явное `pg_catalog.`.
 - (!) `explain_query` с гипотетическими индексами в basic + `table_prefix`: проверка hypopg читает `pg_extension` через `sql_driver`, отказ валидатора перехватывается (`postgres/extensions.py:155`) и наружу выходит `HypopgNotInstalledError`.
-- (i) Метаданные объектов без префикса и из других схем видны агенту через `information_schema.*` в `execute_sql`. Отказ `get_object_details` по префиксу — согласованность с `list_objects`, а не сокрытие.
+- (i) Метаданные объектов без префикса и из других схем видны агенту через `information_schema.*` в `execute_sql`. Отказ `get_object_details` по префиксу — согласованность с `list_objects`, а не сокрытие. Имена последовательностей без префикса могут встречаться в `column_default` таблиц с префиксом (`nextval('users_id_seq'::regclass)`).
