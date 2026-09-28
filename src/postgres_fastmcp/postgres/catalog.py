@@ -75,3 +75,19 @@ SELECT extname, extversion, extrelocatable
 FROM pg_extension
 WHERE extname = {}
 """
+
+# Единственные шаблоны, которые выполняет CatalogSqlExecutor: сравнение по тексту до подстановки параметров.
+CATALOG_QUERIES: frozenset[str] = frozenset(
+    {
+        QUERY_LIST_SCHEMAS,
+        QUERY_LIST_TABLES_VIEWS,
+        QUERY_TABLE_EXISTS,
+        QUERY_LIST_SEQUENCES,
+        QUERY_LIST_EXTENSIONS,
+        QUERY_GET_COLUMNS,
+        QUERY_GET_CONSTRAINTS,
+        QUERY_GET_INDEXES,
+        QUERY_GET_SEQUENCE_DETAILS,
+        QUERY_GET_EXTENSION_DETAILS,
+    }
+)
