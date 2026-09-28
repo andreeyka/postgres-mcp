@@ -11,8 +11,16 @@ from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
+from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import ObjectNotFoundError, SystemRelationAccessError, TablePrefixAccessError
+from postgres_fastmcp.shared.errors import (
+    FunctionNotAllowedError,
+    ObjectNotFoundError,
+    SchemaNotAllowedError,
+    ShowParameterNotAllowedError,
+    SystemRelationAccessError,
+    TablePrefixAccessError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -381,3 +389,51 @@ async def test_explain_with_hypothetical_index_in_basic_with_prefix(
     # Таблица из одной строки: планировщик вправе выбрать Seq Scan, поэтому проверяем только,
     # что план построен (проверка hypopg не отказала), а не что гипотетический индекс использован.
     assert "app_users" in result
+
+
+@pytest.mark.asyncio
+async def test_basic_rejects_every_system_relation_of_the_server(db_full: DbAccess) -> None:
+    """Инвариант R1 на живом сервере: каждое отношение pg_catalog и каждое information_schema._pg_* закрыто в basic.
+
+    Новые системные представления следующих версий Postgres не откроют дыру молча: тест перечисляет их сам.
+    """
+    rows = await db_full.sql_driver.execute(
+        """
+        SELECT n.nspname AS schema_name, c.relname AS relation
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f')
+          AND (n.nspname = 'pg_catalog' OR (n.nspname = 'information_schema' AND c.relname LIKE '\\_pg\\_%'))
+        """,
+        readonly=True,
+    )
+    relations = [(row.cells["schema_name"], row.cells["relation"]) for row in rows or []]
+    assert ("pg_catalog", "pg_stats") in relations
+    validator = QueryValidator(read_only=True, allowed_schema="public")
+
+    for schema, relation in relations:
+        for sql in (f'SELECT * FROM "{relation}"', f'SELECT * FROM {schema}."{relation}"'):
+            with pytest.raises(SystemRelationAccessError):
+                validator.validate(sql)
+
+
+@pytest.mark.asyncio
+async def test_basic_agent_sql_introspection_is_closed(db_full: DbAccess, db_user_prefix: DbAccess) -> None:
+    await setup_test_tables(db_full)
+    sql = db_user_prefix.sql_driver
+
+    with pytest.raises(FunctionNotAllowedError):
+        await sql.execute("SELECT current_setting('server_version')", readonly=True)
+    with pytest.raises(ShowParameterNotAllowedError):
+        await sql.execute("SHOW data_directory", readonly=True)
+    with pytest.raises(SchemaNotAllowedError):
+        await sql.execute("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')", readonly=True)
+    with pytest.raises(FunctionNotAllowedError):
+        await sql.execute(
+            "SELECT hypopg_create_index('CREATE INDEX ON app_users ((''secret.t''::regclass))')", readonly=True
+        )
+
+    rows = await sql.execute("SELECT current_user AS who, version() AS v", readonly=True)
+    assert rows and rows[0].cells["who"]
+    shown = await sql.execute("SHOW search_path", readonly=True)
+    assert shown and "public" in str(shown[0].cells["search_path"])

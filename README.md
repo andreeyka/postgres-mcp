@@ -168,6 +168,8 @@ uv run postgres-fastmcp
 
 **Для access_mode=basic опционально:** `table_prefix` ограничивает таблицы, представления и последовательности по префиксу имени: `list_objects` скрывает объекты без префикса, а `get_object_details` и `execute_sql` отказывают по ним. Расширения префиксом не ограничиваются. Для full игнорируется.
 
+**Что закрыто в access_mode=basic для SQL агента:** системные отношения `pg_*` (в том числе `pg_catalog.*`, `pg_stats`, `pg_stat_activity` и представления расширений в `public`, например `pg_stat_statements`), функции интроспекции сервера и объектов (`current_setting`, `pg_get_functiondef`, `pg_relation_size`, `has_*_privilege`, `to_regclass` и др.), `SHOW` параметров вне короткого списка (`search_path`, `TimeZone`, `server_version` и т. п.), приведения к `reg*`-типам в любой позиции — не только касты, но и списки колонок табличных функций (`json_to_record(...) AS x(a regclass)`), `hypopg_create_index` по таблицам вне `public` или без префикса. Гипотетические индексы в basic (`hypothetical_indexes` в `explain_query` и сам `hypopg_create_index`) допускают только простые столбцы таблиц `public` с нужным префиксом — без выражений, `WHERE`, opclass и `TABLESPACE`. Функции `ts_stat`/`ts_rewrite` закрыты во всех режимах. Основная граница доступа — права роли в БД; basic — защита в глубину поверх них. Расширения лучше устанавливать в отдельную схему, а не в `public`.
+
 ### Транспорты
 
 Поддерживаются транспорты **http** и **stdio**.

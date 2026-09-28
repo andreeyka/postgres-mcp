@@ -244,7 +244,10 @@ def _execute_sql_desc() -> str:
         "in read-only mode only SELECT, EXPLAIN and SHOW are accepted; with basic write access "
         "INSERT, UPDATE and DELETE on the public schema are also accepted and committed, and DDL is "
         "rejected except CREATE EXTENSION hypopg / pg_stat_statements; with full write access any "
-        "statement runs. A rejected statement returns an explicit error. "
+        "statement runs. "
+        "In basic access, system catalogs (pg_*), server-introspection functions, SHOW of arbitrary "
+        "settings and casts to reg* types are rejected. "
+        "A rejected statement returns an explicit error. "
         "Workflow: list_objects -> get_object_details -> execute_sql."
     )
 
