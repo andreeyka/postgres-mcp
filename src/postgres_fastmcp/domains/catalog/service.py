@@ -3,12 +3,22 @@ from typing import Any, cast
 from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import QUERY_LIST_SCHEMAS
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import ObjectNotFoundError, SchemaAccessError, UnsupportedObjectTypeError
+from postgres_fastmcp.shared.errors import (
+    ObjectNotFoundError,
+    SchemaAccessError,
+    TablePrefixAccessError,
+    UnsupportedObjectTypeError,
+)
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
 
 from .extensions import ExtensionsService
+from .prefix import active_prefix, matches_prefix
 from .sequences import SequencesService
 from .tables import TablesService
+
+
+# Типы объектов, чьи имена в BASIC обязаны начинаться с table_prefix (как в execute_sql и list_objects).
+_PREFIXED_TYPES = frozenset({"table", "view", "sequence"})
 
 
 class CatalogService:
@@ -39,6 +49,19 @@ class CatalogService:
             return "public"
         return schema_name
 
+    def _check_prefix(self, object_name: str) -> None:
+        """В BASIC с table_prefix имя таблицы, представления или последовательности начинается с префикса.
+
+        Проверка идёт до запросов: ответ одинаков для существующего и несуществующего объекта.
+        Расширения не проверяются: имя расширения не принадлежит схеме.
+
+        Raises:
+            TablePrefixAccessError: Имя не начинается с префикса.
+        """
+        prefix = active_prefix(self.db)
+        if prefix and not matches_prefix(object_name, prefix):
+            raise TablePrefixAccessError(object_name, prefix)
+
     async def list_schemas(self) -> list[dict[str, Any]]:
         """Список всех схем базы данных.
 
@@ -56,7 +79,7 @@ class CatalogService:
                 }
             ]
 
-        rows = await self.db.sql_driver.execute(QUERY_LIST_SCHEMAS, params=None, readonly=True)
+        rows = await self.db.catalog_driver.execute(QUERY_LIST_SCHEMAS, params=None, readonly=True)
         return [decode_bytes_to_utf8(row.cells) for row in rows] if rows else []
 
     async def list_objects(
@@ -109,8 +132,11 @@ class CatalogService:
             SchemaAccessError: Если доступ к запрошенной схеме запрещен.
             UnsupportedObjectTypeError: Если тип объекта не поддерживается.
             ObjectNotFoundError: Если объекта такого типа нет в каталоге.
+            TablePrefixAccessError: Если в BASIC с table_prefix имя не начинается с префикса.
         """
         schema_name = self._resolve_schema(schema_name)
+        if object_type in _PREFIXED_TYPES:
+            self._check_prefix(object_name)
 
         result: dict[str, Any] | None
         if object_type in ("table", "view"):

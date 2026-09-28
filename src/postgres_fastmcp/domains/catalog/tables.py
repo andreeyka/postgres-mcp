@@ -12,8 +12,9 @@ from postgres_fastmcp.postgres.catalog import (
     QUERY_LIST_TABLES_VIEWS,
     QUERY_TABLE_EXISTS,
 )
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
+
+from .prefix import active_prefix, matches_prefix
 
 
 # object_type тула -> information_schema.tables.table_type
@@ -86,8 +87,8 @@ class TablesService:
         Returns:
             Список словарей с полями schema, name, type.
         """
-        sql_driver = self.db.sql_driver
-        rows = await sql_driver.execute(
+        catalog = self.db.catalog_driver
+        rows = await catalog.execute(
             QUERY_LIST_TABLES_VIEWS,
             params=[schema_name, _TABLE_TYPES[object_type]],
             readonly=True,
@@ -104,9 +105,9 @@ class TablesService:
             if rows
             else []
         )
-        if self.db.access_mode == AccessMode.BASIC and self.db.table_prefix:
-            prefix = self.db.table_prefix.lower()
-            objects = [o for o in objects if o["name"].lower().startswith(prefix)]
+        prefix = active_prefix(self.db)
+        if prefix:
+            objects = [o for o in objects if matches_prefix(o["name"], prefix)]
         return objects
 
     async def get_details(
@@ -118,9 +119,8 @@ class TablesService:
         """Получить столбцы, ограничения и индексы таблицы или представления.
 
         Существование решает каталог (QUERY_TABLE_EXISTS), а не пустые разделы: таблица
-        без столбцов (CREATE TABLE t()) существует. Запрос существования идёт в том же
-        параллельном наборе, поэтому ошибка валидатора у остальных запросов (BASIC с
-        table_prefix) остаётся той же, что до проверки существования.
+        без столбцов (CREATE TABLE t()) существует. Схему и префикс имени проверяет
+        CatalogService до вызова.
 
         Запросы идут через _run_concurrently: если один падает, остальные отменяются и не
         держат соединения пула; отмена вызывающей задачи не теряется.
@@ -133,13 +133,13 @@ class TablesService:
         Returns:
             Словарь с ключами basic, columns, constraints, indexes; None, если объекта такого типа нет.
         """
-        sql_driver = self.db.sql_driver
+        catalog = self.db.catalog_driver
 
         col_rows, con_rows, idx_rows, found = await _run_concurrently(
-            sql_driver.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True),
-            sql_driver.execute(
+            catalog.execute(QUERY_GET_COLUMNS, params=[schema_name, object_name], readonly=True),
+            catalog.execute(QUERY_GET_CONSTRAINTS, params=[schema_name, object_name], readonly=True),
+            catalog.execute(QUERY_GET_INDEXES, params=[schema_name, object_name], readonly=True),
+            catalog.execute(
                 QUERY_TABLE_EXISTS, params=[schema_name, object_name, _TABLE_TYPES[object_type]], readonly=True
             ),
         )

@@ -9,7 +9,7 @@ from postgres_fastmcp.domains.catalog.service import CatalogService
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import SchemaNotAllowedError, TablePrefixAccessError
+from postgres_fastmcp.shared.errors import ObjectNotFoundError, SchemaNotAllowedError, TablePrefixAccessError
 
 
 async def setup_test_tables(driver: DbAccess) -> None:
@@ -64,6 +64,42 @@ async def setup_test_tables(driver: DbAccess) -> None:
     )
     await sql.execute(
         "INSERT INTO test_users (name) VALUES ('Test User 1') ON CONFLICT DO NOTHING",
+        readonly=False,
+    )
+
+
+async def setup_catalog_objects(driver: DbAccess) -> None:
+    """Неуникальный индекс и представление с префиксом для проверки деталей каталога."""
+    await driver.sql_driver.execute(
+        "CREATE INDEX IF NOT EXISTS app_orders_user_id_idx ON app_orders (user_id)", readonly=False
+    )
+    await driver.sql_driver.execute(
+        "CREATE OR REPLACE VIEW app_active_users AS SELECT id, name FROM app_users", readonly=False
+    )
+
+
+async def setup_shared_constraint_name_tables(driver: DbAccess) -> None:
+    """Создать две таблицы в public с FK-ограничением, у которых совпадает имя constraint."""
+    sql = driver.sql_driver
+
+    await sql.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_shipments (
+            id SERIAL PRIMARY KEY,
+            buyer_id INTEGER,
+            CONSTRAINT fk_owner FOREIGN KEY (buyer_id) REFERENCES app_users (id)
+        )
+        """,
+        readonly=False,
+    )
+    await sql.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shipments_x (
+            id SERIAL PRIMARY KEY,
+            owner_ref INTEGER,
+            CONSTRAINT fk_owner FOREIGN KEY (owner_ref) REFERENCES other_users (id)
+        )
+        """,
         readonly=False,
     )
 
@@ -159,6 +195,22 @@ async def test_list_objects_filters_by_prefix(
 
 
 @pytest.mark.asyncio
+async def test_get_object_details_constraint_matched_by_table(
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
+) -> None:
+    """Constraint columns come from the requested table, not another table with the same constraint name."""
+    await setup_test_tables(db_full)
+    await setup_shared_constraint_name_tables(db_full)
+
+    details = await CatalogService(db_user_prefix).get_object_details("public", "app_shipments", "table")
+
+    constraints = {c["name"]: c for c in details["constraints"]}
+    assert "fk_owner" in constraints
+    assert constraints["fk_owner"]["columns"] == ["buyer_id"]
+
+
+@pytest.mark.asyncio
 async def test_table_prefix_ignored_in_full_access_mode(
     db_full: DbAccess,
 ) -> None:
@@ -238,3 +290,65 @@ async def test_table_prefix_with_different_prefixes(
             await sql_driver.execute("SELECT * FROM admin_logs LIMIT 1", readonly=True)
     finally:
         await user_svc.close()
+
+
+@pytest.mark.asyncio
+async def test_get_object_details_shows_indexes_of_prefixed_tables(
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
+) -> None:
+    """BASIC + table_prefix: колонки, ограничения и все индексы, включая неуникальный."""
+    await setup_test_tables(db_full)
+    await setup_catalog_objects(db_full)
+    catalog = CatalogService(db_user_prefix)
+
+    users = await catalog.get_object_details("public", "app_users", "table")
+    assert [c["column"] for c in users["columns"]] == ["id", "name", "email"]
+    assert {"PRIMARY KEY", "UNIQUE"} <= {c["type"] for c in users["constraints"]}
+    assert {"app_users_pkey", "app_users_email_key"} <= {i["name"] for i in users["indexes"]}
+
+    orders = await catalog.get_object_details("public", "app_orders", "table")
+    assert {"app_orders_pkey", "app_orders_user_id_idx"} <= {i["name"] for i in orders["indexes"]}
+
+    view = await catalog.get_object_details("public", "app_active_users", "view")
+    assert [c["column"] for c in view["columns"]] == ["id", "name"]
+    assert view["indexes"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_object_details_rejects_unprefixed_and_reports_missing(
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
+) -> None:
+    await setup_test_tables(db_full)
+    catalog = CatalogService(db_user_prefix)
+
+    with pytest.raises(TablePrefixAccessError, match="'other_users'"):
+        await catalog.get_object_details("public", "other_users", "table")
+    with pytest.raises(ObjectNotFoundError):
+        await catalog.get_object_details("public", "app_ghost", "table")
+
+    sequence = await catalog.get_object_details("public", "app_users_id_seq", "sequence")
+    assert sequence["name"] == "app_users_id_seq"
+    with pytest.raises(TablePrefixAccessError, match="'other_users_id_seq'"):
+        await catalog.get_object_details("public", "other_users_id_seq", "sequence")
+
+
+@pytest.mark.asyncio
+async def test_extensions_are_listed_and_detailed_regardless_of_prefix(db_user_prefix: DbAccess) -> None:
+    catalog = CatalogService(db_user_prefix)
+
+    listed = await catalog.list_objects("public", "extension")
+    assert "plpgsql" in {e["name"] for e in listed}
+
+    details = await catalog.get_object_details("public", "plpgsql", "extension")
+    assert details["name"] == "plpgsql"
+
+
+@pytest.mark.asyncio
+async def test_agent_sql_still_cannot_read_system_catalogs(db_user_prefix: DbAccess) -> None:
+    """Путь каталога не открывает системные представления для execute_sql."""
+    with pytest.raises(TablePrefixAccessError):
+        await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_indexes", readonly=True)
+    with pytest.raises(SchemaNotAllowedError):
+        await db_user_prefix.sql_driver.execute("SELECT indexname FROM pg_catalog.pg_indexes", readonly=True)

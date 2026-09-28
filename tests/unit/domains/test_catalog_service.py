@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import postgres_fastmcp.domains.db_access as db_access_module
+from postgres_fastmcp.access import EffectiveAccess
+from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.catalog.service import CatalogService
-from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.postgres.catalog import (
     QUERY_GET_COLUMNS,
     QUERY_GET_CONSTRAINTS,
@@ -14,12 +17,11 @@ from postgres_fastmcp.postgres.catalog import (
     QUERY_TABLE_EXISTS,
 )
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
-from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ObjectNotFoundError,
     SchemaAccessError,
+    SchemaNotAllowedError,
     TablePrefixAccessError,
     UnsupportedObjectTypeError,
 )
@@ -252,24 +254,6 @@ class TestCatalogServiceGetObjectDetails:
 
         assert str(exc_info.value) == "Object not found: ghost (extension). Use list_objects to see existing objects."
 
-    @pytest.mark.parametrize("object_name", ["app_orders", "other_users", "ghost"])
-    async def test_basic_table_prefix_error_is_unchanged(self, object_name: str) -> None:
-        """BASIC с table_prefix: как и до проверки существования, валидатор отклоняет pg_indexes для любой таблицы."""
-        delegate = MagicMock()
-        delegate.execute = AsyncMock(return_value=[])
-        config = SafeSqlConfig(query_tag="t", allowed_schema="public", table_prefix="app_")
-        validator = QueryValidator(allowed_schema="public", table_prefix="app_", read_only=True)
-        db = DbAccess(
-            sql_driver=SafeSqlExecutor(delegate=delegate, validator=validator, config=config),
-            access_mode=AccessMode.BASIC,
-            write_mode=False,
-            table_prefix="app_",
-            connection_id="fake",
-        )
-
-        with pytest.raises(TablePrefixAccessError, match="pg_indexes"):
-            await CatalogService(db=db).get_object_details("public", object_name, "table")
-
     async def test_failed_query_cancels_sibling_queries(
         self,
         mock_db_access: MagicMock,
@@ -407,3 +391,174 @@ class TestCatalogServiceListSchemas:
         result = await service.list_schemas()
         assert result == []
         mock_executor.execute.assert_called_once()
+
+
+_PREFIX_ERROR = "Access to table '{}' is not allowed. Only tables with names starting with 'app_' are permitted."
+
+
+def _fake_postgres(*, present: bool):
+    """Ответы делегата по тексту отрендеренного запроса: объект есть (present) или нет."""
+
+    async def execute(query, params=None, *, readonly=True):
+        if "SELECT 1 AS present" in query:
+            return [RowResult(cells={"present": 1})] if present else []
+        if "pg_catalog.pg_indexes" in query:
+            row = {"indexname": "app_users_name_idx", "indexdef": "CREATE INDEX app_users_name_idx ON public.app_users"}
+            return [RowResult(cells=row)] if present else []
+        if "information_schema.sequences" in query:
+            row = {
+                "sequence_schema": "public",
+                "sequence_name": "app_users_id_seq",
+                "data_type": "integer",
+                "start_value": "1",
+                "increment": "1",
+            }
+            return [RowResult(cells=row)] if present else []
+        if "pg_catalog.pg_extension" in query:
+            return [RowResult(cells={"extname": "plpgsql", "extversion": "1.0", "extrelocatable": False})]
+        return []
+
+    return execute
+
+
+@pytest.fixture
+def fake_delegate(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Делегат вместо SqlExecutor: настоящие SafeSqlExecutor и CatalogSqlExecutor собирает DbAccessService."""
+    delegate = MagicMock()
+    delegate.execute = AsyncMock(side_effect=_fake_postgres(present=True))
+    monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+    return delegate
+
+
+def _basic_prefix_db(*, write_mode: bool) -> DbAccess:
+    config = DatabaseConfig(
+        host="h",
+        user="u",
+        password="p",
+        name="d",
+        access_mode=AccessMode.BASIC,
+        write_mode=write_mode,
+        table_prefix="app_",
+    )
+    return DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=write_mode))
+
+
+@pytest.mark.parametrize("write_mode", [False, True])
+class TestBasicTablePrefix:
+    """BASIC с table_prefix="app_" на настоящей цепочке исполнителей поверх фальшивого делегата."""
+
+    @pytest.mark.parametrize("object_type", ["table", "view"])
+    async def test_prefixed_relation_details_include_indexes(
+        self, fake_delegate: MagicMock, object_type: str, *, write_mode: bool
+    ) -> None:
+        result = await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+            "public", "app_users", object_type
+        )
+
+        assert result["basic"] == {"schema": "public", "name": "app_users", "type": object_type}
+        assert result["indexes"] == [
+            {"name": "app_users_name_idx", "definition": "CREATE INDEX app_users_name_idx ON public.app_users"}
+        ]
+        sent = [c.args[0] for c in fake_delegate.execute.await_args_list]
+        assert any("pg_catalog.pg_indexes" in q for q in sent)
+        # Каталог только читает, даже при write_mode=True
+        assert all(c.kwargs["readonly"] is True for c in fake_delegate.execute.await_args_list)
+
+    @pytest.mark.usefixtures("fake_delegate")
+    async def test_prefix_match_ignores_case(self, *, write_mode: bool) -> None:
+        result = await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+            "public", "APP_Users", "table"
+        )
+        assert result["basic"]["name"] == "APP_Users"
+
+    @pytest.mark.parametrize("object_type", ["table", "view", "sequence"])
+    async def test_unprefixed_object_is_rejected_before_any_query(
+        self, fake_delegate: MagicMock, object_type: str, *, write_mode: bool
+    ) -> None:
+        """Ответ одинаков для существующего и несуществующего объекта: каталог не опрашивается."""
+        with pytest.raises(TablePrefixAccessError) as exc_info:
+            await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+                "public", "users", object_type
+            )
+
+        assert str(exc_info.value) == _PREFIX_ERROR.format("users")
+        fake_delegate.execute.assert_not_awaited()
+
+    @pytest.mark.parametrize("object_type", ["table", "view", "sequence"])
+    async def test_missing_prefixed_object_is_not_found(
+        self, fake_delegate: MagicMock, object_type: str, *, write_mode: bool
+    ) -> None:
+        fake_delegate.execute.side_effect = _fake_postgres(present=False)
+
+        with pytest.raises(ObjectNotFoundError):
+            await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+                "public", "app_ghost", object_type
+            )
+
+    async def test_object_name_reaches_postgres_as_a_literal(
+        self, fake_delegate: MagicMock, *, write_mode: bool
+    ) -> None:
+        fake_delegate.execute.side_effect = _fake_postgres(present=False)
+
+        with pytest.raises(ObjectNotFoundError):
+            await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+                "public", "app_x' OR 1=1 --", "table"
+            )
+
+        sent = [c.args[0] for c in fake_delegate.execute.await_args_list]
+        assert len(sent) == 4
+        assert all("'app_x'' OR 1=1 --'" in q for q in sent)
+
+    @pytest.mark.usefixtures("fake_delegate")
+    async def test_prefixed_sequence_details(self, *, write_mode: bool) -> None:
+        result = await CatalogService(_basic_prefix_db(write_mode=write_mode)).get_object_details(
+            "public", "app_users_id_seq", "sequence"
+        )
+        assert result["name"] == "app_users_id_seq"
+
+    @pytest.mark.usefixtures("fake_delegate")
+    async def test_extensions_ignore_the_prefix(self, *, write_mode: bool) -> None:
+        """Имя расширения не принадлежит схеме: префикс к нему не применяется."""
+        service = CatalogService(_basic_prefix_db(write_mode=write_mode))
+
+        details = await service.get_object_details("public", "plpgsql", "extension")
+        listed = await service.list_objects("public", "extension")
+
+        assert details["name"] == "plpgsql"
+        assert [e["name"] for e in listed] == ["plpgsql"]
+
+    @pytest.mark.parametrize("object_type", ["table", "view", "sequence", "extension"])
+    async def test_other_schema_is_rejected_before_any_query(
+        self, fake_delegate: MagicMock, object_type: str, *, write_mode: bool
+    ) -> None:
+        service = CatalogService(_basic_prefix_db(write_mode=write_mode))
+
+        with pytest.raises(SchemaAccessError):
+            await service.get_object_details("other", "app_users", object_type)
+        with pytest.raises(SchemaAccessError):
+            await service.list_objects("other", object_type)
+
+        fake_delegate.execute.assert_not_awaited()
+
+    async def test_list_schemas_does_not_query(self, fake_delegate: MagicMock, *, write_mode: bool) -> None:
+        schemas = await CatalogService(_basic_prefix_db(write_mode=write_mode)).list_schemas()
+
+        assert [s["schema_name"] for s in schemas] == ["public"]
+        fake_delegate.execute.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("sql", "error"),
+        [
+            ("SELECT * FROM pg_indexes", TablePrefixAccessError),
+            ("SELECT * FROM pg_catalog.pg_indexes", SchemaNotAllowedError),
+            ("SELECT * FROM pg_catalog.pg_class", SchemaNotAllowedError),
+            ("SELECT * FROM other_users", TablePrefixAccessError),
+        ],
+    )
+    async def test_agent_sql_driver_is_still_restricted(
+        self, fake_delegate: MagicMock, sql: str, error: type[Exception], *, write_mode: bool
+    ) -> None:
+        with pytest.raises(error):
+            await _basic_prefix_db(write_mode=write_mode).sql_driver.execute(sql)
+
+        fake_delegate.execute.assert_not_awaited()

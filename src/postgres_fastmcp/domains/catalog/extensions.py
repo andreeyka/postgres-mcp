@@ -24,8 +24,8 @@ class ExtensionsService:
         Returns:
             Список словарей с полями name, version, relocatable.
         """
-        sql_driver = self.db.sql_driver
-        rows = await sql_driver.execute(QUERY_LIST_EXTENSIONS, params=None, readonly=True)
+        catalog = self.db.catalog_driver
+        rows = await catalog.execute(QUERY_LIST_EXTENSIONS, params=None, readonly=True)
         return (
             [
                 {
@@ -48,8 +48,8 @@ class ExtensionsService:
         Returns:
             Словарь с полями name, version, relocatable; None, если расширение не установлено.
         """
-        sql_driver = self.db.sql_driver
-        rows = await sql_driver.execute(QUERY_GET_EXTENSION_DETAILS, params=[object_name], readonly=True)
+        catalog = self.db.catalog_driver
+        rows = await catalog.execute(QUERY_GET_EXTENSION_DETAILS, params=[object_name], readonly=True)
         if rows and rows[0]:
             row = rows[0]
             return {

@@ -8,6 +8,7 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.postgres.driver import SqlExecutor
+from postgres_fastmcp.postgres.security.catalog_driver import CatalogSqlExecutor
 from postgres_fastmcp.postgres.security.driver import SafeSqlExecutor
 from postgres_fastmcp.shared.enums import AccessMode
 
@@ -114,3 +115,37 @@ def test_truthy_non_bool_write_mode_never_gets_unrestricted_executor() -> None:
     assert not isinstance(driver, SqlExecutor)
     assert isinstance(driver, SafeSqlExecutor)
     assert driver._config.read_only is True
+
+
+def test_catalog_driver_is_one_read_only_executor_for_every_access() -> None:
+    """Каталог: один исполнитель на сервис, без схемы и префикса, только чтение, с таймаутом; не sql_driver агента."""
+    service = _service(access_mode=AccessMode.FULL, write_mode=True, table_prefix="app_", safe_sql_timeout=7)
+    views = [service.view(access) for access in _ALL_ACCESS]
+
+    catalogs = {id(view.catalog_driver) for view in views}
+    assert len(catalogs) == 1
+    catalog = views[0].catalog_driver
+    assert isinstance(catalog, CatalogSqlExecutor)
+    assert all(view.catalog_driver is not view.sql_driver for view in views)
+
+    inner = catalog._inner
+    assert inner._config.read_only is True
+    assert inner._config.allowed_schema is None
+    assert inner._config.table_prefix is None
+    assert inner._config.timeout == 7
+    assert inner._config.query_tag == "postgres_fastmcp"
+    assert inner._validator.read_only is True
+    assert inner._validator.allowed_schema is None
+    assert inner._validator.table_prefix is None
+    assert inner._validator.allow_explain_analyze is False
+    assert inner._delegate.conn is service._pool
+
+
+def test_basic_agent_driver_keeps_prefix_next_to_catalog_driver() -> None:
+    """Появление catalog_driver не меняет исполнитель агента в BASIC."""
+    service = _service(access_mode=AccessMode.BASIC, write_mode=True, table_prefix="app_")
+    for write_mode in (False, True):
+        driver = service.view(EffectiveAccess(AccessMode.BASIC, write_mode=write_mode)).sql_driver
+        assert isinstance(driver, SafeSqlExecutor)
+        assert driver._validator.allowed_schema == "public"
+        assert driver._validator.table_prefix == "app_"
