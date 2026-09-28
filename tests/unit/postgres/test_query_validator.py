@@ -238,6 +238,8 @@ class TestBasicInformationSchemaSecrets:
             "user_mappings",
             "foreign_server_options",
             "foreign_data_wrapper_options",
+            "foreign_table_options",
+            "column_options",
             "routines",
             "views",
             "triggers",

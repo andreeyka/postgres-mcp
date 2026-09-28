@@ -32,15 +32,18 @@ BASIC_SHOW_PARAMETERS: frozenset[str] = frozenset(
 )
 
 # Представления information_schema, которые раскрывают секреты и исходники: опции user mapping (в том числе
-# пароли), user mapping, опции серверов и обёрток (хосты, пути), тексты функций, представлений и триггеров.
-# Фильтр по правам роли их не прячет — владелец объекта видит своё в любой схеме. Структуру объектов агент
-# получает через list_objects/get_object_details.
+# пароли), user mapping, опции серверов и обёрток (хосты, пути), опции внешних таблиц и колонок (у file_fdw —
+# filename/program, где program — командная строка шелла и может нести учётные данные), тексты функций,
+# представлений и триггеров. Фильтр по правам роли их не прячет — владелец объекта видит своё в любой схеме.
+# Структуру объектов агент получает через list_objects/get_object_details.
 BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS: frozenset[str] = frozenset(
     {
         "user_mapping_options",
         "user_mappings",
         "foreign_server_options",
         "foreign_data_wrapper_options",
+        "foreign_table_options",
+        "column_options",
         "routines",
         "views",
         "triggers",

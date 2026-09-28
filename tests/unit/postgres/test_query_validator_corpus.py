@@ -185,6 +185,8 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT * FROM information_schema.user_mappings",
     "SELECT * FROM information_schema.foreign_server_options",
     "SELECT * FROM information_schema.foreign_data_wrapper_options",
+    "SELECT * FROM information_schema.foreign_table_options",
+    "SELECT * FROM information_schema.column_options",
     "SELECT * FROM information_schema.routines",
     "SELECT * FROM information_schema.views",
     "SELECT * FROM information_schema.triggers",
