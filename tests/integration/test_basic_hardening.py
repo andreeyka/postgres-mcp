@@ -24,11 +24,17 @@ async def test_user_mapping_options_are_rejected_in_basic(db_user_prefix: DbAcce
 
 
 @pytest.mark.asyncio
-async def test_information_schema_columns_still_work_in_basic(db_user_prefix: DbAccess) -> None:
-    rows = await db_user_prefix.sql_driver.execute(
-        "SELECT count(*) AS n FROM information_schema.columns WHERE table_schema = 'public'", readonly=True
+async def test_information_schema_columns_still_work_in_basic(db_full: DbAccess, db_user_prefix: DbAccess) -> None:
+    """information_schema.columns не секретный: basic видит реальные колонки известной таблицы public."""
+    await db_full.sql_driver.execute(
+        "CREATE TABLE IF NOT EXISTS app_probe_columns (id int PRIMARY KEY, name text)", readonly=False
     )
-    assert rows[0].cells["n"] >= 0
+    rows = await db_user_prefix.sql_driver.execute(
+        "SELECT count(*) AS n FROM information_schema.columns"
+        " WHERE table_schema = 'public' AND table_name = 'app_probe_columns'",
+        readonly=True,
+    )
+    assert rows[0].cells["n"] >= 1
 
 
 @pytest.mark.asyncio
@@ -61,11 +67,18 @@ async def test_hidden_indexes_are_unhidden_when_the_connection_returns(
             logger.warning("hypopg not available: %s", e)
             pytest.skip("hypopg extension is not available")
 
+        available = await db.sql_driver.execute(
+            "SELECT to_regproc('hypopg_hide_index') IS NOT NULL AS available", readonly=True
+        )
+        if available[0].cells["available"] is not True:
+            pytest.skip("hypopg_hide_index is not available (hypopg < 1.4)")
+
         hidden = await db.sql_driver.execute(
             "SELECT hypopg_hide_index('hypo_hide_t_pkey'::regclass) AS hidden", readonly=True
         )
         after_return = await db.sql_driver.execute("SELECT count(*) AS n FROM hypopg_hidden_indexes", readonly=True)
     finally:
+        await db.sql_driver.execute("DROP TABLE IF EXISTS hypo_hide_t", readonly=False)
         await service.close()
 
     assert hidden[0].cells["hidden"] is True
