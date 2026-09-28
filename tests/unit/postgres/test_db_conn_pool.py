@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from psycopg.errors import UndefinedFunction
+from psycopg.errors import QueryCanceled, UndefinedFunction
 
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.shared.errors import ConnectionFailedError
@@ -277,16 +277,32 @@ class TestHypopgReset:
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection()
-        connection.execute = AsyncMock(side_effect=UndefinedFunction("function hypopg_reset() does not exist"))
+        connection.execute = AsyncMock(side_effect=QueryCanceled("canceling statement due to statement timeout"))
         pool_mgr.mark_hypopg_used(connection)
 
         with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
-            with pytest.raises(UndefinedFunction):
+            with pytest.raises(QueryCanceled):
                 await reset(connection)
 
         assert any("Failed to reset hypothetical indexes" in r.getMessage() for r in caplog.records)
         await reset(connection)
         connection.execute.assert_awaited_once()
+
+    async def test_missing_hypopg_reset_is_quiet(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Hypopg не установлен или не в search_path роли по умолчанию (сброс идёт вне SET LOCAL search_path):
+        на соединении нет состояния hypopg, а autocommit-запрос не оставил прерванной транзакции —
+        соединение исправно и возвращается в пул без предупреждения."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+        connection.execute = AsyncMock(side_effect=UndefinedFunction("function hypopg_reset() does not exist"))
+        pool_mgr.mark_hypopg_used(connection)
+
+        with caplog.at_level(logging.DEBUG, logger="postgres_fastmcp.postgres.connection"):
+            await reset(connection)
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("hypopg_reset" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG)
 
     async def test_closed_connection_is_left_alone(self) -> None:
         """psycopg_pool вызывает reset и для соединения, которое само же закрыло (ACTIVE/сбойное при возврате):

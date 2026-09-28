@@ -7,26 +7,32 @@ import pytest
 
 from postgres_fastmcp.domains.index_tuning.candidates import CandidateGenerator
 from postgres_fastmcp.domains.index_tuning.models import IndexRecommendation
+from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
 
 class TestEstimateHypotheticalIndexSizes:
     """Создание гипотетических индексов и чтение их размеров идут одним execute на одном соединении.
 
     Пул возвращает соединение в исходное состояние (hypopg_reset) сразу после того, как оно
-    освободилось: раздельные execute для create и для hypopg_list_indexes получили бы для чтения
+    освободилось: раздельные execute для create и для чтения размеров получили бы для чтения
     уже другое, чистое соединение, и estimated_size_bytes остался бы 0.
+
+    Размеры сопоставляются с кандидатами по позиции (ord из WITH ORDINALITY), а не по имени:
+    hypopg называет индекс сам (``<oid>btree_t_a``), и с IndexRecommendation.name оно не совпадает.
     """
 
     @pytest.mark.asyncio
-    async def test_creates_and_size_query_are_sent_as_one_statement(self) -> None:
+    async def test_sizes_are_matched_to_candidates_by_position(self) -> None:
         driver = AsyncMock()
         candidate_a = IndexRecommendation("t", ("a",))
         candidate_b = IndexRecommendation("t", ("b",))
+        # Строки как у настоящего запроса: только позиция и размер, имён кандидатов в них нет.
         driver.execute = AsyncMock(
             return_value=[
-                RowResult(cells={"index_name": candidate_a.name, "index_size": 4096}),
-                RowResult(cells={"index_name": candidate_b.name, "index_size": 8192}),
+                RowResult(cells={"ord": 1, "index_size": 4096}),
+                RowResult(cells={"ord": 2, "index_size": 8192}),
             ]
         )
         generator = CandidateGenerator(driver, MagicMock())
@@ -37,17 +43,36 @@ class TestEstimateHypotheticalIndexSizes:
         sent_query = driver.execute.call_args.args[0]
         sent_params = driver.execute.call_args.kwargs["params"]
 
-        assert sent_query.count("hypopg_create_index({})") == 2
-        assert "hypopg_list_indexes" in sent_query
+        assert sent_query.count("{}") == 1
+        assert "WITH ORDINALITY" in sent_query
+        assert "hypopg_create_index" in sent_query
         # Один statement, а не отдельный сброс/чтение на другом соединении из пула.
         assert "hypopg_reset" not in sent_query
-        assert sent_params == [candidate_a.definition, candidate_b.definition]
+        assert sent_params == [[candidate_a.definition, candidate_b.definition]]
         assert candidate_a.estimated_size_bytes == 4096
         assert candidate_b.estimated_size_bytes == 8192
 
     @pytest.mark.asyncio
-    async def test_unmatched_candidate_keeps_its_size(self) -> None:
-        """Кандидат, не попавший в hypopg_list_indexes (сборка индекса hypopg не удалась), не меняется."""
+    async def test_rendered_query_passes_the_full_mode_validator(self) -> None:
+        """DTA работает в full: SafeSqlExecutor (read-only и запись) пропускает запрос размеров."""
+        driver = AsyncMock()
+        driver.execute = AsyncMock(return_value=[])
+        generator = CandidateGenerator(driver, MagicMock())
+
+        await generator._estimate_hypothetical_index_sizes(
+            [IndexRecommendation("t", ("a",)), IndexRecommendation("o'k", ("b", "c"))]
+        )
+
+        call = driver.execute.call_args
+        rendered = SqlExecutor(engine_url="postgresql://localhost/test").render(call.args[0], call.kwargs["params"])
+        assert "hypopg_create_index(d.definition)" in rendered
+
+        for read_only in (True, False):
+            QueryValidator(read_only=read_only).validate(f"/* tag */ {rendered}")
+
+    @pytest.mark.asyncio
+    async def test_missing_row_keeps_the_candidate_size(self) -> None:
+        """Кандидат без строки в результате не меняется."""
         driver = AsyncMock()
         candidate = IndexRecommendation("t", ("a",), estimated_size_bytes=0)
         driver.execute = AsyncMock(return_value=[])

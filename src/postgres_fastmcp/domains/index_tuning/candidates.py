@@ -155,30 +155,37 @@ class CandidateGenerator:
 
         hypopg-индексы живут в памяти сессии, а пул сбрасывает их на соединении сразу после того,
         как оно освобождается (reset-callback DbConnPool): раздельные execute для создания индексов
-        и для чтения hypopg_list_indexes получили бы для чтения уже другое, чистое соединение из
-        пула, и estimated_size_bytes остался бы 0. Один SQL с обоими операторами гарантирует одно
-        и то же соединение для обоих; сбрасывать индексы явно здесь не нужно — это сделает пул при
-        возврате соединения (SqlExecutor помечает его, видя hypopg_create_index в запросе).
+        и для чтения размеров получили бы для чтения уже другое, чистое соединение из пула, и
+        estimated_size_bytes остался бы 0. Один оператор гарантирует одно соединение; сбрасывать
+        индексы явно здесь не нужно — это сделает пул при возврате соединения (SqlExecutor помечает
+        его, видя hypopg_create_index в запросе).
+
+        Размер сопоставляется с кандидатом по позиции определения в массиве (WITH ORDINALITY), а не
+        по имени: hypopg называет индекс сам (``<oid>btree_t_a``), и с IndexRecommendation.name
+        оно не совпадает.
 
         Args:
-            candidates: Кандидаты индексов; у совпавших по имени с hypopg_list_indexes проставляется
+            candidates: Кандидаты индексов; у кандидата со строкой в результате проставляется
                 estimated_size_bytes.
         """
         if not candidates:
             return
-        query = "SELECT hypopg_create_index({});" * len(candidates)
-        query += "SELECT index_name, hypopg_relation_size(indexrelid) AS index_size FROM hypopg_list_indexes;"
+        query = (
+            "SELECT d.ord, hypopg_relation_size(h.indexrelid) AS index_size "
+            "FROM unnest({}::text[]) WITH ORDINALITY AS d(definition, ord), "
+            "LATERAL hypopg_create_index(d.definition) AS h "
+            "ORDER BY d.ord"
+        )
         result = await self.sql_driver.execute(
             query,
-            params=[idx.definition for idx in candidates],
+            params=[[idx.definition for idx in candidates]],
             readonly=True,
         )
         if result is None:
             return
-        index_map = {r.cells["index_name"]: r.cells["index_size"] for r in result}
-        for idx in candidates:
-            if idx.name in index_map:
-                idx.estimated_size_bytes = index_map[idx.name]
+        for row in result:
+            # ord — позиция в массиве с единицы
+            candidates[row.cells["ord"] - 1].estimated_size_bytes = row.cells["index_size"]
 
     def _collect_condition_columns(
         self, workload: list[tuple[str, SelectStmt, float]], column_cache: dict[str, set[str]]

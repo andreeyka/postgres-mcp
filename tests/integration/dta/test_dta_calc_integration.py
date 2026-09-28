@@ -5,11 +5,14 @@ import contextlib
 import logging
 
 import pytest
+from pglast import parse_sql
 
 from postgres_fastmcp.domains.db_access import DbAccess
+from postgres_fastmcp.domains.index_tuning.candidates import CandidateGenerator
 from postgres_fastmcp.domains.index_tuning.dta_calc import DatabaseTuningAdvisor
 from postgres_fastmcp.domains.index_tuning.models import IndexTuningResult
 from postgres_fastmcp.domains.index_tuning.presentation import TextPresentation
+from postgres_fastmcp.postgres.params.replacer import SqlParamReplacer
 
 
 logger = logging.getLogger(__name__)
@@ -194,3 +197,29 @@ async def test_dta_hypopg_not_installed_returns_error(
     assert isinstance(session, IndexTuningResult)
     assert session.error is not None
     assert "hypopg" in session.error.lower() or "not installed" in session.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_candidate_generation_estimates_hypothetical_index_sizes(db_with_hypopg: DbAccess) -> None:
+    """Размер гипотетического индекса доходит до кандидата: сопоставление по позиции, а не по имени hypopg."""
+    sql = db_with_hypopg.sql_driver
+    await _execute_setup(
+        db_with_hypopg,
+        "DROP TABLE IF EXISTS dta_sizes CASCADE",
+        "CREATE TABLE dta_sizes (id SERIAL PRIMARY KEY, col1 INTEGER, col2 INTEGER)",
+        "INSERT INTO dta_sizes (col1, col2) SELECT i % 100, i % 7 FROM generate_series(1, 5000) i",
+        "ANALYZE dta_sizes",
+    )
+    try:
+        query = "select * from dta_sizes where col1 = 42 and col2 = 3"
+        workload = [(query, parse_sql(query)[0].stmt, 1.0)]
+        generator = CandidateGenerator(sql, SqlParamReplacer(sql, sql), max_index_width=2)
+
+        candidates = await generator.generate(workload, existing_defs=set())
+
+        assert candidates, "expected index candidates for col1/col2"
+        assert any(c.estimated_size_bytes > 0 for c in candidates), [
+            (c.definition, c.estimated_size_bytes) for c in candidates
+        ]
+    finally:
+        await sql.execute("DROP TABLE IF EXISTS dta_sizes", readonly=False)

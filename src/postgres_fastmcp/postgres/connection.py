@@ -6,6 +6,7 @@ import weakref
 from typing import Any
 
 from psycopg import AsyncConnection
+from psycopg.errors import UndefinedFunction
 from psycopg_pool import AsyncConnectionPool
 
 from postgres_fastmcp.shared.errors import ConnectionFailedError
@@ -141,7 +142,11 @@ class DbConnPool:
         """reset-callback пула: сбросить гипотетические индексы на помеченном соединении.
 
         Непомеченное соединение не трогается (без лишнего запроса). Ошибка сброса поднимается дальше:
-        psycopg_pool закрывает такое соединение, состояние hypopg на нём неизвестно.
+        psycopg_pool закрывает такое соединение, состояние hypopg на нём неизвестно. Исключение —
+        отсутствующая функция hypopg_reset (UndefinedFunction): hypopg не установлен или не лежит в
+        search_path роли по умолчанию (сброс идёт вне транзакции с SET LOCAL search_path). Тогда
+        гипотетических индексов на соединении нет, а упавший autocommit-запрос не оставил прерванной
+        транзакции — соединение в IDLE и остаётся в пуле.
         """
         if connection not in self._hypopg_connections:
             return
@@ -156,6 +161,8 @@ class DbConnPool:
             if not connection.autocommit:
                 await connection.set_autocommit(True)
             await connection.execute("SELECT hypopg_reset()")
+        except UndefinedFunction as e:
+            logger.debug("hypopg_reset() is unavailable on a returned connection, nothing to reset: %s", e)
         except Exception as e:
             logger.warning("Failed to reset hypothetical indexes on a returned connection: %s", e)
             raise
