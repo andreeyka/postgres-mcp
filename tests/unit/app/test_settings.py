@@ -308,6 +308,7 @@ def test_connect_options_round_trip_through_from_uri() -> None:
         ("user", "user"),
         ("password", "password"),
         ("sslmode", "sslmode"),
+        ("ssl", "sslmode"),
         ("client_encoding", "client_encoding"),
     ],
 )
@@ -317,7 +318,7 @@ def test_connect_options_reject_keys_that_have_their_own_field(key: str, field: 
     assert _SECRET_PASSWORD not in str(exc_info.value)
 
 
-@pytest.mark.parametrize("key", ["sslpassword", "passfile"])
+@pytest.mark.parametrize("key", ["sslpassword", "passfile", "oauth_client_secret", "sslkeylogfile"])
 def test_connect_options_reject_secrets(key: str) -> None:
     with pytest.raises(ValidationError, match="must not carry secrets") as exc_info:
         DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
@@ -333,7 +334,7 @@ def test_connect_options_reject_secrets(key: str) -> None:
     ],
 )
 def test_connect_options_reject_field_keys_case_insensitively(key: str, field: str) -> None:
-    """Libpq сам не различает регистр параметров; без этого 'PASSWORD' дошло бы до подключения как есть."""
+    """Libpq отверг бы 'PASSWORD' и сам, но только при подключении; проверка без учёта регистра даёт понятную ошибку сразу."""
     with pytest.raises(ValidationError, match=f"use the database field '{field}'") as exc_info:
         DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
     assert _SECRET_PASSWORD not in str(exc_info.value)
@@ -359,3 +360,29 @@ def test_database_settings_reads_connect_options_json_from_env(monkeypatch: pyte
 
 def test_extra_kwargs_field_is_gone() -> None:
     assert "extra_kwargs" not in DatabaseConfig.model_fields
+
+
+@pytest.mark.parametrize("key", ["oauth_client_secret", "sslkeylogfile"])
+def test_secret_connect_options_are_libpq_keywords(key: str) -> None:
+    """Запрещённые секреты — настоящие параметры libpq 18: без запрета они дошли бы до подключения."""
+    assert conninfo_to_dict(f"postgresql://u@h/d?{key}=x")[key] == "x"
+
+
+@pytest.mark.parametrize("key", ["prepared_statement_cache_size", "schema", "pgbouncer"])
+def test_uri_with_a_parameter_unknown_to_libpq_fails_config(key: str) -> None:
+    """Параметры SQLAlchemy/asyncpg/Prisma libpq не знает: ошибка при загрузке конфига, а не таймаут пула."""
+    with pytest.raises(ValidationError, match=f"'{key}'") as exc_info:
+        DatabaseConfig.from_uri(f"postgresql://u:{_SECRET_PASSWORD}@h/d?{key}=true")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_connect_options_unknown_to_libpq_fail_without_leaking_the_value() -> None:
+    with pytest.raises(ValidationError, match="'no_such_option'") as exc_info:
+        DatabaseConfig(**{**_CONNECTION, "password": _SECRET_PASSWORD}, connect_options={"no_such_option": "v"})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_ssl_true_points_to_sslmode() -> None:
+    """ssl=true из URI asyncpg/JDBC libpq понимает как sslmode=require: второе значение sslmode запрещено."""
+    with pytest.raises(ValidationError, match="use the database field 'sslmode'"):
+        DatabaseConfig.from_uri("postgresql://u:p@h/d?ssl=true")
