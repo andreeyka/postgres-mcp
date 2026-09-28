@@ -62,23 +62,27 @@ async def get_postgres_version(executor: QueryExecutorPort, connection_id: str) 
         return cached
     try:
         rows = await executor.execute(QUERY_SERVER_VERSION, params=None, readonly=True)
-        if not rows:
-            logger.warning("Could not determine PostgreSQL version")
-            return 0
-        version_string = rows[0].cells.get("server_version")
-        if version_string is None:
-            return 0
-        if isinstance(version_string, bytes):
-            version_string = version_string.decode("utf-8")
-        if not isinstance(version_string, str):
-            version_string = str(version_string)
-        major = version_string.split(".")[0]
+    except psycopg.Error as e:
+        logger.warning("Error determining PostgreSQL version: %s", e)
+        return 0
+    if not rows:
+        logger.warning("Could not determine PostgreSQL version")
+        return 0
+    version_string = rows[0].cells.get("server_version")
+    if version_string is None:
+        return 0
+    if isinstance(version_string, bytes):
+        version_string = version_string.decode("utf-8")
+    if not isinstance(version_string, str):
+        version_string = str(version_string)
+    major = version_string.split(".")[0]
+    try:
         version = int(major)
-        _version_registry.set(connection_id, version)
-    except (psycopg.Error, ValueError) as e:
+    except ValueError as e:
         logger.warning("Error determining PostgreSQL version: %s", e)
         return 0
     else:
+        _version_registry.set(connection_id, version)
         return version
 
 

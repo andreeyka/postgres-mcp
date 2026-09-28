@@ -13,7 +13,7 @@ from postgres_fastmcp.postgres.extensions import (
     get_postgres_version,
 )
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.shared.errors import TablePrefixAccessError
+from postgres_fastmcp.shared.errors import QueryTimeoutError, TablePrefixAccessError
 
 
 @pytest.mark.parametrize("message_type", ["plain", "markdown"])
@@ -68,3 +68,37 @@ async def test_server_version_uses_the_catalog_template() -> None:
 
     assert await get_postgres_version(executor, "version-test") == 16
     executor.execute.assert_awaited_once_with(QUERY_SERVER_VERSION, params=None, readonly=True)
+
+
+async def test_executor_value_error_propagates_from_version_check() -> None:
+    """ValueError каталожного исполнителя — регрессия проводки канала, а не «версия неизвестна»."""
+    executor = _executor(ValueError("Only server catalog queries can run on the catalog executor"))
+
+    with pytest.raises(ValueError, match="catalog executor"):
+        await get_postgres_version(executor, "version-value-error")
+
+
+async def test_executor_timeout_propagates_from_version_check() -> None:
+    executor = _executor(QueryTimeoutError(5.0))
+
+    with pytest.raises(QueryTimeoutError):
+        await get_postgres_version(executor, "version-timeout-error")
+
+
+async def test_executor_timeout_propagates_from_check_extension() -> None:
+    executor = _executor(QueryTimeoutError(5.0))
+
+    with pytest.raises(QueryTimeoutError):
+        await ExtensionInspectorAdapter(executor, "check-extension-timeout-error").check_extension("hypopg")
+
+
+async def test_non_numeric_major_version_is_treated_as_unknown() -> None:
+    executor = _executor([RowResult(cells={"server_version": "devel"})])
+
+    assert await get_postgres_version(executor, "version-devel") == 0
+
+
+async def test_database_error_from_version_check_is_treated_as_unknown() -> None:
+    executor = _executor(psycopg.Error("boom"))
+
+    assert await get_postgres_version(executor, "version-db-error") == 0
