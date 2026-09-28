@@ -1,14 +1,13 @@
-# ruff: noqa: TRY301
 import logging
 import re
 from collections.abc import Callable
 from typing import Any
 
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
-from postgres_fastmcp.postgres.models import IndexDefinition
+from postgres_fastmcp.postgres.models import IndexDefinition, RowResult
 from postgres_fastmcp.postgres.params.replacer import SqlParamReplacer
 from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
-from postgres_fastmcp.shared.errors import ExplainPlanError, ExplainPlanExecutionError
+from postgres_fastmcp.shared.errors import ExplainPlanError, ExplainPlanExecutionError, UserFacingError
 
 from .artifacts import ExplainPlanArtifact
 
@@ -181,39 +180,59 @@ class ExplainPlanBuilder:
 
         Raises:
             ExplainPlanError: При отсутствии результата, неверном типе, ошибке преобразования или выполнения.
+            UserFacingError: Валидатор или проверка по плану отклонили запрос (пробрасывается без оборачивания).
+        """
+        explain_options = ["FORMAT JSON"]
+        if analyze:
+            explain_options.append("ANALYZE")
+        if generic_plan:
+            explain_options.append("GENERIC_PLAN")
+
+        explain_q = f"EXPLAIN ({', '.join(explain_options)}) {query}"
+        logger.debug("RUNNING EXPLAIN QUERY: %s", explain_q)
+        rows = await self._execute_explain(explain_q)
+        return self._parse_explain_result(rows)
+
+    async def _execute_explain(self, explain_q: str) -> list[RowResult] | None:
+        """Выполнить сам оператор EXPLAIN, пробросив ошибки валидатора и проверки по плану как есть.
+
+        Raises:
+            UserFacingError: Валидатор (SchemaNotAllowedError, SystemRelationAccessError, ...) или plan_check
+                (PlanAccessError, PlanUnverifiableError) отклонили запрос — пробрасывается без оборачивания,
+                иначе клиент вместо причины видит generic "Error calling tool".
+            ExplainPlanExecutionError: Прочая ошибка выполнения (например, ошибка соединения или Postgres).
         """
         try:
-            explain_options = ["FORMAT JSON"]
-            if analyze:
-                explain_options.append("ANALYZE")
-            if generic_plan:
-                explain_options.append("GENERIC_PLAN")
-
-            explain_q = f"EXPLAIN ({', '.join(explain_options)}) {query}"
-            logger.debug("RUNNING EXPLAIN QUERY: %s", explain_q)
-            rows = await self.sql_driver.execute(explain_q, params=None, readonly=True)
-            if rows is None:
-                raise ExplainPlanError(NO_EXPLAIN_RESULTS)
-
-            query_plan_data = rows[0].cells["QUERY PLAN"]
-
-            if not isinstance(query_plan_data, list):
-                raise ExplainPlanError(MSG_EXPLAIN_NOT_LIST.format(got=type(query_plan_data)))
-            if len(query_plan_data) == 0:
-                raise ExplainPlanError(NO_EXPLAIN_RESULTS)
-
-            plan_dict = query_plan_data[0]
-            if not isinstance(plan_dict, dict):
-                raise ExplainPlanError(MSG_EXPLAIN_ITEM_NOT_DICT.format(got=type(plan_dict), value=plan_dict))
-
-            try:
-                return ExplainPlanArtifact.from_json_data(plan_dict)
-            except Exception as e:
-                raise ExplainPlanError(MSG_PLAN_INTERNAL_CONVERSION.format(error=e)) from e
-        except ExplainPlanError:
+            return await self.sql_driver.execute(explain_q, params=None, readonly=True)
+        except UserFacingError:
             raise
         except Exception as e:
             raise ExplainPlanExecutionError(e) from e
+
+    def _parse_explain_result(self, rows: list[RowResult] | None) -> ExplainPlanArtifact:
+        """Разобрать строки EXPLAIN (FORMAT JSON) в артефакт плана.
+
+        Raises:
+            ExplainPlanError: Результата нет, он не список/словарь ожидаемой формы или не преобразуется в артефакт.
+        """
+        if rows is None:
+            raise ExplainPlanError(NO_EXPLAIN_RESULTS)
+
+        query_plan_data = rows[0].cells["QUERY PLAN"]
+
+        if not isinstance(query_plan_data, list):
+            raise ExplainPlanError(MSG_EXPLAIN_NOT_LIST.format(got=type(query_plan_data)))
+        if len(query_plan_data) == 0:
+            raise ExplainPlanError(NO_EXPLAIN_RESULTS)
+
+        plan_dict = query_plan_data[0]
+        if not isinstance(plan_dict, dict):
+            raise ExplainPlanError(MSG_EXPLAIN_ITEM_NOT_DICT.format(got=type(plan_dict), value=plan_dict))
+
+        try:
+            return ExplainPlanArtifact.from_json_data(plan_dict)
+        except Exception as e:
+            raise ExplainPlanError(MSG_PLAN_INTERNAL_CONVERSION.format(error=e)) from e
 
     async def generate_explain_plan_with_hypothetical_indexes(
         self,

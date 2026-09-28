@@ -16,7 +16,6 @@ from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
-    ExplainPlanExecutionError,
     HypopgNotInstalledError,
     PlanAccessError,
     SchemaNotAllowedError,
@@ -136,9 +135,13 @@ class TestExplainServiceAnalyzeMode:
         mock_tool_cls: MagicMock,
         mock_db_access: MagicMock,
     ) -> None:
-        """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note."""
+        """When EXPLAIN ANALYZE is not supported, fall back to plain EXPLAIN and add a note.
+
+        ExplainAnalyzeNotSupportedError is a UserFacingError: _run_explain_query re-raises it unchanged
+        (not wrapped in ExplainPlanExecutionError), so the tool-level mock raises it directly too.
+        """
         mock_tool = MagicMock()
-        mock_tool.explain_analyze = AsyncMock(side_effect=ExplainPlanExecutionError(ExplainAnalyzeNotSupportedError()))
+        mock_tool.explain_analyze = AsyncMock(side_effect=ExplainAnalyzeNotSupportedError())
         plain_artifact = _make_artifact("Plain fallback")
         mock_tool.explain = AsyncMock(return_value=plain_artifact)
         mock_tool_cls.return_value = mock_tool
@@ -363,3 +366,59 @@ async def test_hypothetical_explain_over_a_foreign_view_is_rejected(monkeypatch:
 
     sent = [c.args[0] for c in delegate.execute.await_args_list]
     assert not any("hypopg_create_index" in q and "EXPLAIN (FORMAT JSON" in q for q in sent)
+
+
+class TestExplainQueryAccessErrorsAreNotWrapped:
+    """_run_explain_query re-raises UserFacingError as-is: the agent sees the real reason, not a generic error."""
+
+    async def test_explain_query_on_a_system_relation_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """explain_query без hypothetical_indexes: валидатор basic отклоняет pg_stats до обращения к БД."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock()
+        monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+        config = DatabaseConfig(
+            host="h",
+            user="u",
+            password="p",
+            name="d",
+            access_mode=AccessMode.BASIC,
+            write_mode=False,
+            table_prefix="app_",
+        )
+        db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+        with pytest.raises(SystemRelationAccessError):
+            await ExplainService(db=db).explain("SELECT * FROM pg_stats")
+
+        delegate.execute.assert_not_awaited()
+
+    async def test_explain_query_with_plan_check_on_a_foreign_relation_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """explain_query без hypothetical_indexes: plan_check отклоняет план, читающий secret.t."""
+        delegate = _plan_check_delegate("secret", "t")
+        db = _plan_check_db(monkeypatch, delegate)
+
+        with pytest.raises(PlanAccessError, match=r"secret\.t"):
+            await ExplainService(db=db).explain("SELECT * FROM app_secret_view")
+
+    async def test_explain_analyze_falls_back_to_plain_in_basic_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """basic: валидатор отклоняет EXPLAIN ANALYZE с ExplainAnalyzeNotSupportedError, сервис делает обычный EXPLAIN."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=[RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})])
+        monkeypatch.setattr(db_access_module, "SqlExecutor", lambda conn: delegate)
+        config = DatabaseConfig(
+            host="h",
+            user="u",
+            password="p",
+            name="d",
+            access_mode=AccessMode.BASIC,
+            write_mode=False,
+            table_prefix="app_",
+        )
+        db = DbAccessService(config).view(EffectiveAccess(AccessMode.BASIC, write_mode=False))
+
+        result = await ExplainService(db=db).explain("SELECT * FROM app_users", analyze=True)
+
+        assert "Seq Scan" in result
+        assert "EXPLAIN ANALYZE is not supported" in result
