@@ -378,4 +378,6 @@ async def test_explain_with_hypothetical_index_in_basic_with_prefix(
         hypothetical_indexes=[{"table": "app_users", "columns": ["name"]}],
     )
 
+    # Таблица из одной строки: планировщик вправе выбрать Seq Scan, поэтому проверяем только,
+    # что план построен (проверка hypopg не отказала), а не что гипотетический индекс использован.
     assert "app_users" in result
