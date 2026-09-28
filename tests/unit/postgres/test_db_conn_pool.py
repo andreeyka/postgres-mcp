@@ -161,3 +161,39 @@ class TestDbConnPoolConcurrentConnect:
         assert all(result is created[0] for result in results)
         created[0].close.assert_not_called()
         assert pool_mgr.is_valid is True
+
+
+class TestDbConnPoolOpenCancelled:
+    """Отменённое открытие не оставляет после себя пул, который продолжает подключаться в фоне."""
+
+    @patch("postgres_fastmcp.postgres.connection.AsyncConnectionPool")
+    async def test_cancelled_open_closes_the_pool(self, mock_pool_cls: MagicMock) -> None:
+        mock_pool = _make_mock_pool()
+        mock_pool.open = AsyncMock(side_effect=asyncio.CancelledError)
+        mock_pool_cls.return_value = mock_pool
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+
+        with pytest.raises(asyncio.CancelledError):
+            await pool_mgr.pool_connect()
+
+        assert pool_mgr.pool is None
+        assert pool_mgr.is_valid is False
+        mock_pool.close.assert_awaited_once()
+
+    @patch("postgres_fastmcp.postgres.connection.AsyncConnectionPool")
+    async def test_timeout_during_open_closes_the_pool(self, mock_pool_cls: MagicMock) -> None:
+        """Клиентский таймаут отменяет висящий open(): пул закрывается."""
+        mock_pool = _make_mock_pool()
+
+        async def _hang() -> None:
+            await asyncio.Event().wait()
+
+        mock_pool.open = AsyncMock(side_effect=_hang)
+        mock_pool_cls.return_value = mock_pool
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(pool_mgr.pool_connect(), timeout=0.01)
+
+        assert pool_mgr.pool is None
+        mock_pool.close.assert_awaited_once()

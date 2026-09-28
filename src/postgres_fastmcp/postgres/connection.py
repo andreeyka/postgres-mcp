@@ -78,6 +78,11 @@ class DbConnPool:
             await self.close()
             obfuscated_error = obfuscate_password(str(e))
             raise ConnectionFailedError(obfuscated_error) from e
+        except BaseException:
+            # Отмена (клиентский таймаут) посреди open() или SELECT 1: без закрытия пул остался бы
+            # невалидным и продолжал бы подключаться в фоне.
+            await self.close()
+            raise
         else:
             return self.pool
 
