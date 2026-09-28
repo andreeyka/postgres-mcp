@@ -1,6 +1,6 @@
 # Дизайн: вторая волна закалки basic
 
-Дата: 2026-09-29. Статус: согласовано (ответа на вопрос об объёме не было — принят рекомендуемый вариант «пункты 1–4, два PR»), к реализации. Продолжение `2026-09-28-basic-confinement-design.md` §6 и `2026-09-28-basic-followups-design.md` §4.3.
+Дата: 2026-09-29. Статус: PR 1 реализован (`claude/basic-hardening-2`). Продолжение `2026-09-28-basic-confinement-design.md` §6 и `2026-09-28-basic-followups-design.md` §4.3.
 
 ## 1. Объём
 
@@ -22,6 +22,7 @@
 | `user_mapping_options` | значения опций user mapping, в том числе пароли своих mapping |
 | `user_mappings` | user mapping (серверы, роли) |
 | `foreign_server_options`, `foreign_data_wrapper_options` | опции серверов и обёрток (хосты, пути) |
+| `foreign_table_options`, `column_options` | опции внешних таблиц и их колонок: у `file_fdw` — `filename`/`program`, `program` — командная строка шелла, может нести учётные данные |
 | `routines` | `routine_definition` — исходники своих функций в любой схеме |
 | `views` | `view_definition` — SQL своих представлений в любой схеме |
 | `triggers` | `action_statement` — код триггеров |
@@ -37,7 +38,7 @@
 ## 4. Скрытые индексы hypopg (PR 1)
 
 - `SqlExecutor` помечает соединение отдельной меткой, если SQL содержит `hypopg_hide_index` (без учёта регистра): `DbConnPool.mark_hypopg_hidden(connection)`.
-- reset-callback: для помеченного — `SELECT hypopg_unhide_all_indexes()` (порядок: `hypopg_reset()` если помечено созданием, затем `hypopg_unhide_all_indexes()` если помечено скрытием, затем `DISCARD ALL`). Ошибка — WARNING и re-raise: пул выбрасывает соединение (в том числе если в установленной версии hypopg нет `hypopg_unhide_all_indexes` — проверить версию, где она появилась, и записать в README).
+- reset-callback: для помеченного — `SELECT hypopg_unhide_all_indexes()` (порядок: `hypopg_reset()` если помечено созданием, затем `hypopg_unhide_all_indexes()` если помечено скрытием, затем `DISCARD ALL`). Ошибка — WARNING и re-raise: пул выбрасывает соединение (в том числе если в установленной версии hypopg нет `hypopg_unhide_all_indexes` — появилась в hypopg 1.4.0 вместе с `hypopg_hide_index`).
 - В basic `hypopg_hide_index`/`hypopg_unhide_index` уже закрыты (`INTROSPECTION_FUNCTIONS`); изменение касается full.
 
 ## 5. Проверка по плану в той же транзакции (PR 2)
@@ -58,6 +59,6 @@
 
 ## 7. Изменения поведения (для заметок к PR)
 
-- PR 1, basic: `information_schema.user_mapping_options`, `user_mappings`, `foreign_server_options`, `foreign_data_wrapper_options`, `routines`, `views`, `triggers` недоступны (`SystemRelationAccessError`); `EXPLAIN` — только опции `FORMAT`, `VERBOSE`, `COSTS`, `SUMMARY`, `TIMING`, `BUFFERS`, `GENERIC_PLAN`, `MEMORY` (`ExplainOptionNotAllowedError`).
+- PR 1, basic: `information_schema.user_mapping_options`, `user_mappings`, `foreign_server_options`, `foreign_data_wrapper_options`, `foreign_table_options`, `column_options`, `routines`, `views`, `triggers` недоступны (`SystemRelationAccessError`); `EXPLAIN` — только опции `FORMAT`, `VERBOSE`, `COSTS`, `SUMMARY`, `TIMING`, `BUFFERS`, `GENERIC_PLAN`, `MEMORY` (`ExplainOptionNotAllowedError`).
 - PR 1, full: скрытые `hypopg_hide_index` индексы снимаются при возврате соединения в пул.
 - PR 2: с `plan_check` проверка и выполнение — одна транзакция на одном соединении; на один запрос к пулу меньше.
