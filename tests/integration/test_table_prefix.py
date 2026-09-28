@@ -68,6 +68,32 @@ async def setup_test_tables(driver: DbAccess) -> None:
     )
 
 
+async def setup_shared_constraint_name_tables(driver: DbAccess) -> None:
+    """Создать две таблицы в public с FK-ограничением, у которых совпадает имя constraint."""
+    sql = driver.sql_driver
+
+    await sql.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_shipments (
+            id SERIAL PRIMARY KEY,
+            buyer_id INTEGER,
+            CONSTRAINT fk_owner FOREIGN KEY (buyer_id) REFERENCES app_users (id)
+        )
+        """,
+        readonly=False,
+    )
+    await sql.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shipments_x (
+            id SERIAL PRIMARY KEY,
+            owner_ref INTEGER,
+            CONSTRAINT fk_owner FOREIGN KEY (owner_ref) REFERENCES other_users (id)
+        )
+        """,
+        readonly=False,
+    )
+
+
 @pytest.mark.asyncio
 async def test_table_prefix_allows_prefixed_tables(
     db_full: DbAccess,
@@ -156,6 +182,22 @@ async def test_list_objects_filters_by_prefix(
     assert "test_users" not in table_names
     for name in table_names:
         assert name.lower().startswith("app_"), f"Table {name} should have prefix 'app_'"
+
+
+@pytest.mark.asyncio
+async def test_get_object_details_constraint_matched_by_table(
+    db_full: DbAccess,
+    db_user_prefix: DbAccess,
+) -> None:
+    """Constraint columns come from the requested table, not another table with the same constraint name."""
+    await setup_test_tables(db_full)
+    await setup_shared_constraint_name_tables(db_full)
+
+    details = await CatalogService(db_user_prefix).get_object_details("public", "app_shipments", "table")
+
+    constraints = {c["name"]: c for c in details["constraints"]}
+    assert "fk_owner" in constraints
+    assert constraints["fk_owner"]["columns"] == ["buyer_id"]
 
 
 @pytest.mark.asyncio

@@ -52,8 +52,10 @@ QUERY_GET_CONSTRAINTS = """
 SELECT tc.constraint_name, tc.constraint_type, kcu.column_name
 FROM information_schema.table_constraints AS tc
 LEFT JOIN information_schema.key_column_usage AS kcu
-  ON tc.constraint_name = kcu.constraint_name
+  ON tc.constraint_schema = kcu.constraint_schema
+ AND tc.constraint_name = kcu.constraint_name
  AND tc.table_schema = kcu.table_schema
+ AND tc.table_name = kcu.table_name
 WHERE tc.table_schema = {} AND tc.table_name = {}
 """
 
