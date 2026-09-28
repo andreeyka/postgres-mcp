@@ -24,7 +24,7 @@ from psycopg_pool import PoolTimeout
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
-from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError, PlanAccessError
+from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError, PlanAccessError, PlanUnverifiableError
 
 
 class _NoSqlstateResult:
@@ -395,6 +395,21 @@ class TestSqlExecutorPrecheck:
 
         assert cursor.executed[-1] == "ROLLBACK"
         assert "SELECT * FROM app_v" not in cursor.executed
+        pool.mark_invalid.assert_not_called()
+
+    async def test_plan_unverifiable_error_in_precheck_rolls_back_and_skips_the_statement(self) -> None:
+        """PlanUnverifiableError — тоже отказ проверки, не соединения: ROLLBACK, пул не помечен невалидным."""
+        cursor = _BatchCursor()
+        executor, pool, _ = _pooled_executor(cursor)
+
+        async def precheck(run):
+            raise PlanUnverifiableError("Foreign Scan")
+
+        with pytest.raises(PlanUnverifiableError):
+            await executor.execute("SELECT * FROM app_fdw_view", readonly=False, precheck=precheck)
+
+        assert cursor.executed[-1] == "ROLLBACK"
+        assert "SELECT * FROM app_fdw_view" not in cursor.executed
         pool.mark_invalid.assert_not_called()
 
     async def test_postgres_error_in_precheck_rolls_back_without_invalidating(self) -> None:

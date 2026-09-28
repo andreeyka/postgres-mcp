@@ -348,6 +348,8 @@ class TestSafeSqlExecutorPlanCheck:
         with pytest.raises(PlanAccessError, match=r"secret\.accounts"):
             await _basic_executor(delegate).execute("SELECT * FROM app_secret_view")
 
+        # EXPLAIN реально ушёл делегату до отказа — отклонение случилось по его результату, а не раньше.
+        assert any("EXPLAIN (VERBOSE" in q for q in delegate.sent)
         assert "/* t */ SELECT * FROM app_secret_view" not in delegate.sent
 
     async def test_execute_statement_is_checked_too(self) -> None:
