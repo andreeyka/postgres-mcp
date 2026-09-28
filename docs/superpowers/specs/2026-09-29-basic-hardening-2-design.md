@@ -1,6 +1,6 @@
 # Дизайн: вторая волна закалки basic
 
-Дата: 2026-09-29. Статус: PR 1 реализован (`claude/basic-hardening-2`). Продолжение `2026-09-28-basic-confinement-design.md` §6 и `2026-09-28-basic-followups-design.md` §4.3.
+Дата: 2026-09-29. Статус: PR 1 и PR 2 реализованы (`claude/basic-hardening-2`, `claude/plan-check-one-transaction`). Продолжение `2026-09-28-basic-confinement-design.md` §6 и `2026-09-28-basic-followups-design.md` §4.3.
 
 ## 1. Объём
 
@@ -44,7 +44,7 @@
 ## 5. Проверка по плану в той же транзакции (PR 2)
 
 - Сейчас `SafeSqlExecutor._checked_run` делает отдельный вызов делегата на каждый EXPLAIN проверки и ещё один на оператор: разные транзакции и, возможно, разные соединения пула. Между ними возможны `CREATE OR REPLACE VIEW`, смена разбиения по `now()`, другое соединение.
-- Стало: `SqlExecutor` получает способ выполнить на одном соединении, в одной транзакции (`BEGIN …; SET LOCAL standard_conforming_strings = on`), сначала предварительные запросы, затем оператор. Предлагаемая форма (уточнить в плане по коду): необязательный именованный аргумент `precheck: Callable[[Runner], Awaitable[None]] | None` у `execute`/`execute_statement` (`Runner = Callable[[str], Awaitable[list[RowResult] | None]]` выполняет строку на текущем курсоре и возвращает строки). `SafeSqlExecutor` передаёт `precheck`, который гонит `PlanGuard` через `Runner`.
+- Стало: `SqlExecutor` получает способ выполнить на одном соединении, в одной транзакции (`BEGIN …; SET LOCAL standard_conforming_strings = on`), сначала предварительные запросы, затем оператор. Предлагаемая форма (уточнить в плане по коду): необязательный именованный аргумент `precheck: Callable[[Runner], Awaitable[None]] | None` у `execute`/`execute_statement` (`Runner = Callable[[str], Awaitable[list[RowResult] | None]]` выполняет строку на текущем курсоре и возвращает строки). `SafeSqlExecutor` передаёт `precheck`, который гонит `PlanGuard` через `Runner`. `precheck` типизирован протоколом `PrecheckSqlDriverPort` (`postgres/ports.py`); `_is_connection_error` не считает `UserFacingError` ошибкой соединения.
 - Префикс `SET LOCAL statement_timeout …; SET LOCAL search_path = …;` ставится один раз в начале транзакции; EXPLAIN и оператор его наследуют.
 - EXPLAIN не берёт блокировок, которые бы помешали; `AccessShareLock` на отношения, взятый планированием, держится до конца транзакции — определение представления между проверкой и выполнением не меняется.
 - Ошибка проверки или EXPLAIN — откат транзакции, оператор не выполняется. Read-only транзакция basic для EXPLAIN и для оператора: для basic с записью транзакция пишущая — EXPLAIN DML в ней не исполняет DML (без ANALYZE).

@@ -4,7 +4,7 @@ from typing import Any
 
 from postgres_fastmcp.postgres.catalog import CATALOG_QUERIES
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import PrecheckSqlDriverPort
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 
@@ -20,7 +20,7 @@ class CatalogSqlExecutor:
     Реализует только execute (QueryExecutorPort): как SqlDriverPort его не передать.
     """
 
-    def __init__(self, delegate: SqlDriverPort, *, timeout: float | None, query_tag: str) -> None:
+    def __init__(self, delegate: PrecheckSqlDriverPort, *, timeout: float | None, query_tag: str) -> None:
         """Инициализация поверх исполнителя без проверок.
 
         Args:

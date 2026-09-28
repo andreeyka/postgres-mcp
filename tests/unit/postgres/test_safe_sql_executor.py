@@ -289,67 +289,99 @@ def _basic_executor(delegate: MagicMock, *, plan_check: bool = True) -> SafeSqlE
     return _make_executor(delegate, validator=validator, config=config)
 
 
-class TestSafeSqlExecutorPlanCheck:
-    """plan_check: EXPLAIN (VERBOSE) через делегата после валидации и до выполнения, только с allowed_schema."""
+_SETTINGS = "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public;"
 
-    async def test_plan_is_checked_before_execution(self) -> None:
-        delegate = MagicMock()
-        delegate.execute = AsyncMock(side_effect=[_plan_rows("public", "app_t"), [RowResult(cells={"x": 1})]])
+
+def _precheck_delegate(plan: list[RowResult] | None = None, *, fail: Exception | None = None) -> MagicMock:
+    """Делегат как SqlExecutor: precheck получает исполнитель строк; delegate.sent — строки транзакции по порядку."""
+    delegate = MagicMock()
+    delegate.sent = []
+
+    async def runner(sql: str) -> list[RowResult] | None:
+        delegate.sent.append(sql)
+        if fail is not None and "EXPLAIN" in sql:
+            raise fail
+        return plan if "EXPLAIN" in sql else None
+
+    async def call(query, params=None, *, readonly=True, precheck=None):
+        if precheck is not None:
+            await precheck(runner)
+        delegate.sent.append(query)
+        return [RowResult(cells={"x": 1})]
+
+    delegate.execute = AsyncMock(side_effect=call)
+    delegate.execute_statement = AsyncMock(side_effect=call)
+    return delegate
+
+
+class TestSafeSqlExecutorPlanCheck:
+    """plan_check: EXPLAIN (VERBOSE) и оператор — один вызов делегата, одна транзакция; только с allowed_schema."""
+
+    async def test_plan_is_checked_in_the_statement_transaction(self) -> None:
+        delegate = _precheck_delegate(_plan_rows("public", "app_t"))
 
         result = await _basic_executor(delegate).execute("SELECT * FROM app_t")
 
         assert result == [RowResult(cells={"x": 1})]
-        explain_call, run_call = delegate.execute.await_args_list
-        assert explain_call.args[0] == (
-            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; "
-            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
-        )
-        assert explain_call.kwargs["readonly"] is True
-        assert run_call.args[0] == (
-            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; /* t */ SELECT * FROM app_t"
-        )
-        assert run_call.kwargs["readonly"] is False
+        delegate.execute.assert_awaited_once()
+        assert delegate.execute.await_args.kwargs["readonly"] is False
+        assert delegate.sent == [
+            _SETTINGS,
+            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t",
+            "/* t */ SELECT * FROM app_t",
+        ]
+
+    async def test_settings_are_sent_once_for_every_statement_of_the_string(self) -> None:
+        delegate = _precheck_delegate(_plan_rows("public", "app_t"))
+
+        await _basic_executor(delegate).execute("SELECT * FROM app_t; SELECT * FROM app_u")
+
+        assert delegate.sent.count(_SETTINGS) == 1
+        assert [q for q in delegate.sent if "EXPLAIN" in q] == [
+            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t",
+            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_u",
+        ]
 
     async def test_plan_violation_stops_execution(self) -> None:
-        delegate = MagicMock()
-        delegate.execute = AsyncMock(return_value=_plan_rows("secret", "accounts"))
+        delegate = _precheck_delegate(_plan_rows("secret", "accounts"))
 
         with pytest.raises(PlanAccessError, match=r"secret\.accounts"):
             await _basic_executor(delegate).execute("SELECT * FROM app_secret_view")
 
-        delegate.execute.assert_awaited_once()
+        assert "/* t */ SELECT * FROM app_secret_view" not in delegate.sent
 
     async def test_execute_statement_is_checked_too(self) -> None:
-        delegate = MagicMock()
-        delegate.execute = AsyncMock(return_value=_plan_rows("secret", "accounts"))
-        delegate.execute_statement = AsyncMock()
+        delegate = _precheck_delegate(_plan_rows("secret", "accounts"))
 
         with pytest.raises(PlanAccessError):
             await _basic_executor(delegate).execute_statement("UPDATE app_secret_view SET token = 'x'")
 
-        delegate.execute_statement.assert_not_awaited()
+        delegate.execute_statement.assert_awaited_once()
+        assert "precheck" in delegate.execute_statement.await_args.kwargs
+        delegate.execute.assert_not_awaited()
+        assert delegate.sent[-1].startswith("/* t */ EXPLAIN (VERBOSE, FORMAT JSON) UPDATE")
 
     async def test_validator_runs_before_the_plan_check(self) -> None:
-        """Проверка по плану не ослабляет валидатор: отклонённый им запрос не доходит до EXPLAIN."""
-        delegate = MagicMock()
-        delegate.execute = AsyncMock()
+        """Проверка по плану не ослабляет валидатор: отклонённый им запрос не доходит до делегата."""
+        delegate = _precheck_delegate()
 
         with pytest.raises(SchemaNotAllowedError):
             await _basic_executor(delegate).execute("SELECT * FROM secret.accounts")
 
         delegate.execute.assert_not_awaited()
 
-    async def test_plan_check_off_sends_no_explain(self) -> None:
+    async def test_plan_check_off_keeps_the_prefixed_single_call(self) -> None:
         delegate = MagicMock()
         delegate.execute = AsyncMock(return_value=[])
 
         await _basic_executor(delegate, plan_check=False).execute("SELECT * FROM app_t")
 
-        delegate.execute.assert_awaited_once()
-        assert "EXPLAIN" not in delegate.execute.await_args.args[0]
+        delegate.execute.assert_awaited_once_with(
+            f"{_SETTINGS} /* t */ SELECT * FROM app_t", params=None, readonly=False
+        )
 
     async def test_plan_check_is_ignored_without_allowed_schema(self) -> None:
-        """Full (allowed_schema=None): plan_check не действует никогда."""
+        """Full (allowed_schema=None): plan_check не действует никогда, precheck не передаётся."""
         delegate = MagicMock()
         delegate.execute = AsyncMock(return_value=[])
         config = SafeSqlConfig(query_tag="t", plan_check=True)
@@ -357,11 +389,10 @@ class TestSafeSqlExecutorPlanCheck:
         await _make_executor(delegate, config=config).execute("SELECT 1")
 
         delegate.execute.assert_awaited_once()
-        assert "EXPLAIN" not in delegate.execute.await_args.args[0]
+        assert "precheck" not in delegate.execute.await_args.kwargs
 
     async def test_explain_cancel_maps_to_query_timeout_error(self) -> None:
-        delegate = MagicMock()
-        delegate.execute = AsyncMock(side_effect=_query_canceled("canceling statement due to statement timeout"))
+        delegate = _precheck_delegate(fail=_query_canceled("canceling statement due to statement timeout"))
 
         with pytest.raises(QueryTimeoutError):
             await _basic_executor(delegate).execute("SELECT * FROM app_t")
