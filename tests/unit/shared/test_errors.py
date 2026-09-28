@@ -16,7 +16,10 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "SchemaNotAllowedError": lambda: errors.SchemaNotAllowedError("private", "public"),
     "TablePrefixAccessError": lambda: errors.TablePrefixAccessError("foo", "bar_"),
     "SchemataTableAccessError": lambda: errors.SchemataTableAccessError("information_schema", "schemata"),
-    "PlanAccessError": lambda: errors.PlanAccessError("relation", "secret.accounts"),
+    "PlanAccessError": lambda: errors.PlanAccessError(
+        "relation", "secret.accounts", allowed_schema="public", table_prefix=None
+    ),
+    "PlanUnverifiableError": errors.PlanUnverifiableError,
     "SqlParseError": errors.SqlParseError,
     "StatementTypeNotAllowedError": lambda: errors.StatementTypeNotAllowedError(
         read_only=True, stmt_type_name="CreateStmt"
@@ -105,11 +108,26 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("ShowParameterNotAllowedError", "Allowed parameters: search_path, timezone."),
         ("TypeNotAllowedError", "Rewrite the query without object identifier types"),
         ("PlanAccessError", "Only tables in 'public' are permitted."),
+        ("PlanUnverifiableError", "Rewrite the query to read the permitted tables directly."),
     ],
 )
 def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:
     """Ошибка, которую агент может исправить сам, подсказывает, что сделать вместо этого."""
     assert hint in str(_SAMPLES[name]())
+
+
+@pytest.mark.parametrize(
+    ("kind", "table_prefix", "hint"),
+    [
+        ("relation", None, "Only tables in 'main' are permitted."),
+        ("relation", "app_", "Only tables in 'main' starting with 'app_' are permitted."),
+        ("function", "app_", "Only functions from 'main' or 'pg_catalog' are permitted."),
+    ],
+)
+def test_plan_access_hint_follows_kind_and_rules(kind: str, table_prefix: str | None, hint: str) -> None:
+    """Подсказка называет разрешённую схему, префикс таблиц и различает отношения и функции."""
+    error = errors.PlanAccessError(kind, "secret.x", allowed_schema="main", table_prefix=table_prefix)
+    assert str(error).endswith(hint)
 
 
 @pytest.mark.parametrize(

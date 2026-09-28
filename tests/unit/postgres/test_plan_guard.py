@@ -7,10 +7,11 @@ import pytest
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_guard import PlanGuard
-from postgres_fastmcp.shared.errors import PlanAccessError
+from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
 
 _EXPLAIN = "EXPLAIN (VERBOSE, FORMAT JSON) "
+_SELECT = "SELECT * FROM app_v"
 _RESULT: dict[str, Any] = {"Node Type": "Result"}
 
 
@@ -186,3 +187,102 @@ async def test_every_plannable_statement_is_explained() -> None:
         _EXPLAIN + "DELETE FROM app_t WHERE id = 1",
         _EXPLAIN + "SELECT 1",
     ]
+
+
+class _Rows:
+    """Исполнитель EXPLAIN, который возвращает заданные строки как есть."""
+
+    def __init__(self, rows: list[RowResult] | None) -> None:
+        self._rows = rows
+
+    async def __call__(self, sql: str) -> list[RowResult] | None:
+        return self._rows
+
+
+@pytest.mark.parametrize(
+    ("node_type", "extra"),
+    [
+        ("Foreign Scan", {"Relations": "(secret.ft_a) INNER JOIN (secret.ft_b)"}),
+        ("Custom Scan", {"Custom Plan Provider": "x"}),
+    ],
+)
+async def test_scan_without_a_relation_name_is_rejected(node_type: str, extra: dict[str, Any]) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: {"Node Type": node_type, **extra}})
+
+    with pytest.raises(PlanUnverifiableError, match=rf"a {node_type} whose relations cannot be verified") as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert "secret" not in str(exc_info.value)
+
+
+async def test_foreign_scan_with_a_relation_name_is_checked_as_a_relation() -> None:
+    plan = {"Node Type": "Foreign Scan", "Relation Name": "ft", "Schema": "secret"}
+    explain = _Explain({_EXPLAIN + _SELECT: plan})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.ft'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_function_scan_without_a_function_name_is_rejected() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: {"Node Type": "Function Scan", "Alias": "f"}})
+
+    with pytest.raises(PlanUnverifiableError, match="a Function Scan whose functions cannot be verified"):
+        await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        None,
+        [],
+        [RowResult(cells={})],
+        [RowResult(cells={"QUERY PLAN": 42})],
+        [RowResult(cells={"QUERY PLAN": None})],
+        [RowResult(cells={"QUERY PLAN": []})],
+        [RowResult(cells={"QUERY PLAN": [{"Planning": {}}]})],
+        [RowResult(cells={"QUERY PLAN": '"text"'})],
+        [RowResult(cells={"QUERY PLAN": "not json"})],
+    ],
+)
+async def test_missing_or_malformed_plan_is_rejected(rows: list[RowResult] | None) -> None:
+    guard = PlanGuard(_Rows(rows), allowed_schema="public", table_prefix=None)
+
+    with pytest.raises(PlanUnverifiableError, match="EXPLAIN returned no plan"):
+        await guard.check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH ins AS (INSERT INTO app_t (id) VALUES (1) RETURNING id) SELECT id FROM ins",
+        "WITH src AS (SELECT 1 AS id) INSERT INTO app_t (id) SELECT id FROM src RETURNING id",
+    ],
+)
+async def test_data_modifying_cte_is_explained(sql: str) -> None:
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    assert explain.sent == [_EXPLAIN + sql]
+
+
+@pytest.mark.parametrize(
+    ("table_prefix", "hint"),
+    [(None, "Only tables in 'public' are permitted."), ("app_", "Only tables in 'public' starting with 'app_'")],
+)
+async def test_relation_hint_names_the_schema_and_prefix(table_prefix: str | None, hint: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _scan("secret", "t")})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix=table_prefix).check(_SELECT)
+
+    assert hint in str(exc_info.value)
+
+
+async def test_function_hint_names_the_allowed_schemas() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _function_scan("secret", "f")})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert "Only functions from 'public' or 'pg_catalog' are permitted." in str(exc_info.value)

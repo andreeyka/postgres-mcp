@@ -2,6 +2,10 @@
 
 Валидатор видит только текст запроса; представление в public поверх чужой схемы он пропускает. PlanGuard
 строит план каждого оператора (EXPLAIN без ANALYZE ничего не выполняет) и проверяет, что читают его узлы.
+
+Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
+редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
+Relation Name), Custom Scan без отношения и ROWS FROM из нескольких функций (Function Scan без Function Name).
 """
 
 import json
@@ -14,7 +18,7 @@ from pglast.stream import RawStream
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name
-from postgres_fastmcp.shared.errors import PlanAccessError
+from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
 
 # Выполняет один оператор EXPLAIN целиком и возвращает его строки (ячейка "QUERY PLAN").
@@ -32,6 +36,10 @@ _DISABLED_OPTION_VALUES = frozenset({"false", "off", "0", "no"})
 
 # Встроенные функции; функции allowed_schema (расширения в public) тоже допустимы.
 _BUILTIN_FUNCTION_SCHEMA = "pg_catalog"
+
+# Узлы сканирования, которые без Relation Name читают неизвестно что (scanrelid = 0 при pushdown).
+_RELATION_SCAN_TYPES = frozenset({"Foreign Scan", "Custom Scan"})
+_FUNCTION_SCAN_TYPE = "Function Scan"
 
 
 def _option_enabled(arg: Node | None) -> bool:
@@ -76,10 +84,23 @@ def _plan_nodes(value: object) -> Iterator[dict[str, Any]]:
             yield from _plan_nodes(child)
 
 
-def _plan_document(rows: list[RowResult] | None) -> object:
-    """JSON-документ EXPLAIN (FORMAT JSON): psycopg отдаёт разобранный список, текст разбирается здесь."""
+def _plan_document(rows: list[RowResult] | None) -> list[dict[str, Any]]:
+    """JSON-документ EXPLAIN (FORMAT JSON): psycopg отдаёт разобранный список, текст разбирается здесь.
+
+    Raises:
+        PlanUnverifiableError: Строк нет, ячейки нет или документ не список словарей с ключом Plan.
+    """
     value = rows[0].cells.get("QUERY PLAN") if rows else None
-    return json.loads(value) if isinstance(value, str) else value
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            raise PlanUnverifiableError from None
+    if not isinstance(value, list) or not value:
+        raise PlanUnverifiableError
+    if not all(isinstance(entry, dict) and isinstance(entry.get("Plan"), dict) for entry in value):
+        raise PlanUnverifiableError
+    return value
 
 
 class PlanGuard:
@@ -96,6 +117,7 @@ class PlanGuard:
         self._explain = explain
         self._allowed_schema = allowed_schema
         self._table_prefix = table_prefix.lower() if table_prefix else None
+        self._prefix_for_hint = table_prefix or None
 
     async def check(self, query: str) -> None:
         """Построить план каждого планируемого оператора запроса и проверить его узлы.
@@ -108,6 +130,7 @@ class PlanGuard:
 
         Raises:
             PlanAccessError: План читает отношение или функцию вне разрешённого.
+            PlanUnverifiableError: Плана нет или узел сканирования не называет, что читает.
         """
         for raw in pglast.parse_sql(query):
             target = _plannable(raw.stmt)
@@ -121,6 +144,11 @@ class PlanGuard:
     def _check_plan(self, plan: object) -> None:
         """Проверить каждый узел плана, где есть отношение или функция."""
         for node in _plan_nodes(plan):
+            node_type = node.get("Node Type")
+            if node_type in _RELATION_SCAN_TYPES and "Relation Name" not in node:
+                raise PlanUnverifiableError(node_type)
+            if node_type == _FUNCTION_SCAN_TYPE and "Function Name" not in node:
+                raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
             if "Relation Name" in node:
                 self._check_relation(node.get("Schema"), str(node["Relation Name"]))
             if "Function Name" in node:
@@ -130,9 +158,19 @@ class PlanGuard:
         """Отношение плана: ровно allowed_schema, не системное, с префиксом, если он задан."""
         outside_prefix = self._table_prefix is not None and not name.lower().startswith(self._table_prefix)
         if schema != self._allowed_schema or is_system_relation_name(name) or outside_prefix:
-            raise PlanAccessError(RELATION_KIND, f"{schema or '?'}.{name}")
+            raise PlanAccessError(
+                RELATION_KIND,
+                f"{schema or '?'}.{name}",
+                allowed_schema=self._allowed_schema,
+                table_prefix=self._prefix_for_hint,
+            )
 
     def _check_function(self, schema: str | None, name: str) -> None:
         """Табличная функция плана: встроенная или из allowed_schema."""
         if schema not in (_BUILTIN_FUNCTION_SCHEMA, self._allowed_schema):
-            raise PlanAccessError(FUNCTION_KIND, f"{schema or '?'}.{name}")
+            raise PlanAccessError(
+                FUNCTION_KIND,
+                f"{schema or '?'}.{name}",
+                allowed_schema=self._allowed_schema,
+                table_prefix=self._prefix_for_hint,
+            )
