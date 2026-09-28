@@ -55,6 +55,7 @@ _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
     "ShowParameterNotAllowedError": lambda: errors.ShowParameterNotAllowedError(
         "app.secret", ["search_path", "timezone"]
     ),
+    "ExplainOptionNotAllowedError": lambda: errors.ExplainOptionNotAllowedError("settings", ["format", "costs"]),
     "TypeNotAllowedError": lambda: errors.TypeNotAllowedError("regclass"),
 }
 
@@ -106,6 +107,7 @@ def test_user_facing_error_is_tool_error_in_english(name: str) -> None:
         ("ExtensionStatusUnavailableError", "then retry"),
         ("SystemRelationAccessError", "Use list_objects and get_object_details"),
         ("ShowParameterNotAllowedError", "Allowed parameters: search_path, timezone."),
+        ("ExplainOptionNotAllowedError", "Allowed options: COSTS, FORMAT."),
         ("TypeNotAllowedError", "Rewrite the query without object identifier types"),
         ("PlanAccessError", "Only tables in 'public' are permitted."),
         ("PlanUnverifiableError", "Rewrite the query to read the permitted tables directly."),
@@ -174,3 +176,10 @@ def test_internal_errors_do_not_inherit_tool_error(cls_name: str) -> None:
     """Internal классы не должны наследовать ToolError (будут маскированы)."""
     cls = getattr(errors, cls_name)
     assert not issubclass(cls, ToolError)
+
+
+def test_explain_option_message_names_the_option_in_upper_case() -> None:
+    """Опция и список — заглавными, как их пишут в EXPLAIN; список отсортирован."""
+    error = errors.ExplainOptionNotAllowedError("wal", ["verbose", "costs"])
+    assert str(error) == "EXPLAIN option WAL is not allowed in basic mode. Allowed options: COSTS, VERBOSE."
+    assert error.option == "wal"

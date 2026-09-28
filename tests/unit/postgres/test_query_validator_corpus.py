@@ -180,6 +180,19 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     'SELECT NULL::"PUBLIC".t',
     """SELECT 'a' COLLATE "PUBLIC".x""",
     """SELECT hypopg_create_index('CREATE INDEX ON "PUBLIC".app_t (c)')""",
+    # information_schema: секреты user mapping, опции серверов и обёрток, исходники функций, представлений, триггеров
+    "SELECT * FROM information_schema.user_mapping_options",
+    "SELECT * FROM information_schema.user_mappings",
+    "SELECT * FROM information_schema.foreign_server_options",
+    "SELECT * FROM information_schema.foreign_data_wrapper_options",
+    "SELECT * FROM information_schema.routines",
+    "SELECT * FROM information_schema.views",
+    "SELECT * FROM information_schema.triggers",
+    'SELECT routine_definition FROM "information_schema".routines',
+    # опции EXPLAIN вне списка basic
+    "EXPLAIN (SETTINGS) SELECT 1",
+    "EXPLAIN (WAL) SELECT 1",
+    "EXPLAIN (SERIALIZE) SELECT 1",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.
@@ -210,6 +223,10 @@ BASIC_ALLOWED_EXTRA = [
     "SELECT * FROM PUBLIC.app_t",
     'SELECT * FROM "public".app_t',
     "SELECT NULL::PUBLIC.app_t",
+    # опции EXPLAIN из списка basic
+    "EXPLAIN (FORMAT JSON, COSTS false, VERBOSE) SELECT 1",
+    "EXPLAIN (SUMMARY, TIMING false, BUFFERS, MEMORY) SELECT 1",
+    "EXPLAIN (GENERIC_PLAN) SELECT $1",
 ]
 
 
@@ -255,6 +272,7 @@ TABLE_QUERIES_BASIC_ALLOWED = [
     "SELECT * FROM app_users",
     "SELECT * FROM public.app_users WHERE id = 1",
     "SELECT * FROM information_schema.tables",
+    "SELECT * FROM information_schema.columns",
 ]
 
 TABLE_QUERIES_BASIC_BLOCKED = [
@@ -264,6 +282,7 @@ TABLE_QUERIES_BASIC_BLOCKED = [
     "SELECT * FROM information_schema.schemata",
     "EXPLAIN ANALYZE SELECT * FROM app_users",
     "SELECT * FROM app_users WHERE name LIKE other_col",
+    "EXPLAIN (SETTINGS) SELECT * FROM app_users",
 ]
 
 
