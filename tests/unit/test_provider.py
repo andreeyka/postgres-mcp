@@ -52,6 +52,7 @@ class FakeService:
         self.views.append(access)
         return DbAccess(
             sql_driver=self.sql_driver,
+            catalog_driver=self.sql_driver,
             access_mode=access.access_mode,
             write_mode=access.write_mode,
             table_prefix=None,

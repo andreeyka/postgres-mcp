@@ -39,9 +39,10 @@ def mock_executor() -> AsyncMock:
 
 @pytest.fixture
 def mock_db_access(mock_executor: AsyncMock) -> MagicMock:
-    """Mock DbAccess (DbAccessPort) with preconfigured sql_driver for service tests."""
+    """Mock DbAccess (DbAccessPort): sql_driver и catalog_driver — один mock_executor."""
     db = MagicMock(spec=DbAccess)
     db.sql_driver = mock_executor
+    db.catalog_driver = mock_executor
     db.connection_id = "test://localhost:5432/testdb"
     db.access_mode = AccessMode.FULL
     db.write_mode = False

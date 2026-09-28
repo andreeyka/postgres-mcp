@@ -261,6 +261,7 @@ class TestCatalogServiceGetObjectDetails:
         validator = QueryValidator(allowed_schema="public", table_prefix="app_", read_only=True)
         db = DbAccess(
             sql_driver=SafeSqlExecutor(delegate=delegate, validator=validator, config=config),
+            catalog_driver=AsyncMock(),
             access_mode=AccessMode.BASIC,
             write_mode=False,
             table_prefix="app_",

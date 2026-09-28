@@ -6,7 +6,8 @@ from typing import Protocol
 from postgres_fastmcp.access import EffectiveAccess, clamp_to_ceiling
 from postgres_fastmcp.postgres.connection import DbConnPool, check_connection
 from postgres_fastmcp.postgres.driver import SqlExecutor
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
+from postgres_fastmcp.postgres.security.catalog_driver import CatalogSqlExecutor
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.enums import AccessMode
@@ -48,6 +49,11 @@ class DbAccessPort(Protocol):
         ...
 
     @property
+    def catalog_driver(self) -> QueryExecutorPort:
+        """Исполнитель служебных запросов каталога: только шаблоны сервера, только чтение."""
+        ...
+
+    @property
     def access_mode(self) -> AccessMode:
         """Эффективный уровень доступа запроса."""
         ...
@@ -73,6 +79,7 @@ class DbAccess:
     """Реализация DbAccessPort для одного запроса."""
 
     sql_driver: SqlDriverPort
+    catalog_driver: QueryExecutorPort
     access_mode: AccessMode
     write_mode: bool
     table_prefix: str | None
@@ -80,7 +87,7 @@ class DbAccess:
 
 
 class DbAccessService:
-    """Пул подключений и исполнители, закэшированные по эффективным правам (не больше четырёх)."""
+    """Пул подключений, исполнители по эффективным правам (не больше четырёх) и один исполнитель каталога."""
 
     def __init__(self, config: DatabaseConfigPort) -> None:
         """Инициализация с конфигурацией базы данных; пул открывается лениво при первом запросе.
@@ -96,6 +103,12 @@ class DbAccessService:
         )
         self._ceiling = EffectiveAccess(config.access_mode, write_mode=config.write_mode)
         self._executors: dict[EffectiveAccess, SqlDriverPort] = {}
+        # Каталог не зависит от прав запроса: схему и префикс проверяет домен до запроса.
+        self._catalog = CatalogSqlExecutor(
+            SqlExecutor(conn=self._pool),
+            timeout=config.safe_sql_timeout,
+            query_tag=config.query_tag or DEFAULT_QUERY_TAG,
+        )
 
     def view(self, access: EffectiveAccess) -> DbAccess:
         """Доступ к БД для одного запроса с заданными правами.
@@ -112,6 +125,7 @@ class DbAccessService:
         access = clamp_to_ceiling(access, self._ceiling)
         return DbAccess(
             sql_driver=self._executor(access),
+            catalog_driver=self._catalog,
             access_mode=access.access_mode,
             write_mode=access.write_mode,
             table_prefix=self._config.table_prefix,
