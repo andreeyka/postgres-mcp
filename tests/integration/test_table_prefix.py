@@ -412,14 +412,19 @@ async def test_basic_rejects_every_system_relation_of_the_server(db_full: DbAcce
     validator = QueryValidator(read_only=True, allowed_schema="public")
 
     for schema, relation in relations:
-        for sql in (f'SELECT * FROM "{relation}"', f'SELECT * FROM {schema}."{relation}"'):
+        for sql in (
+            f'SELECT * FROM "{relation}"',
+            f'SELECT * FROM {schema}."{relation}"',
+            # строковый тип того же отношения (R4): json_populate_record(NULL::pg_authid, ...) и т. п.
+            f'SELECT NULL::"{relation}"',
+            f'SELECT NULL::{schema}."{relation}"',
+        ):
             with pytest.raises(SystemRelationAccessError):
                 validator.validate(sql)
 
 
 @pytest.mark.asyncio
-async def test_basic_agent_sql_introspection_is_closed(db_full: DbAccess, db_user_prefix: DbAccess) -> None:
-    await setup_test_tables(db_full)
+async def test_basic_agent_sql_introspection_is_closed(db_user_prefix: DbAccess) -> None:
     sql = db_user_prefix.sql_driver
 
     with pytest.raises(FunctionNotAllowedError):
