@@ -309,6 +309,7 @@ def test_connect_options_round_trip_through_from_uri() -> None:
         ("password", "password"),
         ("sslmode", "sslmode"),
         ("ssl", "sslmode"),
+        ("requiressl", "sslmode"),
         ("client_encoding", "client_encoding"),
     ],
 )
@@ -412,3 +413,11 @@ def test_uri_query_parameter_without_a_value_separator_fails() -> None:
     with pytest.raises(ValueError, match="without '='") as exc_info:
         DatabaseConfig.uri_fields(f"postgresql://u:p@h/d?{_SECRET_PASSWORD}")
     assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_query_with_invalid_utf8_fails_without_echoing_it() -> None:
+    """Libpq тоже отвергает байты, которые не декодируются: ошибка сразу, значение в сообщение не попадает."""
+    with pytest.raises(ValueError, match="UTF-8") as exc_info:
+        DatabaseConfig.uri_fields("postgresql://u:p@h/d?application_name=%FFsecret")
+    assert "secret" not in str(exc_info.value)
+    assert "%FF" not in str(exc_info.value)

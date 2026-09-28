@@ -288,21 +288,20 @@ class TestHypopgReset:
         await reset(connection)
         connection.execute.assert_awaited_once()
 
-    async def test_missing_hypopg_reset_is_quiet(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Hypopg не установлен или не в search_path роли по умолчанию (сброс идёт вне SET LOCAL search_path):
-        на соединении нет состояния hypopg, а autocommit-запрос не оставил прерванной транзакции —
-        соединение исправно и возвращается в пул без предупреждения."""
+    async def test_missing_hypopg_reset_is_raised(self, caplog: pytest.LogCaptureFixture) -> None:
+        """UndefinedFunction не значит «сбрасывать нечего»: basic создаёт индексы под SET LOCAL search_path = public,
+        а сброс идёт на search_path роли по умолчанию. Соединение с непогашенными индексами пул должен выбросить."""
         pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
         reset = await _reset_callback(pool_mgr)
         connection = _returned_connection()
         connection.execute = AsyncMock(side_effect=UndefinedFunction("function hypopg_reset() does not exist"))
         pool_mgr.mark_hypopg_used(connection)
 
-        with caplog.at_level(logging.DEBUG, logger="postgres_fastmcp.postgres.connection"):
-            await reset(connection)
+        with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
+            with pytest.raises(UndefinedFunction):
+                await reset(connection)
 
-        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("hypopg_reset" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG)
+        assert any("Failed to reset hypothetical indexes" in r.getMessage() for r in caplog.records)
 
     async def test_closed_connection_is_left_alone(self) -> None:
         """psycopg_pool вызывает reset и для соединения, которое само же закрыло (ACTIVE/сбойное при возврате):

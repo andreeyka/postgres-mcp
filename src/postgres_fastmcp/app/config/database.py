@@ -27,8 +27,9 @@ _CONNECT_OPTION_FIELDS: dict[str, str] = {
     "user": "user",
     "password": "password",
     "sslmode": "sslmode",
-    # ssl=true — совместимость libpq с JDBC, синоним sslmode=require
+    # ssl=true (совместимость с JDBC) и устаревший requiressl=1 — синонимы sslmode=require в libpq
     "ssl": "sslmode",
+    "requiressl": "sslmode",
     "client_encoding": "client_encoding",
 }
 
@@ -50,8 +51,13 @@ def _parse_uri_query(query: str) -> dict[str, str]:
     сохраняется (application_name=). Ключ и значение делятся по первому '='; повтор ключа —
     последнее значение. Пустые сегменты (a=1&&b=2, завершающий '&') пропускаются.
 
+    Мягче libpq в двух местах: '=' внутри значения (a=b=c) libpq отвергает, здесь оно остаётся в
+    значении; некорректный %-токен (%zz, обрезанный %2) проходит буквально. database_uri кодирует
+    такие значения заново, и libpq получает их корректно закодированными.
+
     Raises:
-        ValueError: Сегмент без '=' (libpq его отвергает); сам сегмент в сообщение не попадает.
+        ValueError: Сегмент без '=' или %-последовательность, которая не декодируется как UTF-8
+            (libpq отвергает оба случая); сам сегмент и значение в сообщение не попадают.
     """
     params: dict[str, str] = {}
     for segment in query.split("&"):
@@ -61,7 +67,11 @@ def _parse_uri_query(query: str) -> dict[str, str]:
         if not separator:
             msg = "Database URI query parameter without '=' separator; expected key=value"
             raise ValueError(msg)
-        params[unquote(key)] = unquote(value)
+        try:
+            params[unquote(key, errors="strict")] = unquote(value, errors="strict")
+        except UnicodeDecodeError:
+            msg = "Database URI query parameter is not valid UTF-8 after percent-decoding"
+            raise ValueError(msg) from None
     return params
 
 
@@ -114,8 +124,8 @@ class DatabaseConfig(BaseModel):
         description=(
             "Параметры libpq в query string URI подключения (target_session_attrs, options, connect_timeout, "
             "sslrootcert, application_name и т.д.). Ключи со своими полями (host, hostaddr, port, dbname, user, "
-            "password, sslmode, ssl, client_encoding) и секреты (sslpassword, passfile, oauth_client_secret, "
-            "sslkeylogfile) запрещены; параметр, неизвестный libpq, — ошибка конфигурации."
+            "password, sslmode, ssl, requiressl, client_encoding) и секреты (sslpassword, passfile, "
+            "oauth_client_secret, sslkeylogfile) запрещены; параметр, неизвестный libpq, — ошибка конфигурации."
         ),
     )
     write_mode: bool = Field(
