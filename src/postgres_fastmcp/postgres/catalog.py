@@ -1,4 +1,4 @@
-"""Константы SQL-запросов каталога БД (information_schema, pg_extension)."""
+"""Константы SQL-запросов каталога БД (information_schema, pg_catalog) и список разрешённых шаблонов."""
 
 QUERY_LIST_SCHEMAS = """
 SELECT
@@ -21,8 +21,7 @@ ORDER BY table_name
 """
 
 # Существование таблицы/представления: тот же источник и тот же table_type, что у QUERY_LIST_TABLES_VIEWS
-# ('BASE TABLE' = relkind r/p, 'VIEW' = v). information_schema проходит валидатор BASIC и с table_prefix,
-# а pg_class — нет (TablePrefixAccessError без схемы, SchemaNotAllowedError с pg_catalog).
+# ('BASE TABLE' = relkind r/p, 'VIEW' = v).
 QUERY_TABLE_EXISTS = """
 SELECT 1 AS present
 FROM information_schema.tables
@@ -38,7 +37,7 @@ ORDER BY sequence_name
 
 QUERY_LIST_EXTENSIONS = """
 SELECT extname, extversion, extrelocatable
-FROM pg_extension
+FROM pg_catalog.pg_extension
 ORDER BY extname
 """
 
@@ -60,7 +59,7 @@ WHERE tc.table_schema = {} AND tc.table_name = {}
 
 QUERY_GET_INDEXES = """
 SELECT indexname, indexdef
-FROM pg_indexes
+FROM pg_catalog.pg_indexes
 WHERE schemaname = {} AND tablename = {}
 """
 
@@ -72,7 +71,7 @@ WHERE sequence_schema = {} AND sequence_name = {}
 
 QUERY_GET_EXTENSION_DETAILS = """
 SELECT extname, extversion, extrelocatable
-FROM pg_extension
+FROM pg_catalog.pg_extension
 WHERE extname = {}
 """
 

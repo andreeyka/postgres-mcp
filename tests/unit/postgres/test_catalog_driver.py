@@ -3,7 +3,10 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pglast
 import pytest
+from pglast.ast import Node, RangeVar
+from pglast.visitors import Ancestor, Visitor
 from psycopg.sql import SQL, Identifier, Literal
 
 from postgres_fastmcp.postgres.catalog import (
@@ -39,7 +42,7 @@ async def test_runs_catalog_query_read_only_with_timeout_and_literal_params() ->
     sent = delegate.execute.await_args.args[0]
     assert sent.startswith("SET LOCAL statement_timeout = 7000;")
     assert "search_path" not in sent
-    assert "pg_indexes" in sent
+    assert "pg_catalog.pg_indexes" in sent
     assert "'app_x'' OR 1=1 --'" in sent
     assert delegate.execute.await_args.kwargs["readonly"] is True
 
@@ -88,3 +91,24 @@ async def test_rejects_non_str_parameter_before_rendering(param: object) -> None
         await executor.execute(QUERY_GET_EXTENSION_DETAILS, params=[param])
 
     delegate.execute.assert_not_awaited()
+
+
+class _Relations(Visitor):
+    """Собирает (schemaname, relname) всех RangeVar запроса."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.found: list[tuple[str | None, str]] = []
+
+    def visit(self, _ancestors: Ancestor, node: Node) -> None:
+        if isinstance(node, RangeVar):
+            self.found.append((node.schemaname, node.relname))
+
+
+@pytest.mark.parametrize("query", sorted(CATALOG_QUERIES))
+def test_catalog_queries_qualify_every_relation(query: str) -> None:
+    """Без search_path источник закреплён явной схемой: только information_schema и pg_catalog."""
+    relations = _Relations()
+    relations(pglast.parse_sql(query.replace("{}", "NULL")))
+    assert relations.found
+    assert {schema for schema, _ in relations.found} <= {"information_schema", "pg_catalog"}, relations.found

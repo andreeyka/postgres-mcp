@@ -4,8 +4,9 @@ from typing import Any, cast
 
 from postgres_fastmcp.domains.db_access import DbAccessPort
 from postgres_fastmcp.postgres.catalog import QUERY_GET_SEQUENCE_DETAILS, QUERY_LIST_SEQUENCES
-from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.utils import decode_bytes_to_utf8
+
+from .prefix import active_prefix, matches_prefix
 
 
 class SequencesService:
@@ -28,8 +29,8 @@ class SequencesService:
         Returns:
             Список словарей с полями schema, name, data_type.
         """
-        sql_driver = self.db.sql_driver
-        rows = await sql_driver.execute(QUERY_LIST_SEQUENCES, params=[schema_name], readonly=True)
+        catalog = self.db.catalog_driver
+        rows = await catalog.execute(QUERY_LIST_SEQUENCES, params=[schema_name], readonly=True)
         objects = (
             [
                 {
@@ -42,9 +43,9 @@ class SequencesService:
             if rows
             else []
         )
-        if self.db.access_mode == AccessMode.BASIC and self.db.table_prefix:
-            prefix = self.db.table_prefix.lower()
-            objects = [o for o in objects if o["name"].lower().startswith(prefix)]
+        prefix = active_prefix(self.db)
+        if prefix:
+            objects = [o for o in objects if matches_prefix(o["name"], prefix)]
         return objects
 
     async def get_details(self, schema_name: str, object_name: str) -> dict[str, Any] | None:
@@ -57,8 +58,8 @@ class SequencesService:
         Returns:
             Словарь с полями schema, name, data_type, start_value, increment; None, если последовательности нет.
         """
-        sql_driver = self.db.sql_driver
-        rows = await sql_driver.execute(
+        catalog = self.db.catalog_driver
+        rows = await catalog.execute(
             QUERY_GET_SEQUENCE_DETAILS,
             params=[schema_name, object_name],
             readonly=True,
