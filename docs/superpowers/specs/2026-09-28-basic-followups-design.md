@@ -1,6 +1,6 @@
 # Дизайн: доработки после границы basic
 
-Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1 реализован. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
+Дата: 2026-09-28. Статус: согласовано (ответа на вопросы по дизайну не было — приняты рекомендуемые варианты); PR 1–2 реализованы. Продолжение `2026-09-28-basic-confinement-design.md` (§6).
 
 ## 1. Объём
 
@@ -97,6 +97,7 @@ WHERE n.nspname = 'public'
 
 - Поле `extra_kwargs` (не используется) удаляется. Новое поле `connect_options: dict[str, str]` — параметры libpq, которые попадают в query string `database_uri`.
 - `uri_fields` кладёт в `connect_options` все параметры query string, кроме `sslmode` и `client_encoding` (у них свои поля); повторяющийся ключ — последнее значение.
+- `database_uri` кодирует query string через `quote` (пробел — `%20`): `urlencode` по умолчанию даёт `+`, который libpq не декодирует. `connect_options` попадает в поля URI, только если в query string есть параметры кроме `sslmode`/`client_encoding`.
 - Валидация `connect_options`: ключи `host`, `hostaddr`, `port`, `dbname`, `user`, `password`, `sslmode`, `client_encoding` запрещены (у них поля) — `ValueError` с подсказкой поля; `sslpassword` и `passfile` запрещены (секрет или путь к секретам в URI, который попадает в логи и ошибки). Остальное не проверяется: неизвестный параметр отклонит libpq при подключении.
 - `DatabaseSettings` читает `MCP_DATABASE_CONNECT_OPTIONS` как JSON-объект (стандарт pydantic-settings); `config.json` — `database.connect_options`. URI и конфиг не сливаются: словарь из URI заменяет словарь конфига целиком (как остальные поля URI).
 
@@ -108,7 +109,7 @@ WHERE n.nspname = 'public'
 
 - `DbConnPool` хранит `weakref.WeakSet` соединений, на которых создавались гипотетические индексы, и метод `mark_hypopg_used(connection)`.
 - `SqlExecutor._execute_with_connection` при выполнении SQL, содержащего `hypopg_create_index` (без учёта регистра), помечает соединение. Покрывает `explain_query` и прямой вызов агента.
-- Пул создаётся с `reset=` callback: для помеченного соединения — `SELECT hypopg_reset()` (соединение в autocommit) и снятие пометки; у остальных — ничего (без лишнего запроса). Ошибка сброса — `WARNING` в лог и повторный подъём исключения: psycopg_pool выбрасывает такое соединение, состояние hypopg на нём неизвестно.
+- Пул создаётся с `reset=` callback: для помеченного соединения — `SELECT hypopg_reset()` (соединение в autocommit) и снятие пометки; у остальных — ничего (без лишнего запроса). Ошибка сброса — `WARNING` в лог и повторный подъём исключения: psycopg_pool выбрасывает такое соединение, состояние hypopg на нём неизвестно. При заданном `reset` psycopg_pool возвращает соединения в пул рабочей задачей; без hypopg помеченное соединение закрывается пулом и заменяется новым.
 - Спека `basic-confinement` §6: пункт про отложенную очистку помечается как выполненный.
 
 ### 3.4. Тесты
