@@ -178,9 +178,11 @@ class SafeSqlExecutor:
     async def _explain_for_plan_check(self, explain_sql: str) -> list[RowResult] | None:
         """EXPLAIN для PlanGuard: тот же SET LOCAL и тег, всегда read-only (EXPLAIN без ANALYZE ничего не выполняет).
 
-        Текст EXPLAIN — deparse pglast, который предполагает standard_conforming_strings = on (серверное
-        значение по умолчанию). SET LOCAL в той же строке не помог бы: Postgres разбирает всю строку простого
-        протокола до выполнения SET. Закрепление настройки для транзакций агента — в слое соединения.
+        Текст EXPLAIN — deparse pglast, который предполагает standard_conforming_strings = on. Это значение
+        закрепляет `SqlExecutor` в начале каждой транзакции (командой BEGIN[...]; SET LOCAL
+        standard_conforming_strings = on, ещё до этого EXPLAIN), независимо от настройки сервера или роли:
+        SET LOCAL в строке самого EXPLAIN не помог бы — Postgres разбирает всю строку простого протокола
+        до выполнения SET.
         """
         tagged = f"/* {self._config.query_tag} */ {explain_sql}"
         return await self._run(self._with_session_settings(tagged), self._delegate.execute, readonly=True)
