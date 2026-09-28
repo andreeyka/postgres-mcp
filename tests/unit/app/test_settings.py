@@ -386,3 +386,29 @@ def test_uri_ssl_true_points_to_sslmode() -> None:
     """ssl=true из URI asyncpg/JDBC libpq понимает как sslmode=require: второе значение sslmode запрещено."""
     with pytest.raises(ValidationError, match="use the database field 'sslmode'"):
         DatabaseConfig.from_uri("postgresql://u:p@h/d?ssl=true")
+
+
+def test_uri_query_plus_is_not_a_space() -> None:
+    """Libpq не декодирует '+' как пробел: путь с '+' проходит from_uri -> database_uri без изменений."""
+    config = DatabaseConfig.from_uri("postgresql://u:p@h/d?sslrootcert=/etc/ssl/a+b.pem")
+    assert config.connect_options == {"sslrootcert": "/etc/ssl/a+b.pem"}
+    assert conninfo_to_dict(config.database_uri)["sslrootcert"] == "/etc/ssl/a+b.pem"
+
+
+def test_uri_query_keeps_an_empty_value() -> None:
+    """Пустое значение — тоже значение для libpq (application_name= сбрасывает имя из env)."""
+    config = DatabaseConfig.from_uri("postgresql://u:p@h/d?application_name=")
+    assert config.connect_options == {"application_name": ""}
+    assert conninfo_to_dict(config.database_uri)["application_name"] == ""
+
+
+def test_uri_query_repeated_key_takes_the_last_value_and_keeps_percent_decoding() -> None:
+    fields = DatabaseConfig.uri_fields("postgresql://u:p@h/d?application_name=a&application_name=b%20c%2Bd&")
+    assert fields["connect_options"] == {"application_name": "b c+d"}
+
+
+def test_uri_query_parameter_without_a_value_separator_fails() -> None:
+    """Libpq отвергает параметр без '=': ошибка сразу, а не молча пропущенный параметр."""
+    with pytest.raises(ValueError, match="without '='") as exc_info:
+        DatabaseConfig.uri_fields(f"postgresql://u:p@h/d?{_SECRET_PASSWORD}")
+    assert _SECRET_PASSWORD not in str(exc_info.value)

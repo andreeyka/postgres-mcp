@@ -2,7 +2,7 @@
 
 import re
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict
@@ -41,6 +41,28 @@ _LIBPQ_UNKNOWN_PARAMETER = re.compile(r'invalid URI query parameter: "(?P<key>[^
 
 # Параметры query string URI со своими полями: в connect_options не попадают.
 _URI_FIELD_PARAMETERS = frozenset({"sslmode", "client_encoding"})
+
+
+def _parse_uri_query(query: str) -> dict[str, str]:
+    """Query string URI так, как её читает libpq (conninfo_uri_parse_params).
+
+    В отличие от parse_qs: '+' не превращается в пробел (путь /etc/ssl/a+b.pem), пустое значение
+    сохраняется (application_name=). Ключ и значение делятся по первому '='; повтор ключа —
+    последнее значение. Пустые сегменты (a=1&&b=2, завершающий '&') пропускаются.
+
+    Raises:
+        ValueError: Сегмент без '=' (libpq его отвергает); сам сегмент в сообщение не попадает.
+    """
+    params: dict[str, str] = {}
+    for segment in query.split("&"):
+        if not segment:
+            continue
+        key, separator, value = segment.partition("=")
+        if not separator:
+            msg = "Database URI query parameter without '=' separator; expected key=value"
+            raise ValueError(msg)
+        params[unquote(key)] = unquote(value)
+    return params
 
 
 class DatabaseConfig(BaseModel):
@@ -139,11 +161,11 @@ class DatabaseConfig(BaseModel):
 
         Возвращает только то, что в URI есть: host, port (5432, если не указан), user, password,
         name, а из query string — sslmode, client_encoding и остальные параметры libpq
-        (connect_options; повтор ключа — последнее значение). Отсутствующее (например пароль) не
+        (connect_options; разбор как в libpq, см. _parse_uri_query). Отсутствующее (например пароль) не
         попадает в словарь, и его дополняют config.json или env. Остальные поля URI не задаёт.
         """
         parsed = urlparse(uri)
-        qs = parse_qs(parsed.query)
+        qs = _parse_uri_query(parsed.query)
         candidates: dict[str, Any] = {
             "host": parsed.hostname,
             "port": parsed.port or 5432,
@@ -155,19 +177,19 @@ class DatabaseConfig(BaseModel):
         # sslmode и client_encoding — только если они есть в URI: иначе у DatabaseSettings
         # явное значение перебило бы MCP_DATABASE_SSLMODE / MCP_DATABASE_CLIENT_ENCODING
         # Неизвестный sslmode — ошибка: иначе libpq молча откатился бы на prefer. Значение не секрет.
-        raw_sslmode = qs.get("sslmode", [None])[0]
+        raw_sslmode = qs.get("sslmode")
         if raw_sslmode is not None:
             allowed = [mode.value for mode in SslMode]
             if raw_sslmode not in allowed:
                 msg = f"Unknown sslmode {raw_sslmode!r} in database URI; expected one of: {', '.join(allowed)}"
                 raise ValueError(msg)
             fields["sslmode"] = SslMode(raw_sslmode)
-        client_encoding = qs.get("client_encoding", [None])[0]
+        client_encoding = qs.get("client_encoding")
         if client_encoding:
             fields["client_encoding"] = client_encoding
         # Остальные параметры query string — параметры libpq (target_session_attrs, options, connect_timeout, ...).
         # Ключ connect_options — только если они есть: иначе URI стёр бы connect_options из config.json.
-        connect_options = {key: values[-1] for key, values in qs.items() if key not in _URI_FIELD_PARAMETERS}
+        connect_options = {key: value for key, value in qs.items() if key not in _URI_FIELD_PARAMETERS}
         if connect_options:
             fields["connect_options"] = connect_options
         return fields
