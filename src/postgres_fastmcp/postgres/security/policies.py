@@ -31,6 +31,32 @@ BASIC_SHOW_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
+# Представления information_schema, которые раскрывают секреты и исходники: опции user mapping (в том числе
+# пароли), user mapping, опции серверов и обёрток (хосты, пути), опции внешних таблиц и колонок (у file_fdw —
+# filename/program, где program — командная строка шелла и может нести учётные данные), тексты функций,
+# представлений и триггеров. Фильтр по правам роли их не прячет — владелец объекта видит своё в любой схеме.
+# Структуру объектов агент получает через list_objects/get_object_details.
+BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS: frozenset[str] = frozenset(
+    {
+        "user_mapping_options",
+        "user_mappings",
+        "foreign_server_options",
+        "foreign_data_wrapper_options",
+        "foreign_table_options",
+        "column_options",
+        "routines",
+        "views",
+        "triggers",
+    }
+)
+
+# Опции EXPLAIN, открытые в basic: форма и объём плана. SETTINGS показывает параметры сервера с
+# нестандартными значениями; WAL и SERIALIZE имеют смысл только с ANALYZE; незнакомые (будущие) опции
+# закрыты по умолчанию. ANALYZE сюда не входит: его разрешает отдельный флаг allow_explain_analyze.
+BASIC_EXPLAIN_OPTIONS: frozenset[str] = frozenset(
+    {"format", "verbose", "costs", "summary", "timing", "buffers", "generic_plan", "memory"}
+)
+
 # Типы, чья функция ввода резолвит имена объектов по каталогу: 'other.t'::regclass сообщает о существовании
 # объекта без прав на него, 'secretrole=r/postgres'::aclitem — о существовании роли. Массивы (_regclass,
 # _aclitem) валидатор сводит к имени элемента до проверки.
@@ -62,6 +88,8 @@ __all__ = [
     "ALLOWED_FUNCTIONS",
     "ALLOWED_NODE_TYPES",
     "BASIC_ALLOWED_FUNCTIONS",
+    "BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS",
+    "BASIC_EXPLAIN_OPTIONS",
     "BASIC_PG_SCALAR_TYPES",
     "BASIC_SHOW_PARAMETERS",
     "INTROSPECTION_FUNCTIONS",

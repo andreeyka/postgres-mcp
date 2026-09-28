@@ -324,6 +324,22 @@ class ExplainAnalyzeNotSupportedError(UserFacingError):
         super().__init__("EXPLAIN ANALYZE is not supported. Use the explain_query tool with analyze=true instead.")
 
 
+class ExplainOptionNotAllowedError(UserFacingError):
+    """Опция EXPLAIN вне разрешённого списка basic (валидация SQL)."""
+
+    def __init__(self, option: str, allowed: Sequence[str]) -> None:
+        """Инициализация с именем опции и разрешённым списком.
+
+        Args:
+            option: Имя опции из EXPLAIN (как его отдал pglast).
+            allowed: Опции, которые basic разрешает.
+        """
+        allowed_names = ", ".join(sorted(name.upper() for name in allowed))
+        message = f"EXPLAIN option {option.upper()} is not allowed in basic mode. Allowed options: {allowed_names}."
+        super().__init__(message)
+        self.option = option
+
+
 class CreateExtensionNotSupportedError(UserFacingError):
     """Создание указанного расширения не разрешено."""
 

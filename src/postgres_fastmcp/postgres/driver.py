@@ -167,6 +167,21 @@ class SqlExecutor:
         elif self.conn and not self._is_pool:
             self.conn = None
 
+    def _mark_hypopg_connection(self, connection: AsyncConnection[Any], query: str | LiteralString) -> None:
+        """Пометить соединение пула по содержимому запроса, если оно создавало или скрывало индексы hypopg.
+
+        Args:
+            connection: Соединение, на котором сейчас выполнится запрос.
+            query: SQL, который сейчас выполнится (проверяется без учёта регистра).
+        """
+        if not isinstance(self.conn, DbConnPool):
+            return
+        lowered = str(query).lower()
+        if "hypopg_create_index" in lowered:
+            self.conn.mark_hypopg_used(connection)
+        if "hypopg_hide_index" in lowered:
+            self.conn.mark_hypopg_hidden(connection)
+
     async def _execute_with_connection(
         self,
         connection: AsyncConnection[Any],
@@ -181,13 +196,13 @@ class SqlExecutor:
         после nextset() текущим становится результат последнего, то есть оператора пользователя.
 
         SQL с hypopg_create_index помечает соединение пула до выполнения: пул сбросит гипотетические
-        индексы при возврате соединения, даже если пакет упал после их создания.
+        индексы при возврате соединения, даже если пакет упал после их создания. SQL с
+        hypopg_hide_index помечает соединение так же: пул снимет скрытие индексов при возврате.
 
         Транзакция открывается одной командой BEGIN[...]; SET LOCAL standard_conforming_strings = on:
         запрос пользователя выполняется отдельным execute() после неё, уже под on.
         """
-        if isinstance(self.conn, DbConnPool) and "hypopg_create_index" in str(query).lower():
-            self.conn.mark_hypopg_used(connection)
+        self._mark_hypopg_connection(connection, query)
         async with connection.cursor(row_factory=dict_row) as cursor:
             if readonly:
                 await cursor.execute(_BEGIN_READ_ONLY)

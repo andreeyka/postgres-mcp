@@ -345,6 +345,72 @@ class TestHypopgReset:
         connection.execute.assert_not_awaited()
 
 
+class TestHypopgHiddenIndexes:
+    """Скрытые hypopg_hide_index индексы — тоже состояние сессии: hypopg_reset() их не снимает."""
+
+    async def test_hidden_mark_gets_unhide_all_before_discard_all(self) -> None:
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+        pool_mgr.mark_hypopg_hidden(connection)
+
+        await reset(connection)
+
+        assert [call.args[0] for call in connection.execute.await_args_list] == [
+            "SELECT hypopg_unhide_all_indexes()",
+            "DISCARD ALL",
+        ]
+
+        # Пометка снята: второй возврат того же соединения — только DISCARD ALL.
+        connection.execute.reset_mock()
+        await reset(connection)
+        connection.execute.assert_awaited_once_with("DISCARD ALL")
+
+    async def test_both_marks_reset_then_unhide_then_discard_all(self) -> None:
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+        pool_mgr.mark_hypopg_used(connection)
+        pool_mgr.mark_hypopg_hidden(connection)
+
+        await reset(connection)
+
+        assert [call.args[0] for call in connection.execute.await_args_list] == [
+            "SELECT hypopg_reset()",
+            "SELECT hypopg_unhide_all_indexes()",
+            "DISCARD ALL",
+        ]
+
+    async def test_unhide_failure_is_logged_and_raised_without_discard_all(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Нет функции (другой search_path роли, расширение удалено) — соединение выбрасывается пулом."""
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection()
+        connection.execute = AsyncMock(
+            side_effect=UndefinedFunction("function hypopg_unhide_all_indexes() does not exist")
+        )
+        pool_mgr.mark_hypopg_hidden(connection)
+
+        with caplog.at_level(logging.WARNING, logger="postgres_fastmcp.postgres.connection"):
+            with pytest.raises(UndefinedFunction):
+                await reset(connection)
+
+        assert any("Failed to unhide hidden indexes" in r.getMessage() for r in caplog.records)
+        connection.execute.assert_awaited_once_with("SELECT hypopg_unhide_all_indexes()")
+
+    async def test_closed_hidden_connection_is_left_alone(self) -> None:
+        pool_mgr = DbConnPool(connection_url="postgresql://localhost/test")
+        reset = await _reset_callback(pool_mgr)
+        connection = _returned_connection(closed=True)
+        pool_mgr.mark_hypopg_hidden(connection)
+
+        await reset(connection)
+
+        connection.execute.assert_not_awaited()
+
+
 class TestResetConnectionAutocommitAndTimeout:
     """Переключение в autocommit отделено от самих reset-запросов; у reset-запросов есть таймаут."""
 

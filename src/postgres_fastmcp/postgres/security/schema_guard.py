@@ -2,6 +2,7 @@
 
 from pglast.ast import RangeVar
 
+from postgres_fastmcp.postgres.security.policies import BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS
 from postgres_fastmcp.shared.errors import (
     SchemaNotAllowedError,
     SchemataTableAccessError,
@@ -37,7 +38,8 @@ def validate_schema_access(
         table_prefix: Если задан вместе с allowed_schema, имена таблиц должны начинаться с этого.
 
     Raises:
-        SystemRelationAccessError: Если в basic запрошено системное отношение (pg_*, _pg_*, hypopg*).
+        SystemRelationAccessError: Если в basic запрошено системное отношение (pg_*, _pg_*, hypopg*),
+            или представление information_schema с секретами и исходниками (BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS).
         TablePrefixAccessError: Если имя таблицы не соответствует префиксу.
         SchemaNotAllowedError: Если схема не разрешена.
         SchemataTableAccessError: Если в пользовательском режиме запрошен доступ к information_schema.schemata.
@@ -60,9 +62,15 @@ def validate_schema_access(
     if schemaname == "pg_catalog":
         raise SchemaNotAllowedError(schemaname, allowed_schema)
 
+    # Без схемы имя в information_schema не резолвится (её нет в search_path basic), поэтому
+    # проверяются только квалифицированные ссылки.
     if schemaname == "information_schema":
-        if range_var.relname and range_var.relname.lower() == "schemata":
-            raise SchemataTableAccessError(schemaname, range_var.relname)
+        view = relname.lower()
+        if view == "schemata":
+            raise SchemataTableAccessError(schemaname, relname)
+        if view in BASIC_BLOCKED_INFORMATION_SCHEMA_VIEWS:
+            qualified_relname = f"{schemaname}.{relname}"
+            raise SystemRelationAccessError(qualified_relname)
         return
 
     if schemaname != allowed_schema:

@@ -33,6 +33,7 @@ from postgres_fastmcp.postgres.security.policies import (
     ALLOWED_FUNCTIONS,
     ALLOWED_NODE_TYPES,
     BASIC_ALLOWED_FUNCTIONS,
+    BASIC_EXPLAIN_OPTIONS,
     BASIC_PG_SCALAR_TYPES,
     BASIC_SHOW_PARAMETERS,
     NAME_LOOKUP_TYPES,
@@ -44,6 +45,7 @@ from postgres_fastmcp.shared.errors import (
     DdlNotAllowedError,
     DisallowedNodeTypeError,
     ExplainAnalyzeNotSupportedError,
+    ExplainOptionNotAllowedError,
     FunctionNotAllowedError,
     LikePatternNotConstantError,
     LockingClauseProhibitedError,
@@ -133,7 +135,8 @@ class _NodeValidationVisitor(Visitor):
 
         Raises:
             DisallowedNodeTypeError: Тип узла AST не разрешён.
-            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic,
+                или закрытое представление information_schema.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -141,6 +144,7 @@ class _NodeValidationVisitor(Visitor):
             FunctionNotAllowedError: Функция не разрешена.
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
+            ExplainOptionNotAllowedError: Опция EXPLAIN вне списка basic (SETTINGS, WAL, SERIALIZE, незнакомые).
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
             TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName
@@ -207,13 +211,32 @@ class _NodeValidationVisitor(Visitor):
         if isinstance(node, SelectStmt) and getattr(node, "lockingClause", None):
             raise LockingClauseProhibitedError
 
-        if isinstance(node, ExplainStmt) and not self._allow_explain_analyze:
-            for option in node.options or []:
-                if isinstance(option, DefElem) and option.defname == "analyze":
-                    raise ExplainAnalyzeNotSupportedError
+        if isinstance(node, ExplainStmt):
+            self._validate_explain_options(node)
 
         if isinstance(node, CreateExtensionStmt):
             self._validate_create_extension(node)
+
+    def _validate_explain_options(self, node: ExplainStmt) -> None:
+        """ANALYZE — по флагу allow_explain_analyze и первым; в basic прочие опции — только из BASIC_EXPLAIN_OPTIONS.
+
+        Имя сравнивается без учёта регистра: pglast уже свернул имена без кавычек, а имя в кавычках
+        ("SETTINGS") Postgres не распознаёт — отказ такому имени ничего не ломает и обхода не даёт.
+
+        Raises:
+            ExplainAnalyzeNotSupportedError: ANALYZE при allow_explain_analyze=False.
+            ExplainOptionNotAllowedError: В basic опция вне BASIC_EXPLAIN_OPTIONS.
+        """
+        names = [
+            option.defname.lower() for option in node.options or () if isinstance(option, DefElem) and option.defname
+        ]
+        if not self._allow_explain_analyze and "analyze" in names:
+            raise ExplainAnalyzeNotSupportedError
+        if not self._basic:
+            return
+        for name in names:
+            if name != "analyze" and name not in BASIC_EXPLAIN_OPTIONS:
+                raise ExplainOptionNotAllowedError(name, sorted(BASIC_EXPLAIN_OPTIONS))
 
     def _validate_type_name(self, node: TypeName) -> None:
         """R4 в basic: имя типа не резолвит объекты по имени и не выводит за allowed_schema.
@@ -349,7 +372,8 @@ class QueryValidator:
             StatementTypeNotAllowedError: Тип оператора не разрешён.
             DdlNotAllowedError: DDL-операция не разрешена.
             DisallowedNodeTypeError: Тип узла AST не разрешён.
-            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic.
+            SystemRelationAccessError: Доступ к системному отношению (pg_*, _pg_*) в basic,
+                или закрытое представление information_schema.
             TablePrefixAccessError: Доступ к таблице не разрешён (префикс).
             SchemaNotAllowedError: Доступ к схеме не разрешён.
             SchemataTableAccessError: Доступ к information_schema.schemata в user mode.
@@ -357,6 +381,7 @@ class QueryValidator:
             FunctionNotAllowedError: Функция не разрешена.
             LockingClauseProhibitedError: Блокирующее предложение в SELECT.
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
+            ExplainOptionNotAllowedError: Опция EXPLAIN вне списка basic (SETTINGS, WAL, SERIALIZE, незнакомые).
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
             TypeNotAllowedError: Тип reg*/aclitem (и их массивы) в любой позиции TypeName

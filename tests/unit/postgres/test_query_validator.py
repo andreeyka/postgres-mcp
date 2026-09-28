@@ -8,6 +8,7 @@ from postgres_fastmcp.shared.errors import (
     CreateExtensionNotSupportedError,
     DdlNotAllowedError,
     ExplainAnalyzeNotSupportedError,
+    ExplainOptionNotAllowedError,
     FunctionNotAllowedError,
     SchemaNotAllowedError,
     ShowParameterNotAllowedError,
@@ -166,6 +167,111 @@ class TestQueryValidatorExplainAnalyze:
         """EXPLAIN (ANALYZE) passes validation when allow_explain_analyze=True."""
         v = QueryValidator(read_only=True, allow_explain_analyze=True)
         v.validate("EXPLAIN (ANALYZE) SELECT 1")
+
+
+BASIC = QueryValidator(allowed_schema="public", read_only=True)
+FULL = QueryValidator(read_only=True, allow_explain_analyze=True)
+
+
+class TestBasicExplainOptions:
+    """basic: только опции BASIC_EXPLAIN_OPTIONS; ANALYZE — своей ошибкой и первым; full не меняется."""
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN (SETTINGS) SELECT 1",
+            "EXPLAIN (settings on, format json) SELECT 1",
+            "EXPLAIN (SETTINGS false) SELECT 1",
+            "EXPLAIN (WAL) SELECT 1",
+            "EXPLAIN (SERIALIZE TEXT) SELECT 1",
+            'EXPLAIN ("SETTINGS") SELECT 1',
+            "EXPLAIN (FUTURE_OPTION) SELECT 1",
+        ],
+    )
+    def test_option_outside_the_list_is_rejected(self, sql: str) -> None:
+        with pytest.raises(ExplainOptionNotAllowedError, match="Allowed options: BUFFERS, COSTS, FORMAT"):
+            BASIC.validate(sql)
+
+    def test_error_names_the_rejected_option(self) -> None:
+        with pytest.raises(ExplainOptionNotAllowedError) as exc_info:
+            BASIC.validate("EXPLAIN (FORMAT JSON, SETTINGS) SELECT 1")
+        assert exc_info.value.option == "settings"
+        assert str(exc_info.value).startswith("EXPLAIN option SETTINGS is not allowed in basic mode.")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN SELECT 1",
+            "EXPLAIN VERBOSE SELECT 1",
+            "EXPLAIN (FORMAT JSON, COSTS false, VERBOSE) SELECT 1",
+            "EXPLAIN (SUMMARY, TIMING false, BUFFERS, MEMORY) SELECT 1",
+            "EXPLAIN (GENERIC_PLAN) SELECT $1",
+            "EXPLAIN (FORMAT JSON, GENERIC_PLAN, COSTS TRUE) SELECT $1",
+        ],
+    )
+    def test_listed_options_pass(self, sql: str) -> None:
+        BASIC.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        ["EXPLAIN (ANALYZE) SELECT 1", "EXPLAIN (SETTINGS, ANALYZE) SELECT 1", "EXPLAIN ANALYZE VERBOSE SELECT 1"],
+    )
+    def test_analyze_keeps_its_own_error_and_is_checked_first(self, sql: str) -> None:
+        with pytest.raises(ExplainAnalyzeNotSupportedError):
+            BASIC.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql",
+        ["EXPLAIN (SETTINGS) SELECT 1", "EXPLAIN (WAL, ANALYZE) SELECT 1", "EXPLAIN (SERIALIZE, ANALYZE) SELECT 1"],
+    )
+    def test_full_is_unchanged(self, sql: str) -> None:
+        FULL.validate(sql)
+
+
+class TestBasicInformationSchemaSecrets:
+    """basic: представления information_schema с секретами и исходниками — SystemRelationAccessError."""
+
+    @pytest.mark.parametrize(
+        "view",
+        [
+            "user_mapping_options",
+            "user_mappings",
+            "foreign_server_options",
+            "foreign_data_wrapper_options",
+            "foreign_table_options",
+            "column_options",
+            "routines",
+            "views",
+            "triggers",
+        ],
+    )
+    def test_view_is_rejected(self, view: str) -> None:
+        with pytest.raises(SystemRelationAccessError, match=rf"'information_schema\.{view}'"):
+            BASIC.validate(f"SELECT * FROM information_schema.{view}")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            'SELECT * FROM "information_schema".routines',
+            'SELECT * FROM information_schema."ROUTINES"',
+            "SELECT * FROM INFORMATION_SCHEMA.Routines",
+            "SELECT 1 WHERE EXISTS (SELECT 1 FROM information_schema.views)",
+            "WITH x AS (SELECT * FROM information_schema.triggers) SELECT * FROM x",
+        ],
+    )
+    def test_any_spelling_and_position_is_rejected(self, sql: str) -> None:
+        with pytest.raises(SystemRelationAccessError):
+            BASIC.validate(sql)
+
+    @pytest.mark.parametrize(
+        "sql", ["SELECT * FROM information_schema.tables", "SELECT * FROM information_schema.columns"]
+    )
+    def test_structure_views_still_pass(self, sql: str) -> None:
+        BASIC.validate(sql)
+        QueryValidator(allowed_schema="public", table_prefix="app_", read_only=True).validate(sql)
+
+    def test_full_is_unchanged(self) -> None:
+        FULL.validate("SELECT * FROM information_schema.user_mapping_options")
 
 
 class TestQueryValidatorCreateExtension:

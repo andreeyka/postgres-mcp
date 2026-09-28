@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y \
   postgresql-server-dev-${PG_MAJOR} \
   && rm -rf /var/lib/apt/lists/*
 
-# Clone and build HypoPG
-RUN git clone --depth 1 https://github.com/HypoPG/hypopg.git /tmp/hypopg \
+# Clone and build HypoPG, pinned to a release tag so a new hypopg release can't change CI silently
+RUN git clone --depth 1 --branch 1.4.3 https://github.com/HypoPG/hypopg.git /tmp/hypopg \
   && cd /tmp/hypopg \
   && make \
   && make install \
