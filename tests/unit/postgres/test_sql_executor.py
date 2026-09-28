@@ -331,6 +331,7 @@ class TestSqlExecutorMarksHypopgConnections:
         await executor.execute("SELECT 1 AS a")
 
         pool.mark_hypopg_used.assert_not_called()
+        pool.mark_hypopg_hidden.assert_not_called()
 
     async def test_connection_is_marked_even_if_the_statement_fails(self) -> None:
         """Индекс мог создаться до ошибки в том же пакете: пометка — до выполнения."""
@@ -340,3 +341,19 @@ class TestSqlExecutorMarksHypopgConnections:
             await executor.execute("SELECT hypopg_create_index('CREATE INDEX ON t (a)')")
 
         pool.mark_hypopg_used.assert_called_once_with(connection)
+
+    async def test_hide_index_marks_the_connection_as_hidden(self) -> None:
+        executor, pool, connection = _pooled_executor(_FakeCursor(("SELECT 1", 1, [{"hypopg_hide_index": True}])))
+
+        await executor.execute("SELECT HYPOPG_HIDE_INDEX(16384)")
+
+        pool.mark_hypopg_hidden.assert_called_once_with(connection)
+        pool.mark_hypopg_used.assert_not_called()
+
+    async def test_hidden_mark_is_set_even_if_the_statement_fails(self) -> None:
+        executor, pool, connection = _pooled_executor(_FakeCursor())
+
+        with pytest.raises(IndexError):
+            await executor.execute("SELECT hypopg_hide_index(16384)")
+
+        pool.mark_hypopg_hidden.assert_called_once_with(connection)
