@@ -296,10 +296,13 @@ async def test_hypothetical_index_on_a_forbidden_table_is_rejected_before_explai
 
 
 def _plan_check_delegate(scanned_schema: str, scanned_relation: str) -> MagicMock:
-    """Делегат: EXPLAIN VERBOSE от PlanGuard получает план со сканом отношения, остальное — как у сервера."""
+    """Делегат как SqlExecutor: precheck получает исполнитель строк; delegate.sent — все строки по порядку."""
     scan = {"Node Type": "Seq Scan", "Relation Name": scanned_relation, "Schema": scanned_schema}
+    delegate = MagicMock()
+    delegate.sent = []
 
-    async def execute(query, params=None, *, readonly=True):
+    async def answer(query):
+        delegate.sent.append(query)
         if "pg_catalog.pg_extension" in query:
             return [RowResult(cells={"extversion": "1.4.1"})]
         if "EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM" in query:
@@ -310,7 +313,11 @@ def _plan_check_delegate(scanned_schema: str, scanned_relation: str) -> MagicMoc
             return [RowResult(cells={"QUERY PLAN": _SEQ_SCAN_PLAN})]
         return []
 
-    delegate = MagicMock()
+    async def execute(query, params=None, *, readonly=True, precheck=None):
+        if precheck is not None:
+            await precheck(answer)
+        return await answer(query)
+
     delegate.execute = AsyncMock(side_effect=execute)
     return delegate
 
@@ -345,7 +352,7 @@ async def test_hypothetical_explain_passes_the_plan_check(monkeypatch: pytest.Mo
     )
 
     assert "Seq Scan" in result
-    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    sent = delegate.sent
     checks = [q.split("*/ ", 1)[1] for q in sent if "EXPLAIN (VERBOSE" in q]
     assert checks[0] == "EXPLAIN (VERBOSE, FORMAT JSON) SELECT hypopg_reset()"
     assert checks[1].startswith("EXPLAIN (VERBOSE, FORMAT JSON) SELECT hypopg_create_index(")
@@ -354,6 +361,9 @@ async def test_hypothetical_explain_passes_the_plan_check(monkeypatch: pytest.Mo
     assert not any("standard_conforming_strings" in q for q in sent)
     assert sent[-1].count("hypopg_create_index") == 1
     assert "EXPLAIN (FORMAT JSON, COSTS TRUE)" in sent[-1]
+    # Канал сервера (версия hypopg) и один вызов на оператор агента; до PR 2 было 5: ещё три отдельных EXPLAIN.
+    assert delegate.execute.await_count == 2
+    assert sent.count("SET LOCAL statement_timeout = 30000; SET LOCAL search_path = public;") == 1
 
 
 async def test_hypothetical_explain_over_a_foreign_view_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,7 +377,7 @@ async def test_hypothetical_explain_over_a_foreign_view_is_rejected(monkeypatch:
             hypothetical_indexes=[{"table": "app_secret_view", "columns": ["id"]}],
         )
 
-    sent = [c.args[0] for c in delegate.execute.await_args_list]
+    sent = delegate.sent
     assert not any("hypopg_create_index" in q and "EXPLAIN (FORMAT JSON" in q for q in sent)
 
 

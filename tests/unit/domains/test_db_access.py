@@ -175,17 +175,17 @@ def test_plan_check_reaches_only_basic_executors(access: EffectiveAccess, *, che
     driver = service.view(access).sql_driver
     assert isinstance(driver, SafeSqlExecutor)
     assert driver._config.plan_check is checked
-    assert (driver._plan_guard is not None) is checked
+    assert (driver._plan_check_schema is not None) is checked
 
 
 def test_plan_check_is_off_by_default() -> None:
     driver = _service().view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).sql_driver
     assert isinstance(driver, SafeSqlExecutor)
-    assert driver._plan_guard is None
+    assert driver._plan_check_schema is None
 
 
 def test_catalog_executor_never_checks_plans() -> None:
     service = _service(access_mode=AccessMode.BASIC, plan_check=True)
     catalog = service.catalog_driver
     assert isinstance(catalog, CatalogSqlExecutor)
-    assert catalog._inner._plan_guard is None
+    assert catalog._inner._plan_check_schema is None

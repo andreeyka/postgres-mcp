@@ -24,7 +24,7 @@ from psycopg_pool import PoolTimeout
 from postgres_fastmcp.postgres.connection import DbConnPool
 from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
-from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError
+from postgres_fastmcp.shared.errors import ConnectionNotEstablishedError, PlanAccessError, PlanUnverifiableError
 
 
 class _NoSqlstateResult:
@@ -306,6 +306,137 @@ def _pooled_executor(cursor: _FakeCursor) -> tuple[SqlExecutor, MagicMock, Magic
     pool = MagicMock(spec=DbConnPool)
     pool.pool_connect = AsyncMock(return_value=inner)
     return SqlExecutor(conn=pool), pool, connection
+
+
+class _BatchCursor(_FakeCursor):
+    """Курсор, у которого каждая строка запроса — своя пачка результатов: nextset() не уходит в следующую строку."""
+
+    def __init__(self, *batches: list[tuple[str, int, list[dict] | None]]) -> None:
+        super().__init__()
+        self._batches = [list(batch) for batch in batches]
+
+    async def execute(self, query: str, params: object = None) -> None:
+        self.executed.append(query)
+        if query.startswith(("BEGIN", "COMMIT", "ROLLBACK")):
+            self._current = (query.split(maxsplit=1)[0], -1, None)
+            return
+        batch = self._batches.pop(0)
+        self._current = batch[0]
+        self._pending = batch[1:]
+
+
+_PLAN = [{"Plan": {"Node Type": "Result"}}]
+
+
+class TestSqlExecutorPrecheck:
+    """precheck: предварительные запросы на том же курсоре, в той же транзакции, до оператора."""
+
+    async def test_precheck_runs_between_begin_and_the_statement(self) -> None:
+        cursor = _BatchCursor(
+            [("SET", -1, None), ("SET", -1, None)],
+            [("EXPLAIN", -1, [{"QUERY PLAN": _PLAN}])],
+            [("SELECT 1", 1, [{"a": 1}])],
+        )
+        seen: list[list[RowResult] | None] = []
+
+        async def precheck(run):
+            seen.append(await run("SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public;"))
+            seen.append(await run("/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1 AS a"))
+
+        result = await _executor_on(cursor).execute_statement("/* t */ SELECT 1 AS a", precheck=precheck)
+
+        assert cursor.executed == [
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL standard_conforming_strings = on",
+            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public;",
+            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT 1 AS a",
+            "/* t */ SELECT 1 AS a",
+            "ROLLBACK",
+        ]
+        assert seen == [None, [RowResult(cells={"QUERY PLAN": _PLAN})]]
+        assert result == StatementResult(rows=[RowResult(cells={"a": 1})], status="SELECT 1", affected_rows=1)
+
+    async def test_write_transaction_commits_after_precheck(self) -> None:
+        cursor = _BatchCursor([("EXPLAIN", -1, [{"QUERY PLAN": _PLAN}])], [("UPDATE 2", 2, None)])
+
+        async def precheck(run):
+            await run("EXPLAIN (VERBOSE, FORMAT JSON) UPDATE t SET v = 1")
+
+        result = await _executor_on(cursor).execute_statement("UPDATE t SET v = 1", readonly=False, precheck=precheck)
+
+        assert cursor.executed[0] == "BEGIN; SET LOCAL standard_conforming_strings = on"
+        assert cursor.executed[-2:] == ["UPDATE t SET v = 1", "COMMIT"]
+        assert result.status == "UPDATE 2"
+
+    async def test_execute_passes_precheck_through(self) -> None:
+        cursor = _BatchCursor([("EXPLAIN", -1, [{"QUERY PLAN": _PLAN}])], [("SELECT 1", 1, [{"a": 1}])])
+        calls: list[str] = []
+
+        async def precheck(run):
+            calls.append("precheck")
+            await run("EXPLAIN SELECT 1")
+
+        rows = await _executor_on(cursor).execute("SELECT 1 AS a", precheck=precheck)
+
+        assert calls == ["precheck"]
+        assert rows == [RowResult(cells={"a": 1})]
+        assert cursor.executed[1] == "EXPLAIN SELECT 1"
+
+    async def test_precheck_rejection_rolls_back_and_skips_the_statement(self) -> None:
+        """Отказ проверки: ROLLBACK, оператор не отправлен, пул не помечен невалидным."""
+        cursor = _BatchCursor([("EXPLAIN", -1, [{"QUERY PLAN": _PLAN}])])
+        executor, pool, _ = _pooled_executor(cursor)
+
+        async def precheck(run):
+            await run("EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_v")
+            raise PlanAccessError("relation", "secret.accounts", allowed_schema="public", table_prefix=None)
+
+        with pytest.raises(PlanAccessError):
+            await executor.execute("SELECT * FROM app_v", readonly=False, precheck=precheck)
+
+        assert cursor.executed[-1] == "ROLLBACK"
+        assert "SELECT * FROM app_v" not in cursor.executed
+        pool.mark_invalid.assert_not_called()
+
+    async def test_plan_unverifiable_error_in_precheck_rolls_back_and_skips_the_statement(self) -> None:
+        """PlanUnverifiableError — тоже отказ проверки, не соединения: ROLLBACK, пул не помечен невалидным."""
+        cursor = _BatchCursor()
+        executor, pool, _ = _pooled_executor(cursor)
+
+        async def precheck(run):
+            raise PlanUnverifiableError("Foreign Scan")
+
+        with pytest.raises(PlanUnverifiableError):
+            await executor.execute("SELECT * FROM app_fdw_view", readonly=False, precheck=precheck)
+
+        assert cursor.executed[-1] == "ROLLBACK"
+        assert "SELECT * FROM app_fdw_view" not in cursor.executed
+        pool.mark_invalid.assert_not_called()
+
+    async def test_postgres_error_in_precheck_rolls_back_without_invalidating(self) -> None:
+        """Ошибка планирования (отношения нет) — ошибка SQL, не соединения."""
+        cursor = _BatchCursor()
+        executor, pool, _ = _pooled_executor(cursor)
+
+        async def precheck(run):
+            raise UndefinedTable('relation "app_missing" does not exist')
+
+        with pytest.raises(UndefinedTable):
+            await executor.execute("SELECT * FROM app_missing", precheck=precheck)
+
+        assert cursor.executed[-1] == "ROLLBACK"
+        pool.mark_invalid.assert_not_called()
+
+    async def test_connection_error_in_precheck_still_invalidates(self) -> None:
+        cursor = _BatchCursor()
+        executor, pool, _ = _pooled_executor(cursor)
+
+        async def precheck(run):
+            raise OperationalError("server closed the connection unexpectedly")
+
+        with pytest.raises(OperationalError):
+            await executor.execute("SELECT 1", precheck=precheck)
+
+        pool.mark_invalid.assert_called_once()
 
 
 class TestSqlExecutorMarksHypopgConnections:

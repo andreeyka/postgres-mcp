@@ -37,7 +37,8 @@ from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_n
 from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
 
-# Выполняет один оператор EXPLAIN целиком и возвращает его строки (ячейка "QUERY PLAN").
+# Выполняет один оператор EXPLAIN целиком на курсоре транзакции оператора и возвращает его строки
+# (ячейка "QUERY PLAN").
 ExplainRunner = Callable[[str], Awaitable[list[RowResult] | None]]
 
 RELATION_KIND = "relation"
@@ -218,7 +219,8 @@ class PlanGuard:
         """Инициализация с исполнителем EXPLAIN и правилами basic.
 
         Args:
-            explain: Выполняет оператор EXPLAIN (тот же SET LOCAL, read-only) и возвращает строки.
+            explain: Выполняет оператор EXPLAIN в транзакции проверяемого оператора (SET LOCAL уже
+                выставлен) и возвращает строки.
             allowed_schema: Единственная схема отношений плана (public).
             table_prefix: Если задан, имена отношений плана должны начинаться с него (без учёта регистра).
         """

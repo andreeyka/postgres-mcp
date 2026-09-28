@@ -11,7 +11,7 @@ from psycopg.errors import QueryCanceled
 from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import Precheck, PrecheckSqlDriverPort, StatementRunner
 from postgres_fastmcp.postgres.security.plan_guard import PlanGuard
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError
@@ -72,14 +72,14 @@ class SafeSqlExecutor:
 
     def __init__(
         self,
-        delegate: SqlDriverPort,
+        delegate: PrecheckSqlDriverPort,
         validator: QueryValidator,
         config: SafeSqlConfig,
     ) -> None:
         """Инициализация с делегирующим исполнителем, валидатором и конфигурацией.
 
         Args:
-            delegate: Исполнитель без проверок (SqlExecutor): execute и execute_statement.
+            delegate: Исполнитель без проверок (SqlExecutor): execute и execute_statement с precheck.
             validator: Валидатор, используемый для валидации каждого запроса перед выполнением.
             config: Конфигурация безопасного SQL (тег, таймаут, схема, read_only, префикс).
         """
@@ -87,15 +87,7 @@ class SafeSqlExecutor:
         self._validator = validator
         self._config = config
         # Проверка по плану — только для basic (allowed_schema задан); full и канал сервера её не получают.
-        self._plan_guard = (
-            PlanGuard(
-                self._explain_for_plan_check,
-                allowed_schema=config.allowed_schema,
-                table_prefix=config.table_prefix,
-            )
-            if config.plan_check and config.allowed_schema
-            else None
-        )
+        self._plan_check_schema = config.allowed_schema if config.plan_check else None
 
     async def execute(
         self,
@@ -165,37 +157,56 @@ class SafeSqlExecutor:
             raise QueryTimeoutError(self._config.timeout) from e
 
     async def _checked_run[T](self, query: str, run: Callable[..., Awaitable[T]]) -> T:
-        """Проверка по плану (если включена), затем выполнение с SET LOCAL через делегата.
+        """Выполнение с SET LOCAL через делегата; с plan_check — проверка по плану в той же транзакции.
+
+        С plan_check делегат получает precheck: на том же соединении, после BEGIN, он один раз ставит
+        SET LOCAL statement_timeout/search_path и строит план каждого оператора; оператор идёт без префикса
+        и наследует настройки транзакции. AccessShareLock, взятый разбором, держится до конца транзакции:
+        определение представления между проверкой и выполнением не меняется. Отказ проверки откатывает
+        транзакцию, оператор не выполняется.
 
         Ограничение: PlanGuard строит планы всех операторов строки до выполнения первого, поэтому строка,
         где поздний оператор зависит от раннего (CREATE EXTENSION …; SELECT функция расширения), отклоняется
         ошибкой планирования.
         """
-        if self._plan_guard is not None:
-            await self._plan_guard.check(query)
-        return await self._run(self._with_session_settings(query), run, readonly=self._config.read_only)
+        allowed_schema = self._plan_check_schema
+        if allowed_schema is None:
+            return await self._run(self._with_session_settings(query), run, readonly=self._config.read_only)
+        settings = self._session_settings()
+        tag = self._config.query_tag
+        table_prefix = self._config.table_prefix
 
-    async def _explain_for_plan_check(self, explain_sql: str) -> list[RowResult] | None:
-        """EXPLAIN для PlanGuard: тот же SET LOCAL и тег, всегда read-only (EXPLAIN без ANALYZE ничего не выполняет).
+        async def precheck(runner: StatementRunner) -> None:
+            if settings:
+                await runner(settings)
 
-        Текст EXPLAIN — deparse pglast, который предполагает standard_conforming_strings = on. Это значение
-        закрепляет `SqlExecutor` в начале каждой транзакции (командой BEGIN[...]; SET LOCAL
-        standard_conforming_strings = on, ещё до этого EXPLAIN), независимо от настройки сервера или роли:
-        SET LOCAL в строке самого EXPLAIN не помог бы — Postgres разбирает всю строку простого протокола
-        до выполнения SET.
-        """
-        tagged = f"/* {self._config.query_tag} */ {explain_sql}"
-        return await self._run(self._with_session_settings(tagged), self._delegate.execute, readonly=True)
+            async def explain(explain_sql: str) -> list[RowResult] | None:
+                # Текст EXPLAIN — deparse pglast (standard_conforming_strings = on закрепляет SqlExecutor в BEGIN).
+                return await runner(f"/* {tag} */ {explain_sql}")
 
-    async def _run[T](self, query: str, run: Callable[..., Awaitable[T]], *, readonly: bool) -> T:
+            await PlanGuard(explain, allowed_schema=allowed_schema, table_prefix=table_prefix).check(query)
+
+        return await self._run(query, run, readonly=self._config.read_only, precheck=precheck)
+
+    async def _run[T](
+        self,
+        query: str,
+        run: Callable[..., Awaitable[T]],
+        *,
+        readonly: bool,
+        precheck: Precheck | None = None,
+    ) -> T:
         """Выполнить через делегата; отмену по statement_timeout превратить в QueryTimeoutError.
 
         Любая другая отмена (pg_cancel_backend, запрос пользователя) становится QueryCancelledError,
-        чтобы не выдавать её за таймаут.
+        чтобы не выдавать её за таймаут. Отмена во время EXPLAIN проверки разбирается так же: они идут
+        внутри того же вызова. Без precheck ключ делегату не передаётся.
         """
         started = monotonic()
         try:
-            return await run(query, params=None, readonly=readonly)
+            if precheck is None:
+                return await run(query, params=None, readonly=readonly)
+            return await run(query, params=None, readonly=readonly, precheck=precheck)
         except QueryCanceled as e:
             reason = e.diag.message_primary or ""
             if _is_statement_timeout(reason, elapsed=monotonic() - started, timeout=self._config.timeout):
@@ -208,14 +219,19 @@ class SafeSqlExecutor:
             logger.warning("Postgres cancelled the statement (%s): %s...", reason or "no reason", query[:100])
             raise QueryCancelledError from e
 
-    def _with_session_settings(self, query: str) -> str:
-        """Добавить SET LOCAL statement_timeout и search_path; порядок важен для читаемости логов."""
+    def _session_settings(self) -> str:
+        """SET LOCAL statement_timeout и search_path одной строкой; порядок важен для читаемости логов."""
         prefix: list[str] = []
         if self._config.timeout is not None:
             prefix.append(f"SET LOCAL statement_timeout = {int(self._config.timeout * MS_PER_SECOND)};")
         if self._config.allowed_schema:
             prefix.append(f"SET LOCAL search_path = {self._config.allowed_schema};")
-        return " ".join([*prefix, query])
+        return " ".join(prefix)
+
+    def _with_session_settings(self, query: str) -> str:
+        """Запрос с префиксом _session_settings (без префикса, если настраивать нечего)."""
+        settings = self._session_settings()
+        return f"{settings} {query}" if settings else query
 
     def render(self, query: str, params: list[Any]) -> str:
         """Рендер параметризованного запроса в одну строку (для выполнения без параметров на стороне сервера).

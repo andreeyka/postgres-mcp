@@ -78,10 +78,30 @@ async def test_prefixed_table_passes_with_and_without_plan_check(
 
 
 @pytest.mark.asyncio
-async def test_write_statement_is_planned_in_a_read_only_transaction(db_plan_check: DbAccess) -> None:
-    """EXPLAIN без ANALYZE не исполняет DML: план INSERT строится в read-only транзакции, сам INSERT проходит."""
-    await db_plan_check.sql_driver.execute("INSERT INTO app_plan_items (id) VALUES (2)", readonly=False)
+async def test_write_statement_is_planned_and_run_once_in_one_transaction(db_plan_check: DbAccess) -> None:
+    """EXPLAIN без ANALYZE в пишущей транзакции не исполняет DML: строка вставляется ровно один раз."""
     await db_plan_check.sql_driver.execute("DELETE FROM app_plan_items WHERE id = 2", readonly=False)
+    await db_plan_check.sql_driver.execute("INSERT INTO app_plan_items (id) VALUES (2)", readonly=False)
+    rows = await db_plan_check.sql_driver.execute(
+        "SELECT count(*) AS n FROM app_plan_items WHERE id = 2", readonly=True
+    )
+    await db_plan_check.sql_driver.execute("DELETE FROM app_plan_items WHERE id = 2", readonly=False)
+    assert rows[0].cells["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_statement_inherits_the_settings_of_the_check(db_plan_check: DbAccess) -> None:
+    """Оператор идёт без префикса SET LOCAL: search_path = public он видит, только если выполнен в транзакции проверки."""
+    rows = await db_plan_check.sql_driver.execute("SHOW search_path", readonly=True)
+    assert rows[0].cells["search_path"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_rejected_write_changes_nothing(db_plan_check: DbAccess, db_full: DbAccess) -> None:
+    with pytest.raises(PlanAccessError, match=r"secret\.accounts"):
+        await db_plan_check.sql_driver.execute("UPDATE app_secret_view SET token = 'leaked'", readonly=False)
+    rows = await db_full.sql_driver.execute("SELECT token FROM secret.accounts WHERE id = 1", readonly=True)
+    assert rows[0].cells["token"] == "top-secret"
 
 
 @pytest.mark.asyncio
