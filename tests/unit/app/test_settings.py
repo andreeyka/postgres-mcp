@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 from pydantic import ValidationError
 
 from postgres_fastmcp.app.config import Settings, build_settings_from_cli
@@ -255,3 +256,85 @@ def test_database_uri_round_trips_ipv6_host_and_database_name(host: str, name: s
 def test_database_uri_keeps_an_already_bracketed_ipv6_host() -> None:
     uri = DatabaseConfig(host="[::1]", user="u", password="pw", name="d").database_uri
     assert uri.startswith("postgresql://u:pw@[::1]:5432/d?")
+
+
+def test_uri_query_parameters_go_to_connect_options() -> None:
+    """Параметры libpq из query string доходят до подключения; у sslmode и client_encoding свои поля."""
+    fields = DatabaseConfig.uri_fields(
+        "postgresql://u:p@h/d?sslmode=require&client_encoding=LATIN1&target_session_attrs=read-write"
+        "&options=-c%20statement_timeout%3D5000&connect_timeout=5&connect_timeout=7"
+    )
+    assert fields["connect_options"] == {
+        "target_session_attrs": "read-write",
+        "options": "-c statement_timeout=5000",
+        "connect_timeout": "7",
+    }
+    assert (fields["sslmode"], fields["client_encoding"]) == ("require", "LATIN1")
+
+
+def test_uri_without_libpq_parameters_sets_no_connect_options() -> None:
+    """URI без лишних параметров не стирает connect_options из config.json."""
+    assert "connect_options" not in DatabaseConfig.uri_fields("postgresql://u:p@h/d?sslmode=require")
+
+
+def test_database_uri_carries_connect_options_to_libpq() -> None:
+    config = DatabaseConfig(
+        **_CONNECTION,
+        connect_options={
+            "options": "-c statement_timeout=5000",
+            "target_session_attrs": "read-write",
+            "sslrootcert": "/etc/ssl/ca.pem",
+        },
+    )
+    params = conninfo_to_dict(config.database_uri)
+    assert params["options"] == "-c statement_timeout=5000"
+    assert params["target_session_attrs"] == "read-write"
+    assert params["sslrootcert"] == "/etc/ssl/ca.pem"
+    assert params["client_encoding"] == "UTF8"
+
+
+def test_connect_options_round_trip_through_from_uri() -> None:
+    config = DatabaseConfig(**_CONNECTION, connect_options={"application_name": "mcp x&y=z"})
+    assert DatabaseConfig.from_uri(config.database_uri).connect_options == {"application_name": "mcp x&y=z"}
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("host", "host"),
+        ("hostaddr", "host"),
+        ("port", "port"),
+        ("dbname", "name"),
+        ("user", "user"),
+        ("password", "password"),
+        ("sslmode", "sslmode"),
+        ("client_encoding", "client_encoding"),
+    ],
+)
+def test_connect_options_reject_keys_that_have_their_own_field(key: str, field: str) -> None:
+    with pytest.raises(ValidationError, match=f"use the database field '{field}'") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("key", ["sslpassword", "passfile"])
+def test_connect_options_reject_secrets(key: str) -> None:
+    with pytest.raises(ValidationError, match="must not carry secrets") as exc_info:
+        DatabaseConfig(**_CONNECTION, connect_options={key: _SECRET_PASSWORD})
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_uri_password_parameter_is_rejected_without_leaking_it() -> None:
+    with pytest.raises(ValidationError, match="use the database field 'password'") as exc_info:
+        DatabaseConfig.from_uri(f"postgresql://u:p@h/d?password={_SECRET_PASSWORD}")
+    assert _SECRET_PASSWORD not in str(exc_info.value)
+
+
+def test_database_settings_reads_connect_options_json_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_CONNECT_OPTIONS", '{"application_name": "from-env", "connect_timeout": "5"}')
+    assert DatabaseSettings().connect_options == {"application_name": "from-env", "connect_timeout": "5"}
+
+
+def test_extra_kwargs_field_is_gone() -> None:
+    assert "extra_kwargs" not in DatabaseConfig.model_fields
