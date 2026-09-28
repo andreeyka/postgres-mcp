@@ -46,6 +46,7 @@ async def test_dta_analyze_queries_simple(db_with_hypopg: DbAccess) -> None:
         await sql.execute("SELECT hypopg_reset()", readonly=False)
         dta = DatabaseTuningAdvisor(
             sql,
+            catalog_driver=db_with_hypopg.catalog_driver,
             connection_id=db_with_hypopg.connection_id,
             budget_mb=100,
             max_runtime_seconds=60,
@@ -94,6 +95,7 @@ async def test_dta_pareto_basic(db_with_hypopg: DbAccess) -> None:
         await sql.execute("SELECT hypopg_reset()", readonly=False)
         dta = DatabaseTuningAdvisor(
             sql,
+            catalog_driver=db_with_hypopg.catalog_driver,
             connection_id=db_with_hypopg.connection_id,
             budget_mb=100,
             max_runtime_seconds=60,
@@ -178,6 +180,7 @@ async def test_dta_hypopg_not_installed_returns_error(
         pytest.skip("hypopg is installed; cannot test 'not installed' path on this DB")
     dta = DatabaseTuningAdvisor(
         sql,
+        catalog_driver=db_full.catalog_driver,
         connection_id=db_full.connection_id,
         budget_mb=100,
         max_runtime_seconds=10,

@@ -7,7 +7,7 @@ from typing import override
 import humanize
 from pglast.ast import SelectStmt
 
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 
 from .base import IndexTuningBase
 from .candidates import CandidateGenerator
@@ -27,6 +27,8 @@ class DatabaseTuningAdvisor(IndexTuningBase):
     def __init__(  # noqa: PLR0913
         self,
         sql_driver: SqlDriverPort,
+        *,
+        catalog_driver: QueryExecutorPort,
         connection_id: str = "",
         budget_mb: int = -1,  # no limit by default
         max_runtime_seconds: int = 30,  # 30 seconds
@@ -40,6 +42,7 @@ class DatabaseTuningAdvisor(IndexTuningBase):
 
         Args:
             sql_driver: SQL executor for database access.
+            catalog_driver: Исполнитель служебных запросов (проверка расширений и версии).
             connection_id: Stable connection id for extension/version cache.
             budget_mb: Storage budget in MB (-1 for no limit).
             max_runtime_seconds: Time limit for entire analysis (anytime approach).
@@ -49,7 +52,13 @@ class DatabaseTuningAdvisor(IndexTuningBase):
             pareto_alpha: Stop when relative improvement falls below this threshold.
             min_time_improvement: Stop when relative improvement falls below this threshold.
         """
-        super().__init__(sql_driver, connection_id=connection_id, pareto_alpha=pareto_alpha, budget_mb=budget_mb)
+        super().__init__(
+            sql_driver,
+            catalog_driver=catalog_driver,
+            connection_id=connection_id,
+            pareto_alpha=pareto_alpha,
+            budget_mb=budget_mb,
+        )
         self.max_runtime_seconds = max_runtime_seconds
         self.seed_columns_count = seed_columns_count
         self.min_time_improvement = min_time_improvement

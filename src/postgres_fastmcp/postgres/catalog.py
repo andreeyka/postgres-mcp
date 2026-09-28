@@ -1,4 +1,4 @@
-"""Константы SQL-запросов каталога БД (information_schema, pg_catalog) и список разрешённых шаблонов."""
+"""Константы служебных SQL-запросов сервера (каталог, расширения, версия) и список разрешённых шаблонов."""
 
 QUERY_LIST_SCHEMAS = """
 SELECT
@@ -77,6 +77,20 @@ FROM pg_catalog.pg_extension
 WHERE extname = {}
 """
 
+QUERY_EXTENSION_INSTALLED = """
+SELECT extversion
+FROM pg_catalog.pg_extension
+WHERE extname = {}
+"""
+
+QUERY_EXTENSION_AVAILABLE = """
+SELECT default_version
+FROM pg_catalog.pg_available_extensions
+WHERE name = {}
+"""
+
+QUERY_SERVER_VERSION = "SHOW server_version"
+
 # Единственные шаблоны, которые выполняет CatalogSqlExecutor: сравнение по тексту до подстановки параметров.
 CATALOG_QUERIES: frozenset[str] = frozenset(
     {
@@ -90,5 +104,8 @@ CATALOG_QUERIES: frozenset[str] = frozenset(
         QUERY_GET_INDEXES,
         QUERY_GET_SEQUENCE_DETAILS,
         QUERY_GET_EXTENSION_DETAILS,
+        QUERY_EXTENSION_INSTALLED,
+        QUERY_EXTENSION_AVAILABLE,
+        QUERY_SERVER_VERSION,
     }
 )

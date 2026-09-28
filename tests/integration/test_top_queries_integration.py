@@ -105,6 +105,7 @@ async def test_extension_not_available(db_full: DbAccess) -> None:
 
     calc = TopQueriesCalc(
         sql_driver=db_full.sql_driver,
+        catalog_driver=db_full.catalog_driver,
         connection_id=db_full.connection_id,
     )
     not_installed_status = ExtensionStatus(

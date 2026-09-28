@@ -10,7 +10,7 @@ from pglast.ast import SelectStmt
 
 from postgres_fastmcp.postgres.extensions import ExtensionInspectorAdapter
 from postgres_fastmcp.postgres.params.replacer import SqlParamReplacer
-from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 
 from .cost_eval import CostEvaluator
 from .models import (
@@ -33,6 +33,8 @@ class IndexTuningBase(ABC):
     def __init__(
         self,
         sql_driver: SqlDriverPort,
+        *,
+        catalog_driver: QueryExecutorPort,
         connection_id: str = "",
         pareto_alpha: float = 2.0,
         budget_mb: int = -1,
@@ -41,6 +43,7 @@ class IndexTuningBase(ABC):
 
         Args:
             sql_driver: SQL исполнитель для доступа к базе данных.
+            catalog_driver: Исполнитель служебных запросов (проверка расширений и версии).
             connection_id: Стабильный идентификатор соединения для кэша версии/расширения.
             pareto_alpha: Вес размера индексов в целевой функции Парето.
             budget_mb: Бюджет хранилища в МБ (-1 без ограничения).
@@ -52,8 +55,10 @@ class IndexTuningBase(ABC):
         self._analysis_start_time = 0.0
 
         self._param_replacer = SqlParamReplacer(sql_driver, sql_driver)
-        self._ext_inspector = ExtensionInspectorAdapter(sql_driver, sql_driver, connection_id)
-        self.cost_eval = CostEvaluator(sql_driver, connection_id=connection_id, trace=self.dta_trace)
+        self._ext_inspector = ExtensionInspectorAdapter(catalog_driver, connection_id)
+        self.cost_eval = CostEvaluator(
+            sql_driver, catalog_driver=catalog_driver, connection_id=connection_id, trace=self.dta_trace
+        )
 
         # Add trace accumulator
         self._dta_traces: list[str] = []

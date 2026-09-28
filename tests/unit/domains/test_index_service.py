@@ -45,7 +45,11 @@ class TestIndexAnalysisServiceAnalyzeWorkloadIndexes:
 
         await IndexAnalysisService(db=mock_db_access).analyze_workload_indexes()
 
-        mock_dta_cls.assert_called_once_with(mock_db_access.sql_driver, connection_id=mock_db_access.connection_id)
+        mock_dta_cls.assert_called_once_with(
+            mock_db_access.sql_driver,
+            catalog_driver=mock_db_access.catalog_driver,
+            connection_id=mock_db_access.connection_id,
+        )
 
 
 class TestIndexAnalysisServiceAnalyzeQueryIndexes:

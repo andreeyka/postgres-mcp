@@ -50,5 +50,7 @@ class IndexAnalysisService:
     def _presentation(self) -> TextPresentation:
         """Собрать DTA-советник и презентацию поверх драйвера сервиса."""
         sql_driver = self.db.sql_driver
-        advisor = DatabaseTuningAdvisor(sql_driver, connection_id=self.db.connection_id)
+        advisor = DatabaseTuningAdvisor(
+            sql_driver, catalog_driver=self.db.catalog_driver, connection_id=self.db.connection_id
+        )
         return TextPresentation(sql_driver, advisor)
