@@ -11,7 +11,12 @@ from psycopg.pq import DiagnosticField
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor, _is_statement_timeout
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
-from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError, SchemaNotAllowedError
+from postgres_fastmcp.shared.errors import (
+    PlanAccessError,
+    QueryCancelledError,
+    QueryTimeoutError,
+    SchemaNotAllowedError,
+)
 
 
 def _query_canceled(message_primary: str) -> QueryCanceled:
@@ -264,3 +269,100 @@ def test_is_statement_timeout(
 ) -> None:
     """Pure classification: English marker OR elapsed time reached the configured timeout."""
     assert _is_statement_timeout(message_primary, elapsed=elapsed, timeout=timeout) is expected
+
+
+def _plan_rows(schema: str, relation: str) -> list[RowResult]:
+    plan = {"Node Type": "Seq Scan", "Relation Name": relation, "Schema": schema}
+    return [RowResult(cells={"QUERY PLAN": [{"Plan": plan}]})]
+
+
+def _basic_executor(delegate: MagicMock, *, plan_check: bool = True) -> SafeSqlExecutor:
+    config = SafeSqlConfig(
+        query_tag="t",
+        timeout=5,
+        allowed_schema="public",
+        read_only=False,
+        table_prefix="app_",
+        plan_check=plan_check,
+    )
+    validator = QueryValidator(read_only=False, allowed_schema="public", table_prefix="app_")
+    return _make_executor(delegate, validator=validator, config=config)
+
+
+class TestSafeSqlExecutorPlanCheck:
+    """plan_check: EXPLAIN (VERBOSE) через делегата после валидации и до выполнения, только с allowed_schema."""
+
+    async def test_plan_is_checked_before_execution(self) -> None:
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(side_effect=[_plan_rows("public", "app_t"), [RowResult(cells={"x": 1})]])
+
+        result = await _basic_executor(delegate).execute("SELECT * FROM app_t")
+
+        assert result == [RowResult(cells={"x": 1})]
+        explain_call, run_call = delegate.execute.await_args_list
+        assert explain_call.args[0] == (
+            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; "
+            "SET LOCAL standard_conforming_strings = on; "
+            "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
+        )
+        assert explain_call.kwargs["readonly"] is True
+        assert run_call.args[0] == (
+            "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; /* t */ SELECT * FROM app_t"
+        )
+        assert run_call.kwargs["readonly"] is False
+
+    async def test_plan_violation_stops_execution(self) -> None:
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=_plan_rows("secret", "accounts"))
+
+        with pytest.raises(PlanAccessError, match=r"secret\.accounts"):
+            await _basic_executor(delegate).execute("SELECT * FROM app_secret_view")
+
+        delegate.execute.assert_awaited_once()
+
+    async def test_execute_statement_is_checked_too(self) -> None:
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=_plan_rows("secret", "accounts"))
+        delegate.execute_statement = AsyncMock()
+
+        with pytest.raises(PlanAccessError):
+            await _basic_executor(delegate).execute_statement("UPDATE app_secret_view SET token = 'x'")
+
+        delegate.execute_statement.assert_not_awaited()
+
+    async def test_validator_runs_before_the_plan_check(self) -> None:
+        """Проверка по плану не ослабляет валидатор: отклонённый им запрос не доходит до EXPLAIN."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock()
+
+        with pytest.raises(SchemaNotAllowedError):
+            await _basic_executor(delegate).execute("SELECT * FROM secret.accounts")
+
+        delegate.execute.assert_not_awaited()
+
+    async def test_plan_check_off_sends_no_explain(self) -> None:
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=[])
+
+        await _basic_executor(delegate, plan_check=False).execute("SELECT * FROM app_t")
+
+        delegate.execute.assert_awaited_once()
+        assert "EXPLAIN" not in delegate.execute.await_args.args[0]
+
+    async def test_plan_check_is_ignored_without_allowed_schema(self) -> None:
+        """Full (allowed_schema=None): plan_check не действует никогда."""
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(return_value=[])
+        config = SafeSqlConfig(query_tag="t", plan_check=True)
+
+        await _make_executor(delegate, config=config).execute("SELECT 1")
+
+        delegate.execute.assert_awaited_once()
+        assert "EXPLAIN" not in delegate.execute.await_args.args[0]
+
+    async def test_explain_cancel_maps_to_query_timeout_error(self) -> None:
+        delegate = MagicMock()
+        delegate.execute = AsyncMock(side_effect=_query_canceled("canceling statement due to statement timeout"))
+
+        with pytest.raises(QueryTimeoutError):
+            await _basic_executor(delegate).execute("SELECT * FROM app_t")

@@ -33,6 +33,7 @@ class DatabaseConfigPort(Protocol):
     access_mode: AccessMode
     safe_sql_timeout: int
     table_prefix: str | None
+    plan_check: bool
     query_tag: str | None
 
     @property
@@ -175,6 +176,7 @@ class DbAccessService:
                 read_only=not access.write_mode,
                 query_tag=self._config.query_tag or DEFAULT_QUERY_TAG,
                 table_prefix=self._config.table_prefix if basic else None,
+                plan_check=basic and self._config.plan_check,
             )
             validator = QueryValidator(
                 allowed_schema=safe_config.allowed_schema,
@@ -184,7 +186,7 @@ class DbAccessService:
             )
             logger.debug(
                 "Using SafeSqlExecutor (access_mode=%s, write_mode=%s, allowed_schema=%s, "
-                "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s)",
+                "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s, plan_check=%s)",
                 access.access_mode,
                 access.write_mode,
                 safe_config.allowed_schema,
@@ -192,6 +194,7 @@ class DbAccessService:
                 not basic,
                 safe_config.timeout,
                 safe_config.table_prefix,
+                safe_config.plan_check,
             )
             executor = SafeSqlExecutor(delegate=base, validator=validator, config=safe_config)
         self._executors[access] = executor

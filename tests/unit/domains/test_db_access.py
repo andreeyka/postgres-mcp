@@ -160,3 +160,32 @@ def test_service_exposes_the_catalog_driver_of_its_views() -> None:
 
 def test_inactive_connection_lifetime_becomes_pool_max_idle() -> None:
     assert _service(max_inactive_connection_lifetime=42)._pool.max_idle == 42
+
+
+@pytest.mark.parametrize(
+    ("access", "checked"),
+    [
+        (EffectiveAccess(AccessMode.BASIC, write_mode=False), True),
+        (EffectiveAccess(AccessMode.BASIC, write_mode=True), True),
+        (EffectiveAccess(AccessMode.FULL, write_mode=False), False),
+    ],
+)
+def test_plan_check_reaches_only_basic_executors(access: EffectiveAccess, *, checked: bool) -> None:
+    service = _service(access_mode=AccessMode.FULL, write_mode=True, plan_check=True)
+    driver = service.view(access).sql_driver
+    assert isinstance(driver, SafeSqlExecutor)
+    assert driver._config.plan_check is checked
+    assert (driver._plan_guard is not None) is checked
+
+
+def test_plan_check_is_off_by_default() -> None:
+    driver = _service().view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).sql_driver
+    assert isinstance(driver, SafeSqlExecutor)
+    assert driver._plan_guard is None
+
+
+def test_catalog_executor_never_checks_plans() -> None:
+    service = _service(access_mode=AccessMode.BASIC, plan_check=True)
+    catalog = service.catalog_driver
+    assert isinstance(catalog, CatalogSqlExecutor)
+    assert catalog._inner._plan_guard is None

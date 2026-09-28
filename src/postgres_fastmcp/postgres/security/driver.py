@@ -12,6 +12,7 @@ from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.postgres.ports import SqlDriverPort
+from postgres_fastmcp.postgres.security.plan_guard import PlanGuard
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError
 
@@ -28,6 +29,10 @@ _STATEMENT_TIMEOUT_MARKER = "statement timeout"
 # Запас в секундах для клиентской страховки поверх statement_timeout; вынесен в константу,
 # чтобы registry.py мог использовать то же значение без создания временного SafeSqlConfig.
 CLIENT_TIMEOUT_GRACE_SECONDS = 5.0
+
+# Текст для EXPLAIN проверки по плану — deparse pglast RawStream, который предполагает стандартные
+# строковые литералы ('\' — обычный символ); закрепляется в транзакции EXPLAIN.
+_STANDARD_STRINGS = "SET LOCAL standard_conforming_strings = on;"
 
 
 def _is_statement_timeout(message_primary: str | None, *, elapsed: float, timeout: float | None) -> bool:
@@ -52,6 +57,7 @@ class SafeSqlConfig:
         allowed_schema: Разрешенная схема (например, 'public'); None означает все.
         read_only: Если True, только операторы чтения; если False, разрешен DML.
         table_prefix: Если задан вместе с allowed_schema, только таблицы с этим префиксом.
+        plan_check: Проверять план запроса перед выполнением (PlanGuard); действует только вместе с allowed_schema.
         client_timeout_grace: Запас в секундах для клиентской страховки поверх statement_timeout.
             Обычно срабатывает Postgres; клиентский таймаут ловит зависшее соединение.
     """
@@ -61,6 +67,7 @@ class SafeSqlConfig:
     allowed_schema: str | None = None
     read_only: bool = True
     table_prefix: str | None = None
+    plan_check: bool = False
     client_timeout_grace: float = CLIENT_TIMEOUT_GRACE_SECONDS
 
 
@@ -83,6 +90,16 @@ class SafeSqlExecutor:
         self._delegate = delegate
         self._validator = validator
         self._config = config
+        # Проверка по плану — только для basic (allowed_schema задан); full и канал сервера её не получают.
+        self._plan_guard = (
+            PlanGuard(
+                self._explain_for_plan_check,
+                allowed_schema=config.allowed_schema,
+                table_prefix=config.table_prefix,
+            )
+            if config.plan_check and config.allowed_schema
+            else None
+        )
 
     async def execute(
         self,
@@ -104,6 +121,8 @@ class SafeSqlExecutor:
         Raises:
             QueryTimeoutError: Postgres отменил запрос по statement_timeout либо сработала клиентская страховка.
             QueryCancelledError: Postgres отменил запрос по другой причине.
+            PlanAccessError: plan_check в basic, план читает отношение или функцию вне разрешённого.
+            PlanUnverifiableError: plan_check в basic, план нельзя проверить (нет плана или узел без имени).
         """
         return await self._guarded(query, params, self._delegate.execute)
 
@@ -122,6 +141,8 @@ class SafeSqlExecutor:
         Raises:
             QueryTimeoutError: Postgres отменил запрос по statement_timeout либо сработала клиентская страховка.
             QueryCancelledError: Postgres отменил запрос по другой причине.
+            PlanAccessError: plan_check в basic, план читает отношение или функцию вне разрешённого.
+            PlanUnverifiableError: plan_check в basic, план нельзя проверить (нет плана или узел без имени).
         """
         return await self._guarded(query, params, self._delegate.execute_statement)
 
@@ -131,15 +152,14 @@ class SafeSqlExecutor:
         params: list[Any] | None,
         run: Callable[..., Awaitable[T]],
     ) -> T:
-        """Тег, валидация, SET LOCAL и клиентская страховка вокруг метода делегата run."""
+        """Тег, валидация, проверка по плану, SET LOCAL и клиентская страховка вокруг метода делегата run."""
         query = self.render(query, params) if params else f"/* {self._config.query_tag} */ {query}"
         self._validator.validate(query)
-        query = self._with_session_settings(query)
         if self._config.timeout is None:
-            return await self._run(query, run)
+            return await self._checked_run(query, run)
         try:
             async with asyncio.timeout(self._config.timeout + self._config.client_timeout_grace):
-                return await self._run(query, run)
+                return await self._checked_run(query, run)
         except TimeoutError as e:
             logger.warning(
                 "Client-side timeout after %ss: %s...",
@@ -148,7 +168,23 @@ class SafeSqlExecutor:
             )
             raise QueryTimeoutError(self._config.timeout) from e
 
-    async def _run[T](self, query: str, run: Callable[..., Awaitable[T]]) -> T:
+    async def _checked_run[T](self, query: str, run: Callable[..., Awaitable[T]]) -> T:
+        """Проверка по плану (если включена), затем выполнение с SET LOCAL через делегата.
+
+        Ограничение: PlanGuard строит планы всех операторов строки до выполнения первого, поэтому строка,
+        где поздний оператор зависит от раннего (CREATE EXTENSION …; SELECT функция расширения), отклоняется
+        ошибкой планирования.
+        """
+        if self._plan_guard is not None:
+            await self._plan_guard.check(query)
+        return await self._run(self._with_session_settings(query), run, readonly=self._config.read_only)
+
+    async def _explain_for_plan_check(self, explain_sql: str) -> list[RowResult] | None:
+        """EXPLAIN для PlanGuard: тот же SET LOCAL и тег, всегда read-only (EXPLAIN без ANALYZE ничего не выполняет)."""
+        tagged = f"{_STANDARD_STRINGS} /* {self._config.query_tag} */ {explain_sql}"
+        return await self._run(self._with_session_settings(tagged), self._delegate.execute, readonly=True)
+
+    async def _run[T](self, query: str, run: Callable[..., Awaitable[T]], *, readonly: bool) -> T:
         """Выполнить через делегата; отмену по statement_timeout превратить в QueryTimeoutError.
 
         Любая другая отмена (pg_cancel_backend, запрос пользователя) становится QueryCancelledError,
@@ -156,7 +192,7 @@ class SafeSqlExecutor:
         """
         started = monotonic()
         try:
-            return await run(query, params=None, readonly=self._config.read_only)
+            return await run(query, params=None, readonly=readonly)
         except QueryCanceled as e:
             reason = e.diag.message_primary or ""
             if _is_statement_timeout(reason, elapsed=monotonic() - started, timeout=self._config.timeout):
