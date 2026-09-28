@@ -302,7 +302,6 @@ class TestSafeSqlExecutorPlanCheck:
         explain_call, run_call = delegate.execute.await_args_list
         assert explain_call.args[0] == (
             "SET LOCAL statement_timeout = 5000; SET LOCAL search_path = public; "
-            "SET LOCAL standard_conforming_strings = on; "
             "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
         )
         assert explain_call.kwargs["readonly"] is True

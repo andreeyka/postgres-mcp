@@ -15,7 +15,7 @@
 - Опция `generic_plan` у EXPLAIN может иметь значение (`generic_plan false`, `generic_plan 0` — pglast отдаёт `String`/`Integer`): переносится только включённая опция.
 - Следствие правила «схема отношения — ровно `allowed_schema`»: с `plan_check=true` запросы к `information_schema.*` отклоняются (представления читают `pg_catalog`). Это совпадает с намерением строгого режима «только `public`»; README это называет.
 - Отношение без `Schema` в плане (не бывает при `VERBOSE`, но формат не гарантирован) — отказ с `'?.<имя>'` в тексте ошибки: проверка закрыта по умолчанию.
-- Для Task 2: в префиксе исполнителя EXPLAIN у `PlanGuard` закрепить `SET LOCAL standard_conforming_strings = on` — объясняемый текст получен deparse через `RawStream`, который это предполагает.
+- Для Task 2: объясняемый текст получен deparse через `RawStream`, который предполагает `standard_conforming_strings = on`. `SET LOCAL` в той же строке бесполезен (Postgres разбирает всю строку простого протокола до выполнения `SET`); настройку для транзакций агента закрепляет PR 4 (`claude/session-hygiene`), до него — серверное значение по умолчанию `on`.
 
 ## Global Constraints
 

@@ -351,7 +351,7 @@ async def test_hypothetical_explain_passes_the_plan_check(monkeypatch: pytest.Mo
     assert checks[1].startswith("EXPLAIN (VERBOSE, FORMAT JSON) SELECT hypopg_create_index(")
     assert checks[2] == "EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_users WHERE name = 'x'"
     assert len(checks) == 3
-    assert all("SET LOCAL standard_conforming_strings = on;" in q for q in sent if "EXPLAIN (VERBOSE" in q)
+    assert not any("standard_conforming_strings" in q for q in sent)
     assert sent[-1].count("hypopg_create_index") == 1
     assert "EXPLAIN (FORMAT JSON, COSTS TRUE)" in sent[-1]
 

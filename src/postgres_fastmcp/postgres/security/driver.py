@@ -30,10 +30,6 @@ _STATEMENT_TIMEOUT_MARKER = "statement timeout"
 # чтобы registry.py мог использовать то же значение без создания временного SafeSqlConfig.
 CLIENT_TIMEOUT_GRACE_SECONDS = 5.0
 
-# Текст для EXPLAIN проверки по плану — deparse pglast RawStream, который предполагает стандартные
-# строковые литералы ('\' — обычный символ); закрепляется в транзакции EXPLAIN.
-_STANDARD_STRINGS = "SET LOCAL standard_conforming_strings = on;"
-
 
 def _is_statement_timeout(message_primary: str | None, *, elapsed: float, timeout: float | None) -> bool:
     """Отличить отмену по statement_timeout от прочих отмен (pg_cancel_backend, запрос пользователя).
@@ -180,8 +176,13 @@ class SafeSqlExecutor:
         return await self._run(self._with_session_settings(query), run, readonly=self._config.read_only)
 
     async def _explain_for_plan_check(self, explain_sql: str) -> list[RowResult] | None:
-        """EXPLAIN для PlanGuard: тот же SET LOCAL и тег, всегда read-only (EXPLAIN без ANALYZE ничего не выполняет)."""
-        tagged = f"{_STANDARD_STRINGS} /* {self._config.query_tag} */ {explain_sql}"
+        """EXPLAIN для PlanGuard: тот же SET LOCAL и тег, всегда read-only (EXPLAIN без ANALYZE ничего не выполняет).
+
+        Текст EXPLAIN — deparse pglast, который предполагает standard_conforming_strings = on (серверное
+        значение по умолчанию). SET LOCAL в той же строке не помог бы: Postgres разбирает всю строку простого
+        протокола до выполнения SET. Закрепление настройки для транзакций агента — в слое соединения.
+        """
+        tagged = f"/* {self._config.query_tag} */ {explain_sql}"
         return await self._run(self._with_session_settings(tagged), self._delegate.execute, readonly=True)
 
     async def _run[T](self, query: str, run: Callable[..., Awaitable[T]], *, readonly: bool) -> T:
