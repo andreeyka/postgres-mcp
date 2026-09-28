@@ -50,8 +50,14 @@ class _FailingCatalog:
         raise self._error
 
 
-def _role(*, superuser: bool = False, bypassrls: bool = False) -> dict[str, list[dict[str, Any]]]:
-    return {QUERY_ROLE_ATTRIBUTES: [{"role_name": "mcp", "rolsuper": superuser, "rolbypassrls": bypassrls}]}
+def _role(
+    *, superuser: bool = False, bypassrls: bool = False, createrole: bool = False
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        QUERY_ROLE_ATTRIBUTES: [
+            {"role_name": "mcp", "rolsuper": superuser, "rolbypassrls": bypassrls, "rolcreaterole": createrole}
+        ]
+    }
 
 
 async def test_role_limited_to_public_has_no_findings() -> None:
@@ -82,7 +88,7 @@ async def test_superuser_is_the_only_finding() -> None:
 async def test_every_kind_of_finding_in_order() -> None:
     catalog = _Catalog(
         {
-            **_role(bypassrls=True),
+            **_role(bypassrls=True, createrole=True),
             QUERY_ROLE_PREDEFINED_MEMBERSHIPS: [{"rolname": "pg_monitor"}, {"rolname": "pg_read_all_data"}],
             QUERY_ROLE_FOREIGN_SCHEMAS: [{"nspname": "billing"}, {"nspname": "secret"}],
             QUERY_ROLE_UNPREFIXED_TABLES: [{"unprefixed": 3}],
@@ -93,10 +99,20 @@ async def test_every_kind_of_finding_in_order() -> None:
 
     assert result.findings == [
         "BYPASSRLS",
+        "CREATEROLE",
         "member of pg_monitor, pg_read_all_data",
         "USAGE on schemas: billing, secret",
         "SELECT on 3 public tables without prefix 'app_'",
     ]
+
+
+async def test_createrole_is_a_finding_without_bypassrls() -> None:
+    """CREATEROLE находится независимо от BYPASSRLS: на PG ≤15 роль может выдать себе предопределённые роли."""
+    catalog = _Catalog(_role(createrole=True))
+
+    result = await basic_role_findings(catalog, None)
+
+    assert result.findings == ["CREATEROLE"]
 
 
 async def test_one_unprefixed_table_is_singular() -> None:
@@ -179,16 +195,14 @@ async def test_database_error_skips_the_check_with_info(caplog: pytest.LogCaptur
 
 async def test_other_database_error_fails_with_warning(caplog: pytest.LogCaptureFixture) -> None:
     """Ошибка не в доступности БД, а в самом запросе (например, баг в шаблоне каталога) — не тихий пропуск."""
-    error = UndefinedFunction("function pg_catalog.starts_with(text, text) does not exist")
+    error = UndefinedFunction("function starts_with(text, text) does not exist")
 
     with caplog.at_level(logging.INFO, logger=_LOGGER):
         await warn_about_basic_role(_FailingCatalog(error), "app_")
 
     [record] = [r for r in caplog.records if r.name == _LOGGER]
     assert record.levelname == "WARNING"
-    assert record.getMessage() == (
-        "Basic role check failed: function pg_catalog.starts_with(text, text) does not exist"
-    )
+    assert record.getMessage() == ("Basic role check failed: function starts_with(text, text) does not exist")
 
 
 async def test_programming_bug_propagates() -> None:

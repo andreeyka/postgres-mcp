@@ -93,7 +93,7 @@ QUERY_SERVER_VERSION = "SHOW server_version"
 
 # Права роли подключения для предупреждения при старте basic (domains/role_check.py).
 QUERY_ROLE_ATTRIBUTES = """
-SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls
+SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole
 FROM pg_catalog.pg_roles AS r
 WHERE r.rolname = current_user
 """

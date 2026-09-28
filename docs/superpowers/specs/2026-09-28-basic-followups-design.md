@@ -54,7 +54,7 @@ END $$;
 
 ```sql
 -- QUERY_ROLE_ATTRIBUTES
-SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls
+SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls, r.rolcreaterole
 FROM pg_catalog.pg_roles AS r
 WHERE r.rolname = current_user
 
@@ -85,9 +85,10 @@ WHERE n.nspname = 'public'
 ```
 
 - Логика — модуль `domains/role_check.py`: функция `async def basic_role_findings(catalog: QueryExecutorPort, table_prefix: str | None) -> RoleFindings` возвращает имя роли и список находок (английские фразы); у суперпользователя находка одна — `superuser` (`has_*_privilege` у него всегда true). Функция `async def warn_about_basic_role(catalog, table_prefix)` пишет одну строку `WARNING`:
-  `Database role '<role>' has privileges beyond basic mode: superuser; member of pg_read_all_data; USAGE on schemas: a, b; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).`
-  Схем — не больше 10, дальше `…`.
-- Недоступность БД на старте (`OperationalError`/`ConnectionFailedError`/`ConnectionNotEstablishedError`/таймаут/отмена) — одна строка `INFO` `Basic role check skipped: <маскированная ошибка>`, сервер работает; прочая ошибка Postgres при выполнении шаблонов (`psycopg.Error`) — одна строка `WARNING` `Basic role check failed: <маскированная ошибка>`, а не тихий пропуск (иначе реальная дыра в проверке выглядела бы как штатный пропуск); программная ошибка самой проверки (не БД) ловится в обёртке `PostgresProvider._check_basic_role` и пишет `ERROR` `Basic role check crashed`, фоновая задача не падает незаметно и сервер не останавливается.
+  `Database role '<role>' has privileges beyond basic mode: BYPASSRLS; member of pg_read_all_data; USAGE on schemas: a, b; SELECT on 3 public tables without prefix 'app_'. In basic mode the SQL validator is then the only barrier; grant the role access to 'public' only (see README).`
+  (суперпользователь дал бы единственную находку `superuser` — остальные проверки для него ничего не добавили бы, см. выше). Схем — не больше 10, дальше `…`.
+- Находки также включают `CREATEROLE` (рядом с `BYPASSRLS`): на PG ≤15 эта привилегия позволяет роли выдать себе членство в предопределённых ролях самостоятельно.
+- Недоступность БД на старте (`OperationalError`/`ConnectionFailedError`/`ConnectionNotEstablishedError`/таймаут/отмена) — одна строка `INFO` `Basic role check skipped: <маскированная ошибка>`, сервер работает; прочая ошибка Postgres при выполнении шаблонов (`psycopg.Error`) — одна строка `WARNING` `Basic role check failed: <маскированная ошибка>`, а не тихий пропуск (иначе реальная дыра в проверке выглядела бы как штатный пропуск); программная ошибка самой проверки (не БД) ловится в обёртке `PostgresProvider._run_basic_role_check` и пишет `ERROR` `Basic role check crashed`, фоновая задача не падает незаметно и сервер не останавливается. Проверка запускается, только если достижим basic **и** включена (`PostgresProvider(check_basic_role=True)` по умолчанию; CLI передаёт `False` для stdio — там лог всё равно не виден).
 - Тесты: юнит на находки (фальшивый исполнитель по шаблонам), на текст предупреждения, на пропуск при ошибке; юнит на условие запуска в провайдере; интеграция: суперпользователь CI (`postgres`) даёт `superuser` в находках.
 
 ## 3. Слой подключения (PR 2)

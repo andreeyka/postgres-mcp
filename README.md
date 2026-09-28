@@ -427,8 +427,8 @@ claude mcp add --transport http postgres https://mcp.example.com/mcp --header "A
 
 - транспорт HTTP, аутентификации нет, а `host` не `127.0.0.1`/`localhost`/`::1` — любой, кто достучится до порта, получит все права из `database`;
 - транспорт `stdio`, а аутентификация включена — в `stdio` она не действует;
-- `access_policy.enforced=true`, а аутентификации нет — без токена политика ничего не сужает.
-- basic достижим, а роль БД может больше, чем таблицы `public` (суперпользователь, `BYPASSRLS`, предопределённые роли вроде `pg_read_all_data`, `USAGE` на другие схемы, таблицы `public` без `table_prefix`) — см. «Роль для basic».
+- `access_policy.enforced=true`, а аутентификации нет — без токена политика ничего не сужает;
+- basic достижим (и проверка роли включена, см. «Роль для basic»), а роль БД может больше, чем таблицы `public` (суперпользователь, `BYPASSRLS`, `CREATEROLE`, предопределённые роли вроде `pg_read_all_data`, `USAGE` на другие схемы, таблицы `public` без `table_prefix`) — см. «Роль для basic».
 
 ## Права по claim
 

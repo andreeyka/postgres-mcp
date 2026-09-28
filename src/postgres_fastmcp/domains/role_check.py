@@ -70,7 +70,13 @@ async def basic_role_findings(catalog: QueryExecutorPort, table_prefix: str | No
     # Суперпользователю pg_has_role и has_*_privilege всегда отвечают true: остальное подразумевается.
     if attributes["rolsuper"]:
         return RoleFindings(role=role, findings=["superuser"])
-    findings = ["BYPASSRLS"] if attributes["rolbypassrls"] else []
+    findings = []
+    if attributes["rolbypassrls"]:
+        findings.append("BYPASSRLS")
+    # CREATEROLE на PG <= 15 позволяет роли выдать себе членство в предопределённых ролях самостоятельно
+    # (WITH ADMIN OPTION не нужен); с PG 16 для этого дополнительно нужно явное членство в целевой роли.
+    if attributes["rolcreaterole"]:
+        findings.append("CREATEROLE")
     findings += await _membership_findings(catalog)
     findings += await _schema_findings(catalog)
     if table_prefix:
