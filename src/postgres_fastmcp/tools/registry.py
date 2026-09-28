@@ -246,7 +246,7 @@ def _execute_sql_desc() -> str:
         "rejected except CREATE EXTENSION hypopg / pg_stat_statements; with full write access any "
         "statement runs. "
         "In basic access, system catalogs (pg_*), server-introspection functions, SHOW of arbitrary "
-        "settings and casts to reg* types are rejected. "
+        "settings, object identifier types (reg*, aclitem) and types from other schemas are rejected. "
         "A rejected statement returns an explicit error. "
         "Workflow: list_objects -> get_object_details -> execute_sql."
     )
