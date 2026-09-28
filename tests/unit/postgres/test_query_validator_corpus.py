@@ -124,6 +124,13 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT 'secret.f'::regproc",
     "SELECT regclass 't'",
     "SELECT 'r'::REGROLE",
+    "SELECT format_type(25, NULL)",
+    """SELECT * FROM json_to_record('{"a":"secret.t"}') AS x(a regclass)""",
+    """SELECT * FROM jsonb_to_recordset('[{"a":"secret.t"}]') AS x(a regclass)""",
+    """SELECT * FROM json_to_record('{"a":"r"}') AS x(a pg_catalog.regrole)""",
+    """SELECT * FROM ROWS FROM (json_to_record('{"a":"x"}') AS (a regclass))""",
+    "SELECT * FROM XMLTABLE('/r' PASSING '<r><a>secret.t</a></r>' COLUMNS a regclass PATH 'a')",
+    "PREPARE p(regclass) AS SELECT $1",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.

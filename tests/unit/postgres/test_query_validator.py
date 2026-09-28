@@ -285,6 +285,12 @@ class TestBasicPolicy:
         with pytest.raises(TypeCastNotAllowedError, match="regclass"):
             self.BASIC.validate(sql)
 
+    def test_reg_type_rejected_outside_cast(self) -> None:
+        """R4 не должен сводиться к проверке только TypeCast: reg* в типе колонки табличной
+        функции тоже отдаёт Postgres имя объекта на вход input-функции типа."""
+        with pytest.raises(TypeCastNotAllowedError, match="regclass"):
+            self.BASIC.validate("""SELECT * FROM json_to_record('{"a":"secret.t"}') AS x(a regclass)""")
+
     def test_full_is_unchanged(self) -> None:
         full = QueryValidator(read_only=True)
         full.validate("SELECT * FROM pg_stats")

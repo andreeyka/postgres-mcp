@@ -548,6 +548,7 @@ INTROSPECTION_FUNCTIONS: frozenset[str] = frozenset(
         "pg_get_constraintdef",
         "pg_get_userbyid",
         "pg_get_partkeydef",
+        "format_type",
         "pg_get_serial_sequence",
         "pg_get_viewdef",
         "pg_get_ruledef",

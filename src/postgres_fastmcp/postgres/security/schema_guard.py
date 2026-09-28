@@ -35,7 +35,7 @@ def validate_schema_access(
         SchemaNotAllowedError: Если схема не разрешена.
         SchemataTableAccessError: Если в пользовательском режиме запрошен доступ к information_schema.schemata.
     """
-    if not allowed_schema:
+    if allowed_schema is None:
         return
 
     relname = range_var.relname or ""

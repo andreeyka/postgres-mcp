@@ -15,7 +15,7 @@ from pglast.ast import (
     RangeVar,
     RawStmt,
     SelectStmt,
-    TypeCast,
+    TypeName,
     VariableShowStmt,
 )
 from pglast.enums import A_Expr_Kind
@@ -51,9 +51,9 @@ logger = logging.getLogger(__name__)
 PG_CATALOG_PATTERN = re.compile(r"^pg_catalog\.(.+)$")
 
 
-def _cast_type_name(node: TypeCast) -> str:
-    """Имя типа приведения без схемы, в нижнем регистре ('pg_catalog.regclass[]' -> 'regclass')."""
-    names = node.typeName.names if node.typeName is not None and node.typeName.names else ()
+def _type_name_of(type_name: TypeName) -> str:
+    """Имя типа без схемы, в нижнем регистре ('pg_catalog.regclass[]' -> 'regclass')."""
+    names = type_name.names or ()
     last = names[-1] if names else None
     return str(getattr(last, "sval", "") or "").lower()
 
@@ -108,7 +108,8 @@ class _NodeValidationVisitor(Visitor):
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
-            TypeCastNotAllowedError: Приведение к reg*-типу в basic.
+            TypeCastNotAllowedError: reg*-тип в любой позиции TypeName (каст, колонка
+                табличной функции, аргумент PREPARE) в basic.
         """
         if not isinstance(node, self._allowed_node_types):
             raise DisallowedNodeTypeError(type(node))
@@ -148,8 +149,8 @@ class _NodeValidationVisitor(Visitor):
             if name.lower() not in BASIC_SHOW_PARAMETERS:
                 raise ShowParameterNotAllowedError(name, sorted(BASIC_SHOW_PARAMETERS))
 
-        if self._basic and isinstance(node, TypeCast):
-            type_name = _cast_type_name(node)
+        if self._basic and isinstance(node, TypeName):
+            type_name = _type_name_of(node)
             if type_name in REG_TYPES:
                 raise TypeCastNotAllowedError(type_name)
 
@@ -230,7 +231,8 @@ class QueryValidator:
             ExplainAnalyzeNotSupportedError: EXPLAIN ANALYZE не поддерживается.
             CreateExtensionNotSupportedError: Расширение не разрешено.
             ShowParameterNotAllowedError: Параметр SHOW вне разрешённого списка basic.
-            TypeCastNotAllowedError: Приведение к reg*-типу в basic.
+            TypeCastNotAllowedError: reg*-тип в любой позиции TypeName (каст, колонка
+                табличной функции, аргумент PREPARE) в basic.
         """
         try:
             parsed = pglast.parse_sql(query)
