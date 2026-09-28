@@ -132,6 +132,8 @@ BASIC_BLOCKED_FULL_ALLOWED = [
     "SELECT * FROM XMLTABLE('/r' PASSING '<r><a>secret.t</a></r>' COLUMNS a regclass PATH 'a')",
     "PREPARE p(regclass) AS SELECT $1",
     "SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')",
+    "SELECT hypopg_create_index('CREATE INDEX ON app_t ((''secret.t''::regclass))')",
+    "SELECT hypopg_hide_index(12345)",
 ]
 
 # Разрешено в basic, несмотря на соседство с закрытыми правилами.

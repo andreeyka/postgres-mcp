@@ -610,6 +610,10 @@ INTROSPECTION_FUNCTIONS: frozenset[str] = frozenset(
         # с типом reg* во втором аргументе разрешают имена объектов через функцию ввода типа (обход R4)
         "pg_input_is_valid",
         "pg_input_error_info",
+        # принимают любой существующий OID индекса (оракул существования по перебору) и меняют
+        # планирование для этого пулового соединения
+        "hypopg_hide_index",
+        "hypopg_unhide_index",
     )
 )
 

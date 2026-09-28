@@ -11,6 +11,7 @@ from pglast.ast import (
     DefElem,
     ExplainStmt,
     FuncCall,
+    IndexElem,
     IndexStmt,
     Node,
     RangeVar,
@@ -58,6 +59,33 @@ def _type_name_of(type_name: TypeName) -> str:
     names = type_name.names or ()
     last = names[-1] if names else None
     return str(getattr(last, "sval", "") or "").lower()
+
+
+def _is_plain_index_elem(elem: object) -> bool:
+    """Элемент индекса — простой столбец: только имя, без выражения, collation и opclass."""
+    return (
+        isinstance(elem, IndexElem)
+        and elem.name is not None
+        and elem.expr is None
+        and not elem.collation
+        and not elem.opclass
+        and not elem.opclassopts
+    )
+
+
+def _is_plain_index(index: IndexStmt) -> bool:
+    """Индекс состоит только из простых столбцов, без выражений, WHERE, opclass и табличного пространства.
+
+    hypopg сам прогоняет CREATE INDEX через transformIndexStmt: входные функции литеральных
+    приведений в выражениях и WHERE вычисляются, а имена типов, функций, классов операторов
+    и табличных пространств резолвятся против каталога — это раскрывает существование чужих
+    объектов даже когда сама таблица индекса разрешена. USING <метод> и сортировка
+    (ASC/DESC, NULLS FIRST/LAST) на резолв объектов не влияют и остаются разрешены.
+    """
+    if index.whereClause is not None or index.tableSpace is not None or index.options or index.excludeOpNames:
+        return False
+    elems = (*(index.indexParams or ()), *(index.indexIncludingParams or ()))
+    return all(_is_plain_index_elem(elem) for elem in elems)
 
 
 class _NodeValidationVisitor(Visitor):
@@ -170,13 +198,16 @@ class _NodeValidationVisitor(Visitor):
             self._validate_create_extension(node)
 
     def _validate_hypopg_create_index(self, node: FuncCall) -> None:
-        """В basic аргумент hypopg_create_index — одна строковая константа с одним CREATE INDEX по разрешённой таблице.
+        """В basic аргумент hypopg_create_index — CREATE INDEX по разрешённой таблице из простых столбцов.
 
-        Строку hypopg разбирает сам, валидатор её иначе не видит: без этой проверки агент узнавал бы,
-        существуют ли таблицы и колонки чужих схем, и получал бы оценку их размера.
+        Строку hypopg разбирает сам, валидатор её иначе не видит: без проверки relation агент узнавал бы,
+        существуют ли таблицы и колонки чужих схем, и получал бы оценку их размера; без проверки
+        `_is_plain_index` — то же самое через выражения, WHERE, opclass и TABLESPACE, даже когда сама
+        таблица индекса разрешена.
 
         Raises:
-            FunctionNotAllowedError: Аргумент не строковая константа или не ровно один CREATE INDEX.
+            FunctionNotAllowedError: Аргумент не строковая константа, не ровно один CREATE INDEX,
+                или индекс не сводится к простым столбцам.
             SystemRelationAccessError: Индекс на системном отношении.
             SchemaNotAllowedError: Индекс на таблице другой схемы.
             TablePrefixAccessError: Имя таблицы не соответствует префиксу.
@@ -194,6 +225,8 @@ class _NodeValidationVisitor(Visitor):
         if not isinstance(index, IndexStmt) or index.relation is None:
             raise FunctionNotAllowedError(func_name)
         validate_schema_access(index.relation, allowed_schema=self._allowed_schema, table_prefix=self._table_prefix)
+        if not _is_plain_index(index):
+            raise FunctionNotAllowedError(func_name)
 
     def _validate_create_extension(self, node: CreateExtensionStmt) -> None:
         """Разрешить только расширения из allowlist, без CASCADE и без SCHEMA при ограничении схемы.

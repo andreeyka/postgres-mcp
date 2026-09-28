@@ -324,6 +324,8 @@ class TestBasicPolicy:
         [
             "SELECT hypopg_create_index('CREATE INDEX ON app_t (c)')",
             "SELECT hypopg_create_index('CREATE INDEX idx ON public.app_t USING btree (a, b)')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t USING hash (c)')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t (a DESC NULLS LAST)')",
         ],
     )
     def test_hypopg_create_index_on_allowed_table_passes(self, sql: str) -> None:
@@ -331,3 +333,21 @@ class TestBasicPolicy:
 
     def test_full_does_not_parse_hypopg_argument(self) -> None:
         QueryValidator(read_only=True).validate("SELECT hypopg_create_index('CREATE INDEX ON secret.t (c)')")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t ((''secret.t''::regclass))')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t (c) WHERE c = ''secret.t''::regclass')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t ((c::secret.mytype))')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t ((secret.f(c)))')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t (c secret.opclass)')",
+            "SELECT hypopg_create_index('CREATE INDEX ON app_t (c) TABLESPACE secret')",
+            ("SELECT hypopg_create_index('CREATE INDEX ON app_t ((pg_catalog.current_setting(''app.jwt_secret'')))')"),
+        ],
+    )
+    def test_hypopg_create_index_rejects_anything_but_plain_columns(self, sql: str) -> None:
+        """Hypopg сам гоняет transformIndexStmt: выражения, WHERE, opclass и TABLESPACE резолвят
+        имена объектов и вычисляют входные функции литеральных касто́в — это течь мимо проверки relation."""
+        with pytest.raises(FunctionNotAllowedError):
+            self.PREFIXED.validate(sql)
