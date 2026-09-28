@@ -10,12 +10,15 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccessService
 from postgres_fastmcp.domains.explain.artifacts import ExplainPlanArtifact, PlanNode
+from postgres_fastmcp.domains.explain.explain_plan import ExplainPlanBuilder
 from postgres_fastmcp.domains.explain.service import ExplainService
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import (
     ExplainAnalyzeNotSupportedError,
     ExplainAnalyzeWithHypotheticalError,
+    ExplainPlanError,
+    ExplainPlanExecutionError,
     HypopgNotInstalledError,
     PlanAccessError,
     SchemaNotAllowedError,
@@ -422,3 +425,27 @@ class TestExplainQueryAccessErrorsAreNotWrapped:
 
         assert "Seq Scan" in result
         assert "EXPLAIN ANALYZE is not supported" in result
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [[], [RowResult(cells={})], [RowResult(cells={"QUERY PLAN": [{"Plan": {}}]})]],
+    ids=["no-rows", "no-query-plan-cell", "plan-without-node-type"],
+)
+async def test_unexpected_explain_result_is_wrapped(rows: list[RowResult]) -> None:
+    """IndexError/KeyError разбора результата EXPLAIN не уходят наружу сырыми, а оборачиваются в ошибку плана."""
+    sql_driver = MagicMock()
+    sql_driver.execute = AsyncMock(return_value=rows)
+    builder = ExplainPlanBuilder(sql_driver, catalog_driver=MagicMock())
+
+    with pytest.raises(ExplainPlanError):
+        await builder.explain("SELECT 1")
+
+
+async def test_missing_query_plan_cell_is_an_execution_error() -> None:
+    sql_driver = MagicMock()
+    sql_driver.execute = AsyncMock(return_value=[RowResult(cells={})])
+    builder = ExplainPlanBuilder(sql_driver, catalog_driver=MagicMock())
+
+    with pytest.raises(ExplainPlanExecutionError, match="QUERY PLAN"):
+        await builder.explain("SELECT 1")

@@ -191,7 +191,13 @@ class ExplainPlanBuilder:
         explain_q = f"EXPLAIN ({', '.join(explain_options)}) {query}"
         logger.debug("RUNNING EXPLAIN QUERY: %s", explain_q)
         rows = await self._execute_explain(explain_q)
-        return self._parse_explain_result(rows)
+        try:
+            return self._parse_explain_result(rows)
+        except (ExplainPlanError, UserFacingError):
+            raise
+        except Exception as e:
+            # Неожиданная форма результата (нет строк, нет ячейки QUERY PLAN) — не сырой IndexError/KeyError.
+            raise ExplainPlanExecutionError(e) from e
 
     async def _execute_explain(self, explain_q: str) -> list[RowResult] | None:
         """Выполнить сам оператор EXPLAIN, пробросив ошибки валидатора и проверки по плану как есть.
@@ -214,6 +220,7 @@ class ExplainPlanBuilder:
 
         Raises:
             ExplainPlanError: Результата нет, он не список/словарь ожидаемой формы или не преобразуется в артефакт.
+            IndexError, KeyError: Строк нет или нет ячейки QUERY PLAN; оборачивает вызывающий _run_explain_query.
         """
         if rows is None:
             raise ExplainPlanError(NO_EXPLAIN_RESULTS)
