@@ -8,9 +8,14 @@ pglast (plan_expressions) и проверяются по тем же прави�
 из списка basic, типы — allowed_schema или pg_catalog, строковый тип таблицы без префикса — как сама таблица.
 Что решает только каталог (функция или тип без схемы), спрашивается SQL сервера в той же транзакции (plan_catalog).
 
-До первого EXPLAIN проверяются типы самого SQL агента (ошибка разбора EXPLAIN раскрыла бы структуру таблицы без
-префикса). После всех EXPLAIN — представления и правила, которые они заблокировали: текст правила и его
-зависимости (pg_depend), чего план не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public).
+Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
+таблицы без префикса). Затем каждый планируемый оператор готовится и тут же снимается (PREPARE; DEALLOCATE одной
+командой): разбор и переписывание берут блокировки представлений и таблиц до конца транзакции, но план не строится
+и функции не выполняются. После этого читаются правила заблокированного — текст правила и его зависимости
+(pg_depend), чего план не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public). Только потом
+EXPLAIN: планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не
+доходит. После всех EXPLAIN правила читаются ещё раз — представления, до которых дошёл только планировщик
+(встраивание SQL-функций, оператор GENERIC_PLAN, тип параметра которого PREPARE не вывел).
 
 Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
 редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
@@ -19,6 +24,7 @@ Relation Name), Custom Scan без отношения. ROWS FROM из неско
 """
 
 import json
+import secrets
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,6 +45,7 @@ from pglast.ast import (
 )
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
+from psycopg.errors import IndeterminateDatatype
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
@@ -82,6 +89,12 @@ _BUILTIN_FUNCTION_SCHEMA = "pg_catalog"
 # Узлы сканирования, которые без Relation Name читают неизвестно что (scanrelid = 0 при pushdown).
 _RELATION_SCAN_TYPES = frozenset({"Foreign Scan", "Custom Scan"})
 _FUNCTION_SCAN_TYPE = "Function Scan"
+
+# Служебные имена проверки: подготовленный оператор (_pgmcp_check_<метка проверки>_<номер>) и точка сохранения
+# для оператора с GENERIC_PLAN. Метка — случайная на каждую проверку: подготовленный оператор переживает ROLLBACK,
+# и имя, оставшееся в соединении после сбоя, не должно совпасть со следующим.
+_PREPARED_PREFIX = "_pgmcp_check"
+_SAVEPOINT = "_pgmcp_check"
 
 
 def _option_enabled(arg: Node | None) -> bool:
@@ -143,6 +156,11 @@ def _plan_document(rows: list[RowResult] | None) -> list[dict[str, Any]]:
     if not all(isinstance(entry, dict) and isinstance(entry.get("Plan"), dict) for entry in value):
         raise PlanUnverifiableError
     return value
+
+
+def _row_key(cells: dict[str, Any]) -> tuple[object, ...]:
+    """Строка каталога как ключ множества: списки (массивы Postgres) — кортежами."""
+    return tuple((key, tuple(value) if isinstance(value, list) else value) for key, value in sorted(cells.items()))
 
 
 class _FunctionCalls(Visitor):
@@ -263,44 +281,72 @@ class PlanGuard:
         self._table_prefix = table_prefix.lower() if table_prefix else None
         self._prefix_for_hint = table_prefix or None
         self._builtin_types = builtin_types or BuiltinTypeNames()
+        self._prepared_tag = secrets.token_hex(8)
+        self._prepared_count = 0
+        # Строки правил, уже проверенные в этой проверке: второе чтение после EXPLAIN их не повторяет.
+        self._seen_rows: set[tuple[object, ...]] = set()
 
     async def check(self, query: str) -> None:
-        """Построить план каждого планируемого оператора запроса и проверить его узлы и выражения.
+        """Проверить определения, до которых доходит запрос, затем план каждого планируемого оператора.
 
-        Запрос уже прошёл валидатор, поэтому разбирается без ошибок. Ошибка планирования (отношения нет)
-        приходит из исполнителя как ошибка Postgres — та же, что дало бы выполнение.
+        Запрос уже прошёл валидатор, поэтому разбирается без ошибок. Ошибка разбора (отношения нет) приходит
+        из исполнителя как ошибка Postgres — та же, что дало бы выполнение.
 
         Args:
             query: SQL агента после валидации (с тегом-комментарием).
 
         Raises:
-            PlanAccessError: План читает отношение, функцию или тип вне разрешённого.
+            PlanAccessError: Запрос доходит до отношения, функции или типа вне разрешённого.
             PlanUnverifiableError: Плана нет, узел сканирования не называет, что читает, или выражение
                 не разбирается.
         """
         statements = [raw.stmt for raw in pglast.parse_sql(query)]
         await self._check_statement_types(statements)
-        planned = False
-        for raw_statement in statements:
-            target = _plannable(raw_statement)
-            if target is None:
-                continue
-            statement, generic = target
+        plannable = [target for target in (_plannable(statement) for statement in statements) if target is not None]
+        if not plannable:
+            return
+        targets = [(RawStream()(statement), generic) for statement, generic in plannable]
+        for text, generic in targets:
+            await self._prepare(text, generic=generic)
+        await self._check_rules()
+        for text, generic in targets:
             options = "VERBOSE, FORMAT JSON, GENERIC_PLAN" if generic else "VERBOSE, FORMAT JSON"
-            rows = await self._run(f"EXPLAIN ({options}) {RawStream()(statement)}")
+            rows = await self._run(f"EXPLAIN ({options}) {text}")
             await self._check_plan(_plan_document(rows))
-            planned = True
-        if planned:
-            await self._check_rules()
+        await self._check_rules()
+
+    async def _prepare(self, text: str, *, generic: bool) -> None:
+        """Разобрать и переписать оператор без планирования: блокировки представлений и таблиц до конца транзакции.
+
+        PREPARE строит дерево запроса (разбор, переписывание) и берёт AccessShareLock на представления и таблицы,
+        RowExclusiveLock на цели DML, но план не строит: IMMUTABLE-вызовы не сворачиваются, функции не выполняются.
+        DEALLOCATE — той же командой: блокировки держит транзакция, а подготовленный оператор пережил бы ROLLBACK.
+        Упал PREPARE — DEALLOCATE строки не выполняется: снимать нечего.
+
+        GENERIC_PLAN: PREPARE без типов выводит типы $N из контекста, но, в отличие от EXPLAIN (GENERIC_PLAN),
+        не принимает невыводимый ($1 IS NULL, pg_typeof($1)) — 42P18. Такой оператор готовится в точке сохранения;
+        при 42P18 она откатывается, и его представления проверяет чтение правил после EXPLAIN.
+        """
+        name = f"{_PREPARED_PREFIX}_{self._prepared_tag}_{self._prepared_count}"
+        self._prepared_count += 1
+        command = f"PREPARE {name} AS {text}; DEALLOCATE {name}"
+        if not generic:
+            await self._run(command)
+            return
+        try:
+            await self._run(f"SAVEPOINT {_SAVEPOINT}; {command}; RELEASE SAVEPOINT {_SAVEPOINT}")
+        except IndeterminateDatatype:
+            await self._run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}; RELEASE SAVEPOINT {_SAVEPOINT}")
 
     async def _check_rules(self) -> None:
-        """Представления и правила, до которых дошли EXPLAIN строки: текст правила и его зависимости.
+        """Представления и правила, которые заблокировала транзакция: текст правила и его зависимости.
 
         План не показывает всего, что вычисляет правило: IMMUTABLE-вызов с константами свёрнут в результат,
         LIMIT/OFFSET и смещения рамки окна EXPLAIN не печатает, как и проверку SubPlan в PG 15/16; оператор или
-        агрегат public называет себя, а не функции, которые вызывает. Один запрос каталога после всех EXPLAIN
-        (они заблокировали представления) и до выполнения оператора: текст каждого правила проверяется как
-        выражение плана, зависимости из pg_depend — по правилам basic с функцией оператора и опорными
+        агрегат public называет себя, а не функции, которые вызывает. Читается дважды: после PREPARE всех
+        операторов (до планирования) и после всех EXPLAIN (планировщик блокирует представления встраиваемых
+        SQL-функций). Строка, проверенная при первом чтении, при втором пропускается. Текст правила проверяется
+        как выражение плана, зависимости из pg_depend — по правилам basic с функцией оператора и опорными
         функциями агрегата. Тела SQL-функций, политики RLS и триггеры не проверяются.
 
         Raises:
@@ -312,6 +358,10 @@ class PlanGuard:
             raise PlanUnverifiableError(rules=True)
         pending = _CatalogNames()
         for row in rows:
+            key = _row_key(row.cells)
+            if key in self._seen_rows:
+                continue
+            self._seen_rows.add(key)
             self._check_rule_row(row.cells, pending)
         await self._check_catalog_names(pending)
 

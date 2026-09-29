@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS public.app_identity_items (id int GENERATED ALWAYS AS
 CREATE TABLE IF NOT EXISTS public.app_rule_items (id int);
 CREATE OR REPLACE RULE app_rule_items_log AS ON INSERT TO public.app_rule_items DO ALSO SELECT secret.api_key();
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.app_matview_setting AS SELECT current_setting('port') AS port;
+CREATE OR REPLACE FUNCTION secret.boom() RETURNS text
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.boom was executed'; END$$;
+CREATE OR REPLACE VIEW public.app_boom_view AS SELECT secret.boom() AS b;
 """
 
 
@@ -134,8 +137,8 @@ async def test_rejected_write_changes_nothing(db_plan_check: DbAccess, db_full: 
 
 @pytest.mark.asyncio
 async def test_information_schema_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
-    """Строгий режим: представления information_schema читают pg_catalog."""
-    with pytest.raises(PlanAccessError, match="pg_catalog"):
+    """Строгий режим: определения представлений information_schema проверяются до плана — их типы вне public."""
+    with pytest.raises(PlanAccessError, match=r"type 'information_schema\.sql_identifier'"):
         await db_plan_check.sql_driver.execute("SELECT table_name FROM information_schema.tables", readonly=True)
 
 
@@ -296,3 +299,11 @@ async def test_select_from_a_matview_with_a_rejected_definition_passes(db_plan_c
     """Relkind = 'm': чтение матвью не выполняет "_RETURN", current_setting('port') в определении не проверяется."""
     rows = await db_plan_check.sql_driver.execute("SELECT port FROM app_matview_setting", readonly=True)
     assert rows[0].cells["port"] is not None
+
+
+@pytest.mark.asyncio
+async def test_folded_function_of_a_view_is_not_executed_before_the_rejection(db_plan_check: DbAccess) -> None:
+    """IMMUTABLE secret.boom() с константами планировщик выполнил бы при EXPLAIN (ошибка 'was executed');
+    правила читаются после PREPARE, до планирования: приходит отказ по функции, а не её исключение."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
+        await db_plan_check.sql_driver.execute("SELECT * FROM app_boom_view", readonly=True)

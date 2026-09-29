@@ -1,9 +1,11 @@
 """Тесты PlanGuard: проверка по плану запроса в basic (спека basic-followups §4)."""
 
 import json
+import re
 from typing import Any
 
 import pytest
+from psycopg.errors import IndeterminateDatatype, UndefinedTable
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames
@@ -66,6 +68,7 @@ class _Explain:
         pg_catalog_functions: frozenset[str] = frozenset(),
         row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
         rules: list[dict[str, Any]] | None = None,
+        prepare_errors: dict[str, Exception] | None = None,
     ) -> None:
         self._plans = plans or {}
         self._rules = rules or []
@@ -76,12 +79,23 @@ class _Explain:
         # Строковый тип -> (схема, имя) его отношения; множество — типы таблиц public с тем же именем.
         self._row_types = row_types if isinstance(row_types, dict) else {name: ("public", name) for name in row_types}
         self.sent: list[str] = []
+        # Фрагмент текста PREPARE -> ошибка, которую Postgres вернул бы на эту команду.
+        self._prepare_errors = prepare_errors or {}
+        # PREPARE ... ; DEALLOCATE ..., SAVEPOINT ... и ROLLBACK TO SAVEPOINT ... — в sent не попадают.
+        self.prepared: list[str] = []
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
         self.log.append(sql)
         if "pg_catalog.pg_rewrite" in sql:
             self.rule_queries.append(sql)
             return [RowResult(cells=_rule_row(**row)) for row in self._rules]
+        if sql.startswith(("PREPARE ", "SAVEPOINT ", "ROLLBACK TO SAVEPOINT ")):
+            self.prepared.append(sql)
+            if not sql.startswith("ROLLBACK"):
+                for fragment, error in self._prepare_errors.items():
+                    if fragment in sql:
+                        raise error
+            return None
         self.sent.append(sql)
         if "pg_catalog.pg_proc" in sql:
             return self._catalog(sql, self._pg_catalog_functions)
@@ -256,12 +270,14 @@ async def test_every_plannable_statement_is_explained() -> None:
 
 
 class _Rows:
-    """Исполнитель EXPLAIN, который возвращает заданные строки как есть."""
+    """Исполнитель EXPLAIN, который возвращает заданные строки как есть; правил у представлений нет."""
 
     def __init__(self, rows: list[RowResult] | None) -> None:
         self._rows = rows
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
+        if "pg_catalog.pg_rewrite" in sql:
+            return []
         return self._rows
 
 
@@ -896,7 +912,7 @@ async def test_allowed_dependencies_of_views_and_rules_pass(rules: list[dict[str
 
     await _guard(explain, table_prefix="app_").check(_SELECT)
 
-    assert len(explain.rule_queries) == 1
+    assert len(explain.rule_queries) == 2
 
 
 @pytest.mark.parametrize(
@@ -925,17 +941,137 @@ async def test_missing_rule_rows_are_rejected() -> None:
         await PlanGuard(run, allowed_schema="public", table_prefix=None).check(_SELECT)
 
 
-async def test_rules_are_read_once_after_every_explain() -> None:
-    """Блокировки представлений берёт разбор EXPLAIN: запрос правил идёт после всех EXPLAIN строки."""
+_PREPARED = re.compile(r"PREPARE (_pgmcp_check_[0-9a-f]{16}_\d+) AS (.+); DEALLOCATE \1", re.DOTALL)
+
+
+def _step(sql: str) -> str:
+    """Короткое имя шага журнала исполнителя: PREPARE/EXPLAIN с отношением, rules — чтение правил."""
+    if "pg_catalog.pg_rewrite" in sql:
+        return "rules"
+    relation = sql.rsplit(" FROM ", maxsplit=1)[-1].split(";", maxsplit=1)[0]
+    return f"{sql.split(' ', maxsplit=1)[0]} {relation}"
+
+
+async def test_definitions_are_checked_between_prepare_and_explain() -> None:
+    """PREPARE блокирует представления без планирования; правила читаются до EXPLAIN и ещё раз после всех."""
     explain = _Explain()
 
     await _guard(explain).check("SELECT * FROM app_a; SHOW search_path; SELECT * FROM app_b")
 
-    assert [sql.split(" FROM ")[-1] if sql.startswith("EXPLAIN") else "rules" for sql in explain.log] == [
-        "app_a",
-        "app_b",
+    assert [_step(sql) for sql in explain.log] == [
+        "PREPARE app_a",
+        "PREPARE app_b",
+        "rules",
+        "EXPLAIN app_a",
+        "EXPLAIN app_b",
         "rules",
     ]
+
+
+async def test_each_statement_is_prepared_and_deallocated_in_one_command() -> None:
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT * FROM app_a; SELECT * FROM app_b")
+
+    matches = [_PREPARED.fullmatch(sql) for sql in explain.prepared]
+    assert all(match is not None for match in matches)
+    assert [match.group(2) for match in matches if match] == ["SELECT * FROM app_a", "SELECT * FROM app_b"]
+    assert len({match.group(1) for match in matches if match}) == 2
+
+
+async def test_prepared_names_differ_between_checks() -> None:
+    first, second = _Explain(), _Explain()
+
+    await _guard(first).check(_SELECT)
+    await _guard(second).check(_SELECT)
+
+    first_match = _PREPARED.fullmatch(first.prepared[0])
+    second_match = _PREPARED.fullmatch(second.prepared[0])
+    assert first_match is not None
+    assert second_match is not None
+    assert first_match.group(1) != second_match.group(1)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["EXPLAIN SELECT * FROM app_t", "EXPLAIN ANALYZE SELECT * FROM app_t", "DECLARE c CURSOR FOR SELECT * FROM app_t"],
+)
+async def test_wrappers_prepare_the_inner_query(sql: str) -> None:
+    """PREPARE не принимает EXPLAIN и DECLARE: готовится вложенный запрос, тот же, что уходит в EXPLAIN."""
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    [command] = explain.prepared
+    match = _PREPARED.fullmatch(command)
+    assert match is not None
+    assert match.group(2) == "SELECT * FROM app_t"
+
+
+async def test_definition_rejected_before_planning_sends_no_explain() -> None:
+    """IMMUTABLE-вызов представления планировщик выполнил бы при EXPLAIN: отказ приходит раньше."""
+    explain = _Explain(rules=[{"kind": "function", "schema": "secret", "name": "api_key"}])
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.api_key'"):
+        await _guard(explain).check(_SELECT)
+
+    assert len(explain.prepared) == 1
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_rule_rows_seen_before_explain_are_not_checked_again() -> None:
+    """Второе чтение правил отдаёт те же строки: имена из них не спрашиваются у каталога повторно."""
+    explain = _Explain(rules=[_rule("SELECT my_public_fn(id) AS f FROM app_t")])
+
+    await _guard(explain).check(_SELECT)
+
+    assert len(explain.rule_queries) == 2
+    assert len([sql for sql in explain.catalog_queries() if "'my_public_fn'" in sql]) == 1
+
+
+async def test_generic_statement_is_prepared_in_a_savepoint() -> None:
+    explain = _Explain()
+
+    await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT * FROM app_t WHERE id = $1")
+
+    [command] = explain.prepared
+    assert command.startswith("SAVEPOINT _pgmcp_check; PREPARE _pgmcp_check_")
+    assert command.endswith("; RELEASE SAVEPOINT _pgmcp_check")
+    assert "AS SELECT * FROM app_t WHERE id = $1; DEALLOCATE " in command
+
+
+async def test_undeterminable_parameter_falls_back_to_rules_after_explain() -> None:
+    """PREPARE не выводит тип $1 там, где EXPLAIN (GENERIC_PLAN) проходит: точка сохранения откатывается."""
+    error = IndeterminateDatatype("could not determine data type of parameter $1")
+    explain = _Explain(prepare_errors={"$1 IS NULL": error})
+
+    await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL FROM app_t")
+
+    assert explain.prepared[-1] == "ROLLBACK TO SAVEPOINT _pgmcp_check; RELEASE SAVEPOINT _pgmcp_check"
+    assert explain.sent == ["EXPLAIN (VERBOSE, FORMAT JSON, GENERIC_PLAN) SELECT $1 IS NULL FROM app_t"]
+    assert len(explain.rule_queries) == 2
+
+
+async def test_prepare_error_propagates_without_explain() -> None:
+    """Ошибка разбора (нет отношения) — та же, что дал бы EXPLAIN; точки сохранения без GENERIC_PLAN нет."""
+    explain = _Explain(prepare_errors={"app_missing": UndefinedTable('relation "app_missing" does not exist')})
+
+    with pytest.raises(UndefinedTable):
+        await _guard(explain).check("SELECT * FROM app_missing")
+
+    assert explain.sent == []
+    assert explain.rule_queries == []
+    assert not explain.prepared[0].startswith("SAVEPOINT")
+
+
+async def test_undeterminable_parameter_without_generic_plan_propagates() -> None:
+    error = IndeterminateDatatype("could not determine data type of parameter $1")
+    explain = _Explain(prepare_errors={"$1 IS NULL": error})
+
+    with pytest.raises(IndeterminateDatatype):
+        await _guard(explain).check("SELECT $1 IS NULL FROM app_t")
+
+    assert explain.sent == []
 
 
 @pytest.mark.parametrize("sql", ["SHOW search_path", "SET LOCAL search_path = public"])
@@ -947,10 +1083,10 @@ async def test_rules_are_not_read_without_a_plan(sql: str) -> None:
     assert explain.rule_queries == []
 
 
-async def test_rules_are_not_read_after_a_rejected_plan() -> None:
+async def test_rules_are_not_read_again_after_a_rejected_plan() -> None:
     explain = _Explain({_EXPLAIN + _SELECT: _scan("secret", "accounts")})
 
     with pytest.raises(PlanAccessError):
         await _guard(explain).check(_SELECT)
 
-    assert explain.rule_queries == []
+    assert len(explain.rule_queries) == 1
