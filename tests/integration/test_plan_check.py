@@ -1,6 +1,7 @@
 # mypy: ignore-errors
 """Проверка по плану на живом Postgres: представление в public поверх чужой схемы (спека basic-followups §4.4)."""
 
+import re
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -996,7 +997,7 @@ async def test_type_with_non_sql_io_functions_is_rejected_by_default(
     db_typed_chains: DbAccess, db_plan_check: DbAccess
 ) -> None:
     """По умолчанию ввод-вывод app_ic_okt (обёртки LANGUAGE internal в public) — функции не на sql: отказ."""
-    with pytest.raises(PlanAccessError, match=r"function 'public\.app_ic_okt_(in|out)'.*LANGUAGE internal"):
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_ic_okt_in'.*LANGUAGE internal"):
         await db_plan_check.sql_driver.execute("SELECT v FROM app_ic_chain3_view", readonly=True)
 
 
@@ -1180,3 +1181,223 @@ async def test_non_sql_functions_run_unchecked_when_allowed(
     """plan_check_allow_non_sql_functions=true — прежнее поведение и его цена: тело PL/pgSQL читает secret.accounts."""
     rows = await db_plan_check_non_sql.sql_driver.execute("SELECT t FROM app_ns_leak_view", readonly=True)
     assert rows[0].cells["t"] == "top-secret"
+
+
+# Коммутатор и отрицание оператора (oprcom, oprnegate): их функции вызывает планировщик, хотя в тексте их нет.
+# Функции названных операторов — SQL с SET search_path: такую планировщик не встраивает, и оператор доживает до оценки.
+# scalargtsel при переменной справа (5 ##> id) оценивает коммутатором по значениям гистограммы, NOT (id ##= 1)
+# планировщик заменяет отрицанием и оценивает его RESTRICT — функции выполняются уже при EXPLAIN. Бросающие функции
+# отдают секрет в тексте исключения: без проверки EXPLAIN вернул бы 'LEAK top-secret'. Отрицание оператора семейства
+# хеша app_cm_en_ops замыкается так же, как у названных операторов.
+_DROP_COMMUTATORS = """
+DROP TABLE IF EXISTS public.app_cm_t, public.app_cm_et;
+DROP OPERATOR IF EXISTS public.##> (int, int);
+DROP OPERATOR IF EXISTS public.##< (int, int);
+DROP OPERATOR IF EXISTS public.##= (int, int);
+DROP OPERATOR IF EXISTS public.##! (int, int);
+DROP OPERATOR IF EXISTS public.##>> (int, int);
+DROP OPERATOR IF EXISTS secret.##<< (int, int);
+DROP OPERATOR IF EXISTS public.##=> (int, int);
+DROP OPERATOR IF EXISTS public.##<= (int, int);
+DROP TYPE IF EXISTS public.app_cm_en CASCADE;
+DROP FUNCTION IF EXISTS public.app_cm_gt(int, int), public.app_cm_eq(int, int), public.app_cm_leak(int, int),
+    public.app_cm_nleak(int, int), secret.cm_leak(int, int);
+"""
+_COMMUTATORS = """
+CREATE TABLE public.app_cm_t AS SELECT g AS id FROM generate_series(1, 1000) AS g;
+ANALYZE public.app_cm_t;
+CREATE FUNCTION public.app_cm_gt(a int, b int) RETURNS boolean
+    LANGUAGE sql IMMUTABLE SET search_path = public AS 'SELECT a > b';
+CREATE FUNCTION public.app_cm_eq(a int, b int) RETURNS boolean
+    LANGUAGE sql IMMUTABLE SET search_path = public AS 'SELECT a = b';
+CREATE FUNCTION public.app_cm_leak(a int, b int) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+    AS $$BEGIN RAISE EXCEPTION 'LEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE FUNCTION public.app_cm_nleak(a int, b int) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+    AS $$BEGIN RAISE EXCEPTION 'LEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE FUNCTION secret.cm_leak(a int, b int) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+    AS $$BEGIN RAISE EXCEPTION 'LEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE OPERATOR public.##< (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_leak);
+CREATE OPERATOR public.##> (
+    LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_gt, COMMUTATOR = ##<, RESTRICT = scalargtsel
+);
+CREATE OPERATOR public.##! (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_nleak, RESTRICT = scalarltsel);
+CREATE OPERATOR public.##= (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_eq, NEGATOR = ##!);
+CREATE OPERATOR secret.##<< (LEFTARG = int, RIGHTARG = int, FUNCTION = secret.cm_leak);
+CREATE OPERATOR public.##>> (
+    LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_gt, COMMUTATOR = OPERATOR(secret.##<<),
+    RESTRICT = scalargtsel
+);
+CREATE OPERATOR public.##<= (LEFTARG = int, RIGHTARG = int, FUNCTION = secret.cm_leak);
+CREATE OPERATOR public.##=> (
+    LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_cm_gt, COMMUTATOR = ##<=, RESTRICT = scalargtsel
+);
+CREATE TYPE public.app_cm_en AS ENUM ('a', 'b');
+CREATE FUNCTION public.app_cm_en_eq(a public.app_cm_en, b public.app_cm_en) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::text = b::text';
+CREATE FUNCTION public.app_cm_en_hash(a public.app_cm_en) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT 1';
+CREATE FUNCTION secret.cm_en_ne(a public.app_cm_en, b public.app_cm_en) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.cm_en_ne was executed'; END$$;
+CREATE OPERATOR public.##!~ (LEFTARG = public.app_cm_en, RIGHTARG = public.app_cm_en, FUNCTION = secret.cm_en_ne);
+CREATE OPERATOR public.##~ (
+    LEFTARG = public.app_cm_en, RIGHTARG = public.app_cm_en, FUNCTION = public.app_cm_en_eq, NEGATOR = ##!~
+);
+CREATE OPERATOR CLASS public.app_cm_en_ops FOR TYPE public.app_cm_en USING hash AS
+    OPERATOR 1 public.##~, FUNCTION 1 public.app_cm_en_hash(public.app_cm_en);
+CREATE TABLE public.app_cm_et (e public.app_cm_en);
+"""
+
+
+@pytest.fixture
+async def db_commutators(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть операторы, чьи коммутатор или отрицание вызывают бросающие функции."""
+    await db_full.sql_driver.execute(_DROP_COMMUTATORS + _COMMUTATORS, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_COMMUTATORS, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sql", "error"),
+    [
+        pytest.param(
+            "SELECT id FROM app_cm_t WHERE 5 ##> id",
+            r"function 'public\.app_cm_leak'.*LANGUAGE plpgsql",
+            id="commutator",
+        ),
+        pytest.param(
+            "SELECT id FROM app_cm_t WHERE NOT (id ##= 1)",
+            r"function 'public\.app_cm_nleak'.*LANGUAGE plpgsql",
+            id="negator",
+        ),
+        pytest.param(
+            "SELECT id FROM app_cm_t WHERE 5 ##>> id", r"function 'secret\.##<<'", id="commutator-in-a-foreign-schema"
+        ),
+        pytest.param("SELECT e FROM app_cm_et", r"function 'secret\.cm_en_ne'", id="negator-of-a-family-operator"),
+    ],
+)
+async def test_commutator_and_negator_are_checked_before_explain(
+    db_commutators: DbAccess, sql: str, error: str
+) -> None:
+    """Коммутатор и отрицание — операторы, которых нет в тексте: без проверки EXPLAIN выполнил бы их функции."""
+    with pytest.raises(PlanAccessError, match=error):
+        await db_commutators.sql_driver.execute(sql, readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_commutator_function_is_checked_when_non_sql_functions_are_allowed(
+    db_commutators: DbAccess, db_plan_check_non_sql: DbAccess
+) -> None:
+    """Функция коммутатора проверяется по правилу функций, а не только правилом не-SQL: secret.cm_leak — отказ."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.cm_leak'"):
+        await db_plan_check_non_sql.sql_driver.execute("SELECT id FROM app_cm_t WHERE 5 ##=> id", readonly=True)
+
+
+# Пользовательский диапазон в public: CREATE TYPE ... AS RANGE сам создаёт конструкторы диапазона и мультидиапазона
+# (LANGUAGE internal, приведение app_rg_ir -> app_rg_ir_multirange). Они зависят от типа (pg_depend, deptype 'i') и
+# проходят по умолчанию; CREATE OR REPLACE такую зависимость снимает — заменённый конструктор проверяется как любая
+# функция не на sql.
+_DROP_RANGES = """
+DROP VIEW IF EXISTS public.app_rg_view, public.app_rg_jr_view;
+DROP TABLE IF EXISTS public.app_rg_t;
+DROP TYPE IF EXISTS public.app_rg_ir, public.app_rg_jr CASCADE;
+"""
+_RANGES = """
+CREATE TYPE public.app_rg_ir AS RANGE (subtype = int4);
+CREATE TABLE public.app_rg_t (id int, r public.app_rg_ir, m public.app_rg_ir_multirange);
+INSERT INTO public.app_rg_t VALUES (1, '[1,3)', '{[1,2)}');
+CREATE TYPE public.app_rg_jr AS RANGE (subtype = int4);
+CREATE OR REPLACE FUNCTION public.app_rg_jr(int4, int4) RETURNS public.app_rg_jr
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'public.app_rg_jr was executed'; END$$;
+CREATE VIEW public.app_rg_view AS
+    SELECT public.app_rg_ir(1, 5) AS r, public.app_rg_ir_multirange(public.app_rg_ir(1, 2)) AS m;
+CREATE VIEW public.app_rg_jr_view AS SELECT public.app_rg_jr(1, 2) AS r;
+"""
+
+
+@pytest.fixture
+async def db_ranges(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть пользовательские диапазоны (один — с заменённым конструктором)."""
+    await db_full.sql_driver.execute(_DROP_RANGES + _RANGES, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_RANGES, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        pytest.param("SELECT id, r, m FROM app_rg_t", id="range-and-multirange-columns"),
+        pytest.param("SELECT r, m FROM app_rg_view", id="constructors-in-a-view"),
+        pytest.param("INSERT INTO app_rg_t VALUES (2, '[2,4)', '{[2,3)}') RETURNING id", id="insert"),
+        pytest.param("SELECT r::app_rg_ir_multirange AS m FROM app_rg_t", id="range-to-multirange-cast"),
+    ],
+)
+async def test_user_range_types_pass_by_default(db_ranges: DbAccess, sql: str) -> None:
+    """Конструкторы, созданные CREATE TYPE ... AS RANGE (LANGUAGE internal в public), — не функции пользователя."""
+    rows = await db_ranges.sql_driver.execute(sql, readonly=False)
+    assert rows
+
+
+@pytest.mark.asyncio
+async def test_replaced_range_constructor_is_rejected(db_ranges: DbAccess) -> None:
+    """CREATE OR REPLACE снимает зависимость 'i' от типа: конструктор на PL/pgSQL — функция не на sql."""
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_rg_jr'.*LANGUAGE plpgsql"):
+        await db_ranges.sql_driver.execute("SELECT r FROM app_rg_jr_view", readonly=True)
+
+
+# Событийные триггеры: CREATE EXTENSION (единственная команда DDL, которую basic разрешает при записи) вызывает
+# триггеры ddl_command_start, ddl_command_end, sql_drop, table_rewrite. Триггеры — на всю базу: фикстура создаёт
+# их только для CREATE EXTENSION (WHEN TAG — чтобы DDL подготовки других тестов их не задел, если удаление сорвалось)
+# и удаляет в конце. Бросающая функция отдаёт секрет в тексте исключения.
+_DROP_EVENT_TRIGGERS = """
+DROP EVENT TRIGGER IF EXISTS app_evt_boom;
+DROP FUNCTION IF EXISTS public.app_evt_boom(), secret.evt_boom();
+"""
+_EVENT_TRIGGER_FUNCTION = """
+CREATE FUNCTION {function}() RETURNS event_trigger LANGUAGE plpgsql
+    AS $$BEGIN RAISE EXCEPTION 'LEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE EVENT TRIGGER app_evt_boom ON ddl_command_start WHEN TAG IN ('CREATE EXTENSION')
+    EXECUTE FUNCTION {function}();
+"""
+
+
+@pytest.fixture(params=["public.app_evt_boom", "secret.evt_boom"])
+async def event_trigger_function(request: pytest.FixtureRequest, db_full: DbAccess) -> AsyncGenerator[str, None]:
+    """Включённый событийный триггер на CREATE EXTENSION с бросающей функцией (в public или secret)."""
+    function = request.param
+    await db_full.sql_driver.execute(
+        _DROP_EVENT_TRIGGERS + _EVENT_TRIGGER_FUNCTION.format(function=function), readonly=False
+    )
+    try:
+        yield function
+    finally:
+        await db_full.sql_driver.execute(_DROP_EVENT_TRIGGERS, readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_event_trigger_fired_by_create_extension_is_checked_before_it_runs(
+    db_plan_check: DbAccess, db_plan_check_non_sql: DbAccess, event_trigger_function: str
+) -> None:
+    """Функция событийного триггера — не на sql (иначе нельзя): по умолчанию отказ; при разрешённых функциях не на sql
+    её схема всё равно проверяется. Без проверки CREATE EXTENSION выполнил бы триггер и отдал 'LEAK top-secret'.
+    Оператор с планом триггеры не вызывает и проходит."""
+    pattern = re.escape(f"function '{event_trigger_function}'")
+    with pytest.raises(PlanAccessError, match=pattern):
+        await db_plan_check.sql_driver.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements", readonly=False)
+    if event_trigger_function.startswith("secret."):
+        with pytest.raises(PlanAccessError, match=pattern):
+            await db_plan_check_non_sql.sql_driver.execute(
+                "CREATE EXTENSION IF NOT EXISTS pg_stat_statements", readonly=False
+            )
+    rows = await db_plan_check.sql_driver.execute("SELECT id FROM app_plan_items", readonly=True)
+    assert rows
+
+
+@pytest.mark.asyncio
+async def test_create_extension_without_event_triggers_passes(db_plan_check: DbAccess) -> None:
+    """Без включённых событийных триггеров CREATE EXTENSION под plan_check проходит."""
+    await db_plan_check.sql_driver.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements", readonly=False)

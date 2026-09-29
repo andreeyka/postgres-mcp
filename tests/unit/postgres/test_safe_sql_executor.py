@@ -329,7 +329,7 @@ class TestSafeSqlExecutorPlanCheck:
         assert delegate.execute.await_args.kwargs["readonly"] is False
         assert delegate.sent[0] == _SETTINGS
         # Машинерия типов колонок app_t — до PREPARE (ввод констант выполняет разбор).
-        assert delegate.sent[1].startswith("/* t */ WITH RECURSIVE operators AS")
+        assert delegate.sent[1].startswith("/* t */ WITH RECURSIVE functions AS")
         prepared = re.fullmatch(
             r"/\* t \*/ PREPARE (_pgmcp_check_[0-9a-f]{16}_0) AS SELECT \* FROM app_t; DEALLOCATE \1", delegate.sent[2]
         )

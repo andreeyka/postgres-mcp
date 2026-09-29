@@ -19,9 +19,12 @@ allowed_schema любого языка (планировщик подставл�
 и типы, названные в любом проверяемом тексте (тело SQL-функции, умолчание аргумента, CHECK домена): приведение
 (1)::app_e печатается без имени функции. Каждое семя спрашивается за проверку один раз. Семена и всё, что из них
 выросло (функции машинерии, их тела), глубину определений не тратят; все круги ограничены _MAX_CATALOG_ROUNDS.
-Функция allowed_schema не на языке sql (PL/pgSQL, PL/Python, C, internal; не агрегат и не член расширения), до которой
-доходит оператор по любому из путей выше, — отказ (allow_non_sql_functions=False): её тело не проверить. Решение —
-в том же разборе строк реализаций, что тела и умолчания, после остальных строк ответа.
+Функция allowed_schema не на языке sql (PL/pgSQL, PL/Python, C, internal; не агрегат, не член расширения и не
+конструктор, созданный CREATE TYPE ... AS RANGE), до которой доходит оператор по любому из путей выше, — отказ
+(allow_non_sql_functions=False): её тело не проверить. Решение — в том же разборе строк реализаций, что тела
+и умолчания, после остальных строк ответа. Операторы allowed_schema проверяются вместе с коммутаторами и отрицаниями
+(транзитивно): их функции планировщик вызывает при оценке селективности. Оператор без плана, который вызывает
+событийные триггеры (CREATE EXTENSION), проверяет их функции до выполнения.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
@@ -60,15 +63,19 @@ from pglast.ast import (
     A_Const,
     A_Expr,
     CaseExpr,
+    ClosePortalStmt,
+    DeallocateStmt,
     DeclareCursorStmt,
     DefElem,
     DeleteStmt,
     ExplainStmt,
+    FetchStmt,
     FuncCall,
     InsertStmt,
     JoinExpr,
     Node,
     ParamRef,
+    PrepareStmt,
     RangeVar,
     SelectStmt,
     SortBy,
@@ -76,6 +83,8 @@ from pglast.ast import (
     SubLink,
     TypeName,
     UpdateStmt,
+    VariableSetStmt,
+    VariableShowStmt,
 )
 from pglast.parser import ParseError
 from pglast.stream import RawStream
@@ -87,6 +96,7 @@ from psycopg.sql import SQL, Identifier
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
     DEFINITION_DEPENDENCIES_SQL,
+    EVENT_TRIGGER_FUNCTIONS_SQL,
     BuiltinTypeNames,
     allowed_implementations,
     pg_catalog_functions,
@@ -125,6 +135,18 @@ _OPERATOR_KIND = "operator"
 # Операторы, у которых есть план; EXPLAIN и DECLARE разворачиваются до вложенного запроса.
 # SHOW, PREPARE, DEALLOCATE, FETCH, CLOSE, CREATE EXTENSION плана не имеют (EXECUTE запрещён валидатором).
 _PLANNABLE_TYPES = (SelectStmt, InsertStmt, UpdateStmt, DeleteStmt)
+# Операторы без плана, которые не вызывают событийных триггеров (не DDL). Любой другой оператор без плана (CREATE
+# EXTENSION — единственная команда DDL, которую basic разрешает при записи) их вызывает: проверка закрыта по
+# умолчанию, и команда DDL, добавленная в разрешённые позже, проверяется без правки этого списка.
+_NO_EVENT_TRIGGER_TYPES = (
+    VariableShowStmt,
+    VariableSetStmt,
+    PrepareStmt,
+    DeallocateStmt,
+    DeclareCursorStmt,
+    FetchStmt,
+    ClosePortalStmt,
+)
 
 # Значения, которыми опцию EXPLAIN выключают явно: generic_plan false / off / 0 / no.
 _DISABLED_OPTION_VALUES = frozenset({"false", "off", "0", "no"})
@@ -198,6 +220,16 @@ def _plannable(node: Node | None, *, generic: bool = False) -> tuple[Node, bool]
     if isinstance(node, DeclareCursorStmt):
         return _plannable(node.query, generic=generic)
     return None
+
+
+def _fires_event_triggers(node: Node | None) -> bool:
+    """Оператор может вызвать событийный триггер: у него нет плана и он не из _NO_EVENT_TRIGGER_TYPES.
+
+    EXPLAIN разворачивается до вложенного оператора (EXPLAIN CREATE TABLE AS — команда DDL).
+    """
+    if isinstance(node, ExplainStmt):
+        return _fires_event_triggers(node.query)
+    return not isinstance(node, (*_PLANNABLE_TYPES, *_NO_EVENT_TRIGGER_TYPES))
 
 
 def _plan_nodes(value: object) -> Iterator[dict[str, Any]]:
@@ -504,6 +536,8 @@ class PlanGuard:
         statements = [raw.stmt for raw in pglast.parse_sql(query)]
         plannable = [target for target in (_plannable(statement) for statement in statements) if target is not None]
         await self._check_statement_names(statements, [statement for statement, _ in plannable])
+        if any(_fires_event_triggers(statement) for statement in statements):
+            await self._check_event_triggers()
         if not plannable:
             return
         targets = [(RawStream()(statement), generic) for statement, generic in plannable]
@@ -515,6 +549,26 @@ class PlanGuard:
             rows = await self._run(f"EXPLAIN ({options}) {text}")
             await self._check_plan(_plan_document(rows))
         await self._check_definitions()
+
+    async def _check_event_triggers(self) -> None:
+        """Функции включённых событийных триггеров, которые вызовет команда DDL агента (CREATE EXTENSION).
+
+        Событийный триггер — на всю базу, в тексте и в плане его нет, а срабатывает он при выполнении команды — после
+        проверки. Его функция проверяется как функция из зависимостей определений: схема — allowed_schema (или
+        встроенная из списка basic), функция allowed_schema — следующим кругом по имени (правило не-SQL: функция
+        событийного триггера на sql не пишется, так что по умолчанию любая, кроме функции расширения, — отказ).
+
+        Raises:
+            PlanAccessError: Функция триггера вне разрешённого или не на sql при allow_non_sql_functions=False.
+            PlanUnverifiableError: Ответа нет.
+        """
+        rows = await self._run(EVENT_TRIGGER_FUNCTIONS_SQL)
+        if rows is None:
+            raise PlanUnverifiableError(rules=True)
+        pending = _CatalogNames()
+        for row in rows:
+            self._check_row(row.cells, pending)
+        await self._check_catalog_names(pending)
 
     async def _prepare(self, text: str, *, generic: bool) -> None:
         """Разобрать и переписать оператор без планирования: блокировки представлений и таблиц до конца транзакции.
@@ -984,7 +1038,8 @@ class PlanGuard:
             else:
                 self._check_rule_row(row.cells, pending, free_functions)
         if non_sql and not self._allow_non_sql_functions:
-            cells = non_sql[0]
+            # Первая по имени со схемой: сообщение не зависит от порядка строк ответа.
+            cells = min(non_sql, key=lambda found: (str(found.get("schema")), str(found.get("name"))))
             raise PlanAccessError(
                 FUNCTION_KIND,
                 f"{cells.get('schema')}.{cells.get('name')}",

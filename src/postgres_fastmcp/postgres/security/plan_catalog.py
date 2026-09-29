@@ -148,11 +148,11 @@ def _definition_rows(kind: str, text: str, source: str) -> str:
 # модификатора типа (typmodin — при разборе тип(10), typmodout — при печати), сбора статистики и индексирования
 # (typsubscript — при разборе x[1]); функции приведения (pg_cast.castfunc: явные, неявные и присваивания —
 # INSERT в колонку типа без имени типа в тексте), в обе стороны; классы операторов типа (любого метода доступа):
-# все опорные функции (pg_amproc) и операторы (pg_amop) их семейств — сравнение btree и хеш-функцию вызывают
-# ORDER BY, DISTINCT, GROUP BY, UNION, GREATEST/LEAST, сравнение массивов, соединения слиянием и хешем, оценка
-# селективности; у операторов — их функция и функции оценки (oprrest, oprjoin); у диапазона — canonical, subdiff
-# и класс операторов подтипа (rngsubopc); CHECK доменов (при приведении к домену: typcache сворачивает
-# IMMUTABLE-вызовы CHECK уже при планировании).
+# все опорные функции (pg_amproc) и операторы (pg_amop) их семейств с коммутаторами и отрицаниями (_OPERATOR_LINKS) —
+# сравнение btree и хеш-функцию вызывают ORDER BY, DISTINCT, GROUP BY, UNION, GREATEST/LEAST, сравнение массивов,
+# соединения слиянием и хешем, оценка селективности; у операторов — их функция и функции оценки (oprrest, oprjoin);
+# у диапазона — canonical, subdiff и класс операторов подтипа (rngsubopc); CHECK доменов (при приведении к домену:
+# typcache сворачивает IMMUTABLE-вызовы CHECK уже при планировании).
 #
 # Типы берутся замыканием от семян (seeds) по тому, что вызывает машинерию вложенных типов: домен -> базовый тип,
 # массив -> элемент, составной тип -> типы атрибутов, диапазон -> подтип, мультидиапазон -> диапазон. Типы
@@ -176,6 +176,17 @@ def _definition_rows(kind: str, text: str, source: str) -> str:
 # или строка pg_cast (функция приведения). Приведение, семейство или тип, созданные DBA, проверяются по обычным
 # правилам, даже если их функция — член расширения (функции приведения следуют обычному правилу basic).
 _PG_CATALOG_NAMESPACE = "'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid"
+# Шаг замыкания операторов по коммутатору и отрицанию (oprcom, oprnegate; 0 — нет): их функции вызывает планировщик,
+# хотя в тексте их нет. scalargtsel при переменной справа (5 #> x) оценивает коммутатором по значениям гистограммы,
+# NOT (x #= 1) планировщик заменяет отрицанием и оценивает его RESTRICT; коммутатор берут и сопоставление с индексом,
+# и соединения. Замыкание транзитивное; UNION рекурсивного CTE отбрасывает повторы, так что цикл (оператор —
+# коммутатор сам себе, пара отрицаний) конечен. closure — имя рекурсивного CTE (колонка oid), extra — его прочие
+# колонки, которые шаг переносит.
+_OPERATOR_LINKS = (
+    "SELECT s.oid{extra} FROM {closure} c JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) c.oid "
+    "CROSS JOIN LATERAL (VALUES (o.oprcom), (o.oprnegate)) AS s(oid) "
+    "WHERE s.oid OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
+)
 _PG_OPFAMILY = "'pg_catalog.pg_opfamily'::pg_catalog.regclass::pg_catalog.oid"
 _PG_CAST = "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid"
 _MACHINERY_TYPES = _oid_set("machinery_set", "m")
@@ -275,11 +286,14 @@ def _type_machinery(seeds: str) -> str:
         f"UNION ALL {_BINARY_CAST_FAMILIES}"
         ") AS c(family, origin) JOIN pg_catalog.pg_opfamily f ON f.oid OPERATOR(pg_catalog.=) c.family "
         f"WHERE f.opfnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE}"
-        "), family_operators AS ("
-        "SELECT DISTINCT o.oid, o.oprname, o.oprnamespace, o.oprcode, o.oprrest, o.oprjoin, y.origin FROM families y "
+        "), family_operator_closure(oid, origin) AS ("
+        "SELECT a.amopopr, y.origin FROM families y "
         "JOIN pg_catalog.pg_amop a ON a.amopfamily OPERATOR(pg_catalog.=) y.oid "
-        "JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) a.amopopr "
-        f"WHERE {_not_extension_member(_PG_OPFAMILY, 'y.oid')}"
+        f"WHERE {_not_extension_member(_PG_OPFAMILY, 'y.oid')} "
+        f"UNION {_OPERATOR_LINKS.format(closure='family_operator_closure', extra=', c.origin')}"
+        "), family_operators AS ("
+        "SELECT DISTINCT o.oid, o.oprname, o.oprnamespace, o.oprcode, o.oprrest, o.oprjoin, c.origin "
+        "FROM family_operator_closure c JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) c.oid"
         "), machinery(kind, schema, name, parent_schema, definition, origin) AS ("
         + _function_rows(
             "type_function",
@@ -523,12 +537,35 @@ DEFINITION_DEPENDENCIES_SQL = (
     "FROM machinery m"
 )
 
+# Функции включённых событийных триггеров (pg_event_trigger, evtenabled <> 'D' — и 'R': зависит от
+# session_replication_role) на события, которые вызывает команда DDL агента: ddl_command_start, ddl_command_end,
+# sql_drop, table_rewrite (login — при подключении, не командой). Фильтр тегов (evttags) не учитывается: проверяются
+# все такие триггеры, даже если тег команды под фильтр не попадает. Строки — вида function, как функция из
+# зависимостей определений: схема — по правилу функций, функция allowed_schema — её тело, умолчания и правило не-SQL
+# (функция событийного триггера не бывает на sql) следующим кругом по имени.
+EVENT_TRIGGER_FUNCTIONS_SQL = (
+    "SELECT DISTINCT 'function' AS kind, fn.nspname AS schema, f.proname AS name "
+    "FROM pg_catalog.pg_event_trigger e "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) e.evtfoid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    "WHERE e.evtenabled OPERATOR(pg_catalog.<>) 'D' AND e.evtevent OPERATOR(pg_catalog.=) "
+    "ANY (ARRAY['ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite']::pg_catalog.name[])"
+)
+
+# Язык sql — по закреплённому oid (SQLlanguageId = 14 в pg_language.dat, один и тот же в PG 15–17), а не по имени:
+# ALTER LANGUAGE sql RENAME работает, и под именем 'sql' мог бы оказаться другой язык.
+_SQL_LANGUAGE = "14::pg_catalog.oid"
+
 # Функции allowed_schema не на языке sql (plpgsql, plpython, c, internal и любой другой): их тело не проверить —
 # PL/pgSQL выполняет динамический SQL (EXECUTE), C-функция — любой код, функция LANGUAGE internal — любую встроенную
 # функцию под своим именем (AS 'show_config_by_name' — это current_setting). Строка non_sql_function, definition — имя
 # языка; решает PlanGuard (allow_non_sql_functions). Не в счёт агрегаты (prokind 'a': prolang у них internal, их
-# опорные функции — строки aggregate_function) и члены расширений (pg_depend, deptype 'e'): код расширения доверен,
-# как машинерия его типов. Проверяется каждая перегрузка с именем, как у тел и умолчаний.
+# опорные функции — строки aggregate_function), члены расширений (pg_depend, deptype 'e'): код расширения доверен,
+# как машинерия его типов, — и конструкторы, которые CREATE TYPE ... AS RANGE создаёт сам (range_constructor2/3,
+# multirange_constructor0/1/2 — LANGUAGE internal в схеме типа; их вызывает и приведение диапазона к мультидиапазону).
+# Такие функции узнаются по внутренней зависимости от типа (pg_depend, refclassid pg_type, deptype 'i'): её создаёт
+# только CREATE TYPE, а CREATE OR REPLACE FUNCTION её снимает (заменённый конструктор проверяется как любая функция).
+# Проверяется каждая перегрузка с именем, как у тел и умолчаний.
 #
 # type_function — опорная функция планировщика (prosupport, CREATE FUNCTION ... SUPPORT): её вызывает планировщик
 # для каждого вызова функции (SupportRequestSimplify, оценки строк и селективности); правило — как у машинерии типов.
@@ -536,8 +573,11 @@ DEFINITION_DEPENDENCIES_SQL = (
 _NON_SQL_FUNCTION_ROWS = (
     "SELECT 'non_sql_function', {schema}::pg_catalog.name, p.proname, NULL, l.lanname::pg_catalog.text, NULL, NULL "  # noqa: S608
     "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
-    "WHERE l.lanname OPERATOR(pg_catalog.<>) 'sql' AND p.prokind OPERATOR(pg_catalog.<>) 'a' "
+    f"WHERE p.prolang OPERATOR(pg_catalog.<>) {_SQL_LANGUAGE} AND p.prokind OPERATOR(pg_catalog.<>) 'a' "
     f"AND {_not_extension_member(_PG_PROC, 'p.oid')} "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d "
+    f"WHERE d.classid OPERATOR(pg_catalog.=) {_PG_PROC} AND d.objid OPERATOR(pg_catalog.=) p.oid "
+    f"AND d.refclassid OPERATOR(pg_catalog.=) {_PG_TYPE} AND d.deptype OPERATOR(pg_catalog.=) 'i') "
     "UNION ALL "
     "SELECT 'type_function', fn.nspname, f.proname, NULL, NULL, NULL, NULL FROM functions p "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) p.prosupport::pg_catalog.oid "
@@ -547,24 +587,22 @@ _NON_SQL_FUNCTION_ROWS = (
 
 # Реализации операторов и функций allowed_schema по именам. План и SQL агента печатают их без схемы и без типов
 # аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же вида, что у DEFINITION_DEPENDENCIES_SQL
-# (их проверяет тот же разбор): operator_function — функция оператора (oprcode); aggregate_function — опорная
-# функция агрегата; operator и operator_function — оператор сортировки агрегата (aggsortop: min/max планировщик
-# заменяет индексным сканом с этим оператором) и его функция; sql_body — тело SQL-функции как написано (prosrc;
-# config — proconfig: SET search_path меняет разрешение имён тела); sql_atomic_body — тело BEGIN ATOMIC / RETURN
-# (pg_get_function_sqlbody: имена вне search_path — со схемой); argument_defaults — умолчания аргументов функции
-# любого языка через запятую (pg_get_expr(proargdefaults)): планировщик подставляет их в вызов без этих аргументов
-# и сворачивает IMMUTABLE. parent_schema — схема оператора или агрегата. type_function — функции оценки
-# селективности (oprrest, oprjoin) этих операторов: их вызывает планировщик. Плюс строки машинерии типов
+# (их проверяет тот же разбор). Операторы (operator_closure) — названные, операторы сортировки агрегатов (aggsortop:
+# min/max планировщик заменяет индексным сканом с этим оператором) и, транзитивно, их коммутаторы и отрицания
+# (_OPERATOR_LINKS; могут быть и в другой схеме). У каждого: operator — схема оператора; operator_function — его
+# функция (oprcode; parent_schema — схема оператора); type_function — функции оценки селективности (oprrest,
+# oprjoin): их вызывает планировщик. aggregate_function — опорная функция агрегата (parent_schema — схема агрегата);
+# sql_body — тело SQL-функции как написано (prosrc; config — proconfig: SET search_path меняет разрешение имён тела);
+# sql_atomic_body — тело BEGIN ATOMIC / RETURN (pg_get_function_sqlbody: имена вне search_path — со схемой);
+# argument_defaults — умолчания аргументов функции любого языка через запятую (pg_get_expr(proargdefaults)):
+# планировщик подставляет их в вызов без этих аргументов и сворачивает IMMUTABLE. Плюс строки машинерии типов
 # (_type_machinery) от семян seeds: типы ({types}: из SQL агента и из текстов определений — тел, умолчаний, CHECK
 # доменов), колонки и строковые типы отношений ({relations}) SQL агента, типы аргументов и результатов найденных
 # функций и операторов, типы состояния агрегатов. Плюс _NON_SQL_FUNCTION_ROWS: функции не на sql и опорные функции
-# планировщика.
+# планировщика. Функции операторов, найденных замыканием, PlanGuard спрашивает следующим кругом по имени — к ним
+# применяются тела, умолчания и правило не-SQL.
 ALLOWED_IMPLEMENTATIONS_SQL = (
-    "WITH RECURSIVE operators AS ("  # noqa: S608
-    "SELECT o.oprcode, o.oprrest, o.oprjoin, o.oprleft, o.oprright, o.oprresult FROM pg_catalog.pg_operator o "
-    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
-    "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators})"
-    "), functions AS ("
+    "WITH RECURSIVE functions AS ("  # noqa: S608
     "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig, "
     "p.proargdefaults, p.prorettype, p.proargtypes, p.proallargtypes, p.prokind, p.prosupport "
     "FROM pg_catalog.pg_proc p "
@@ -573,9 +611,16 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "), aggregates AS ("
     "SELECT a.* FROM functions p "
     "JOIN pg_catalog.pg_aggregate a ON a.aggfnoid::pg_catalog.oid OPERATOR(pg_catalog.=) p.oid"
-    "), sort_operators AS ("
-    "SELECT o.oprname, o.oprnamespace, o.oprcode FROM aggregates a "
-    "JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) a.aggsortop"
+    "), operator_closure(oid) AS ("
+    "SELECT o.oid FROM pg_catalog.pg_operator o "
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators}) "
+    "UNION SELECT a.aggsortop::pg_catalog.oid FROM aggregates a "
+    "WHERE a.aggsortop::pg_catalog.oid OPERATOR(pg_catalog.<>) 0::pg_catalog.oid "
+    f"UNION {_OPERATOR_LINKS.format(closure='operator_closure', extra='')}"
+    "), operators AS ("
+    "SELECT o.oprname, o.oprnamespace, o.oprcode, o.oprrest, o.oprjoin, o.oprleft, o.oprright, o.oprresult "
+    "FROM operator_closure c JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) c.oid"
     "), seeds(oid) AS ("
     "SELECT pg_catalog.to_regtype(n.name)::pg_catalog.oid FROM pg_catalog.unnest({types}) AS n(name) "
     "UNION ALL SELECT a.atttypid FROM pg_catalog.unnest({relations}) AS n(name) "
@@ -591,10 +636,13 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "CROSS JOIN LATERAL (VALUES (o.oprleft), (o.oprright), (o.oprresult)) AS v(oid) "
     "UNION ALL SELECT a.aggtranstype FROM aggregates a"
     "), " + _type_machinery("SELECT s.oid FROM seeds s") + " "  # noqa: S608
-    "SELECT 'operator_function' AS kind, fn.nspname AS schema, f.proname AS name, "
-    "{schema}::pg_catalog.name AS parent_schema, NULL::pg_catalog.text AS definition, "
-    "NULL::pg_catalog.text[] AS config, NULL::pg_catalog.text AS origin "
-    "FROM operators o JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
+    "SELECT 'operator' AS kind, opn.nspname AS schema, o.oprname AS name, NULL::pg_catalog.name AS parent_schema, "
+    "NULL::pg_catalog.text AS definition, NULL::pg_catalog.text[] AS config, NULL::pg_catalog.text AS origin "
+    "FROM operators o JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "UNION ALL "
+    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, NULL, NULL, NULL FROM operators o "
+    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
     "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name, NULL, NULL, NULL "
@@ -602,19 +650,10 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT 'operator', opn.nspname, o.oprname, NULL, NULL, NULL, NULL FROM sort_operators o "
-    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
-    "UNION ALL "
-    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, NULL, NULL, NULL FROM sort_operators o "
-    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
-    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
-    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
-    "UNION ALL "
     "SELECT CASE WHEN p.atomic THEN 'sql_atomic_body' ELSE 'sql_body' END, {schema}::pg_catalog.name, p.proname, "
     "NULL, CASE WHEN p.atomic THEN pg_catalog.pg_get_function_sqlbody(p.oid) ELSE p.prosrc END, p.proconfig, "
     "NULL "
-    "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
-    "WHERE l.lanname OPERATOR(pg_catalog.=) 'sql' "
+    f"FROM functions p WHERE p.prolang OPERATOR(pg_catalog.=) {_SQL_LANGUAGE} "
     "UNION ALL "
     "SELECT 'argument_defaults', {schema}::pg_catalog.name, p.proname, NULL, "
     "pg_catalog.pg_get_expr(p.proargdefaults, 0::pg_catalog.oid), NULL, NULL FROM functions p "

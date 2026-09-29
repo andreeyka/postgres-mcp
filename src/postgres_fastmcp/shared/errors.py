@@ -217,7 +217,8 @@ class PlanAccessError(UserFacingError):
             message = (
                 f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query reaches it, and its "
                 f"body in LANGUAGE {language} cannot be verified (plan_check verifies only LANGUAGE sql bodies). "
-                "A database owner can rewrite it in LANGUAGE sql; the server operator can set "
+                "A database owner can rewrite it in LANGUAGE sql or ship it as an extension member (trigger, "
+                "event trigger and type input/output functions cannot be written in SQL); the server operator can set "
                 "plan_check_allow_non_sql_functions=true, which lets such functions run unchecked."
             )
         super().__init__(message)
