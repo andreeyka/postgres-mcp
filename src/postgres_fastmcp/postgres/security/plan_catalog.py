@@ -136,7 +136,10 @@ _COLUMN_TYPES = _oid_set("type_set", "y")
 
 def _definition_rows(kind: str, text: str, source: str) -> str:
     """Строки текста определения вида kind: text — выражение текста над source."""
-    return f"SELECT '{kind}', {_NO_NAME}, {_NO_NAME}, {_NO_PARENT}, {_NO_RELATION}, {text} FROM {source} "  # noqa: S608
+    return (
+        f"SELECT '{kind}', {_NO_NAME}, {_NO_NAME}, {_NO_PARENT}, {_NO_RELATION}, {text}, {_NO_ORIGIN} "  # noqa: S608
+        f"FROM {source} "
+    )
 
 
 # Машинерия типов: то, что Postgres вызывает для значения типа сам, без имени функции или оператора в тексте.
@@ -157,15 +160,14 @@ def _definition_rows(kind: str, text: str, source: str) -> str:
 # Ещё ребро — неявное двоично-совместимое приведение (pg_cast: castmethod 'b', castcontext 'i') к целевому типу:
 # класс операторов по умолчанию (GetDefaultOpClass, typcache) принимает класс типа, к которому тип значения так
 # приводится (ORDER BY b при CREATE CAST (app_b AS app_ct) WITHOUT FUNCTION AS IMPLICIT сравнивает опорной
-# функцией класса app_ct). Такое же приведение от типа pg_catalog (CREATE CAST (json AS t) ...) достаёт тип,
-# который в тексте может и не называться (результат встроенной функции), поэтому цели всех таких приведений
-# к типам вне pg_catalog — семена любого запроса (обычно их нет).
+# функцией класса app_ct). Такое же приведение от типа pg_catalog — _BINARY_CAST_FAMILIES.
 # Множества — массивами через unnest (_oid_set): оценка рекурсии через соединения иначе растёт выше jit_above_cost.
 #
-# Строки machinery (kind, schema, name, parent_schema, definition): type_function — функция машинерии типа
+# Строки machinery (kind, schema, name, parent_schema, definition, origin): type_function — функция машинерии типа
 # (ввод-вывод, опорная функция класса операторов, оценка селективности, canonical/subdiff); function — функция
 # приведения; operator и operator_function — оператор семейства и его функция (parent_schema — схема оператора);
-# domain — текст CHECK домена.
+# domain — текст CHECK домена. origin — 'type' или текст двоичного приведения от типа pg_catalog; у строк
+# определений и реализаций он NULL (PlanGuard считает глубину только по ним).
 #
 # Доверие расширениям (pg_depend, deptype 'e') определяется по объекту-владельцу машинерии, а не по функции:
 # машинерию типа расширения (citext, hstore, PostGIS) ставит скрипт расширения, в том числе в схему вне public
@@ -177,6 +179,10 @@ _PG_CATALOG_NAMESPACE = "'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid"
 _PG_OPFAMILY = "'pg_catalog.pg_opfamily'::pg_catalog.regclass::pg_catalog.oid"
 _PG_CAST = "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid"
 _MACHINERY_TYPES = _oid_set("machinery_set", "m")
+# Колонка origin строк: NULL — строка определения или реализации (её круг считается в глубину определений);
+# 'type' — машинерия типа; текст приведения — семейство класса неявного двоичного приведения (_BINARY_CAST_FAMILIES).
+_TYPE_ORIGIN = "'type'::pg_catalog.text"
+_NO_ORIGIN = "NULL::pg_catalog.text"
 
 
 def _not_extension_member(catalog: str, oid: str) -> str:
@@ -188,20 +194,51 @@ def _not_extension_member(catalog: str, oid: str) -> str:
     )
 
 
-def _function_rows(
-    kind: str, source: str, function: str, owner: tuple[str, str] | None, parent: str = _NO_PARENT
+def _function_rows(  # noqa: PLR0913
+    kind: str,
+    source: str,
+    function: str,
+    owner: tuple[str, str] | None,
+    parent: str = _NO_PARENT,
+    origin: str = _TYPE_ORIGIN,
 ) -> str:
     """Строки функций машинерии: function — выражение oid функции над source (0 — функции нет, строка пропадает).
 
     owner — (каталог, выражение oid) объекта-владельца: владелец — член расширения, строки нет; None — владелец
-    уже отфильтрован в source (операторы семейства — по семейству).
+    уже отфильтрован в source (операторы семейства — по семейству). origin — выражение колонки origin.
     """
     member = "" if owner is None else f"WHERE {_not_extension_member(*owner)}"
     return (
-        f"SELECT '{kind}', fn.nspname, f.proname, {parent}, {_NO_DEFINITION} FROM {source} "  # noqa: S608
+        f"SELECT '{kind}', fn.nspname, f.proname, {parent}, {_NO_DEFINITION}, {origin} FROM {source} "  # noqa: S608
         f"JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) ({function})::pg_catalog.oid "
         f"JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace {member}"
     )
+
+
+# Неявные двоично-совместимые приведения от типа pg_catalog S к типу T вне pg_catalog: класс операторов по
+# умолчанию (GetDefaultOpClass, typcache) для S берёт класс T, если у S нет своего класса по умолчанию этого метода
+# доступа. typcache спрашивает только btree и hash, а двоичное приведение не вызывает ни ввода-вывода T, ни его
+# приведений, ни CHECK домена. Поэтому в каждом запросе (S может и не называться: DISTINCT to_json(x)) проверяются
+# семейства классов по умолчанию btree и hash типа T — только для метода, у которого у S своего класса по умолчанию
+# нет (jsonb -> T ничего не даёт: у jsonb свои классы btree и hash). origin строк — текст приведения ("json ->
+# public.app_vt"): отказ называет приведение.
+_BINARY_CAST_FAMILIES = (
+    "SELECT oc.opcfamily, pg_catalog.concat(pg_catalog.format_type(k.castsource, NULL::pg_catalog.int4), ' -> ', "  # noqa: S608
+    "pg_catalog.quote_ident(ktn.nspname), '.', pg_catalog.quote_ident(kt.typname)) "
+    "FROM pg_catalog.pg_cast k "
+    "JOIN pg_catalog.pg_type ks ON ks.oid OPERATOR(pg_catalog.=) k.castsource "
+    "JOIN pg_catalog.pg_type kt ON kt.oid OPERATOR(pg_catalog.=) k.casttarget "
+    "JOIN pg_catalog.pg_namespace ktn ON ktn.oid OPERATOR(pg_catalog.=) kt.typnamespace "
+    "JOIN pg_catalog.pg_opclass oc ON oc.opcintype OPERATOR(pg_catalog.=) k.casttarget AND oc.opcdefault "
+    "JOIN pg_catalog.pg_am am ON am.oid OPERATOR(pg_catalog.=) oc.opcmethod "
+    "WHERE k.castmethod OPERATOR(pg_catalog.=) 'b' AND k.castcontext OPERATOR(pg_catalog.=) 'i' "
+    f"AND ks.typnamespace OPERATOR(pg_catalog.=) {_PG_CATALOG_NAMESPACE} "
+    f"AND kt.typnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE} "
+    "AND am.amname OPERATOR(pg_catalog.=) ANY (ARRAY['btree', 'hash']::pg_catalog.name[]) "
+    "AND NOT EXISTS (SELECT FROM pg_catalog.pg_opclass so WHERE so.opcintype OPERATOR(pg_catalog.=) k.castsource "
+    "AND so.opcmethod OPERATOR(pg_catalog.=) oc.opcmethod AND so.opcdefault) "
+    f"AND {_not_extension_member(_PG_CAST, 'k.oid')}"
+)
 
 
 def _type_machinery(seeds: str) -> str:
@@ -210,13 +247,6 @@ def _type_machinery(seeds: str) -> str:
         f"type_seed_set(oids) AS (SELECT ARRAY({seeds})), "  # noqa: S608
         "type_closure(oid) AS ("
         f"SELECT s.oid FROM {_oid_set('type_seed_set', 's')} "
-        "UNION "
-        "SELECT k.casttarget FROM pg_catalog.pg_cast k "
-        "JOIN pg_catalog.pg_type ks ON ks.oid OPERATOR(pg_catalog.=) k.castsource "
-        "JOIN pg_catalog.pg_type kt ON kt.oid OPERATOR(pg_catalog.=) k.casttarget "
-        "WHERE k.castmethod OPERATOR(pg_catalog.=) 'b' AND k.castcontext OPERATOR(pg_catalog.=) 'i' "
-        f"AND ks.typnamespace OPERATOR(pg_catalog.=) {_PG_CATALOG_NAMESPACE} "
-        f"AND kt.typnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE} "
         "UNION "
         "SELECT n.oid FROM type_closure c JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) c.oid "
         "CROSS JOIN LATERAL ("
@@ -234,22 +264,23 @@ def _type_machinery(seeds: str) -> str:
         "SELECT ARRAY(SELECT DISTINCT t.oid FROM type_closure c "
         "JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) c.oid "
         f"WHERE t.typnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE})"
-        "), families(oid) AS ("
-        "SELECT DISTINCT f.oid FROM ("
-        f"SELECT oc.opcfamily FROM {_MACHINERY_TYPES} "
+        "), families(oid, origin) AS ("
+        "SELECT DISTINCT f.oid, c.origin FROM ("
+        f"SELECT oc.opcfamily, {_TYPE_ORIGIN} FROM {_MACHINERY_TYPES} "
         "JOIN pg_catalog.pg_opclass oc ON oc.opcintype OPERATOR(pg_catalog.=) m.oid "
         "UNION ALL "
-        f"SELECT oc.opcfamily FROM {_MACHINERY_TYPES} "
+        f"SELECT oc.opcfamily, {_TYPE_ORIGIN} FROM {_MACHINERY_TYPES} "
         "JOIN pg_catalog.pg_range r ON r.rngtypid OPERATOR(pg_catalog.=) m.oid "
-        "JOIN pg_catalog.pg_opclass oc ON oc.oid OPERATOR(pg_catalog.=) r.rngsubopc"
-        ") AS c(family) JOIN pg_catalog.pg_opfamily f ON f.oid OPERATOR(pg_catalog.=) c.family "
+        "JOIN pg_catalog.pg_opclass oc ON oc.oid OPERATOR(pg_catalog.=) r.rngsubopc "
+        f"UNION ALL {_BINARY_CAST_FAMILIES}"
+        ") AS c(family, origin) JOIN pg_catalog.pg_opfamily f ON f.oid OPERATOR(pg_catalog.=) c.family "
         f"WHERE f.opfnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE}"
         "), family_operators AS ("
-        "SELECT DISTINCT o.oid, o.oprname, o.oprnamespace, o.oprcode, o.oprrest, o.oprjoin FROM families y "
+        "SELECT DISTINCT o.oid, o.oprname, o.oprnamespace, o.oprcode, o.oprrest, o.oprjoin, y.origin FROM families y "
         "JOIN pg_catalog.pg_amop a ON a.amopfamily OPERATOR(pg_catalog.=) y.oid "
         "JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) a.amopopr "
         f"WHERE {_not_extension_member(_PG_OPFAMILY, 'y.oid')}"
-        "), machinery(kind, schema, name, parent_schema, definition) AS ("
+        "), machinery(kind, schema, name, parent_schema, definition, origin) AS ("
         + _function_rows(
             "type_function",
             f"{_MACHINERY_TYPES} JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) m.oid "
@@ -272,6 +303,7 @@ def _type_machinery(seeds: str) -> str:
             "families y JOIN pg_catalog.pg_amproc p ON p.amprocfamily OPERATOR(pg_catalog.=) y.oid",
             "p.amproc",
             (_PG_OPFAMILY, "y.oid"),
+            origin="y.origin",
         )
         + " UNION ALL "
         + _function_rows(
@@ -279,9 +311,10 @@ def _type_machinery(seeds: str) -> str:
             "family_operators o CROSS JOIN LATERAL (VALUES (o.oprrest), (o.oprjoin)) AS s(fn)",
             "s.fn",
             None,
+            origin="o.origin",
         )
         + " UNION ALL "  # noqa: S608
-        f"SELECT 'operator', opn.nspname, o.oprname, {_NO_PARENT}, {_NO_DEFINITION} FROM family_operators o "
+        f"SELECT 'operator', opn.nspname, o.oprname, {_NO_PARENT}, {_NO_DEFINITION}, o.origin FROM family_operators o "
         "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace"
         " UNION ALL "
         + _function_rows(
@@ -290,6 +323,7 @@ def _type_machinery(seeds: str) -> str:
             "o.oprcode",
             None,
             "opn.nspname",
+            origin="o.origin",
         )
         + " UNION ALL "
         + _function_rows(
@@ -307,7 +341,7 @@ def _type_machinery(seeds: str) -> str:
         )
         + " UNION ALL "  # noqa: S608
         f"SELECT 'domain', {_NO_NAME}, {_NO_NAME}, {_NO_PARENT}, "
-        "pg_catalog.pg_get_expr(k.conbin, 0::pg_catalog.oid) "
+        f"pg_catalog.pg_get_expr(k.conbin, 0::pg_catalog.oid), {_TYPE_ORIGIN} "
         f"FROM {_MACHINERY_TYPES} JOIN pg_catalog.pg_constraint k ON k.contypid OPERATOR(pg_catalog.=) m.oid "
         "WHERE k.conbin IS NOT NULL"
         ")"
@@ -423,7 +457,7 @@ DEFINITION_DEPENDENCIES_SQL = (
     + " "  # noqa: S608
     f"SELECT 'rule' AS kind, {_NO_NAME} AS schema, {_NO_NAME} AS name, {_NO_PARENT} AS parent_schema, "
     f"{_NO_NAME} AS relation_schema, {_NO_NAME} AS relation_name, "
-    "pg_catalog.pg_get_ruledef(u.oid) AS definition FROM rules u "
+    f"pg_catalog.pg_get_ruledef(u.oid) AS definition, {_NO_ORIGIN} AS origin FROM rules u "
     "UNION ALL "
     + _definition_rows("trigger", "pg_catalog.pg_get_triggerdef(g.oid)", "triggers g")
     + "UNION ALL "
@@ -452,12 +486,12 @@ DEFINITION_DEPENDENCIES_SQL = (
         "policies p CROSS JOIN LATERAL (VALUES (p.polqual), (p.polwithcheck)) AS e(expr) WHERE e.expr IS NOT NULL",
     )
     + "UNION ALL "  # noqa: S608
-    f"SELECT 'function', pn.nspname, p.proname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION} "
+    f"SELECT 'function', pn.nspname, p.proname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION}, {_NO_ORIGIN} "
     "FROM dependencies x JOIN pg_catalog.pg_proc p ON p.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) p.pronamespace "
     f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_PROC} "
     "UNION ALL "
-    f"SELECT 'aggregate_function', fn.nspname, f.proname, an.nspname, {_NO_RELATION}, {_NO_DEFINITION} "
+    f"SELECT 'aggregate_function', fn.nspname, f.proname, an.nspname, {_NO_RELATION}, {_NO_DEFINITION}, {_NO_ORIGIN} "
     "FROM dependencies x "
     "JOIN pg_catalog.pg_aggregate a ON a.aggfnoid::pg_catalog.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_proc ap ON ap.oid OPERATOR(pg_catalog.=) x.refobjid "
@@ -467,25 +501,26 @@ DEFINITION_DEPENDENCIES_SQL = (
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_PROC} "
     "UNION ALL "
-    f"SELECT 'operator', opn.nspname, o.oprname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION} "
+    f"SELECT 'operator', opn.nspname, o.oprname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION}, {_NO_ORIGIN} "
     "FROM dependencies x JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_OPERATOR} "
     "UNION ALL "
-    f"SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, {_NO_RELATION}, {_NO_DEFINITION} "
+    f"SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, {_NO_RELATION}, {_NO_DEFINITION}, {_NO_ORIGIN} "
     "FROM dependencies x JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_OPERATOR} "
     "UNION ALL "
-    f"SELECT 'type', tn.nspname, t.typname, {_NO_PARENT}, cn.nspname, c.relname, {_NO_DEFINITION} "
+    f"SELECT 'type', tn.nspname, t.typname, {_NO_PARENT}, cn.nspname, c.relname, {_NO_DEFINITION}, {_NO_ORIGIN} "
     "FROM types y JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) y.oid "
     "JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) t.typnamespace "
     "LEFT JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.typrelid "
     "LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace "
     "UNION ALL "
-    f"SELECT DISTINCT m.kind, m.schema, m.name, m.parent_schema, {_NO_RELATION}, m.definition FROM machinery m"
+    f"SELECT DISTINCT m.kind, m.schema, m.name, m.parent_schema, {_NO_RELATION}, m.definition, m.origin "
+    "FROM machinery m"
 )
 
 # Реализации операторов и функций allowed_schema по именам. План и SQL агента печатают их без схемы и без типов
@@ -535,38 +570,40 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "), " + _type_machinery("SELECT s.oid FROM seeds s") + " "  # noqa: S608
     "SELECT 'operator_function' AS kind, fn.nspname AS schema, f.proname AS name, "
     "{schema}::pg_catalog.name AS parent_schema, NULL::pg_catalog.text AS definition, "
-    "NULL::pg_catalog.text[] AS config "
+    "NULL::pg_catalog.text[] AS config, NULL::pg_catalog.text AS origin "
     "FROM operators o JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name, NULL, NULL "
+    "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name, NULL, NULL, NULL "
     f"FROM aggregates a CROSS JOIN LATERAL (VALUES {_AGGREGATE_SUPPORT_FUNCTIONS}) AS s(fn) "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT 'operator', opn.nspname, o.oprname, NULL, NULL, NULL FROM sort_operators o "
+    "SELECT 'operator', opn.nspname, o.oprname, NULL, NULL, NULL, NULL FROM sort_operators o "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "UNION ALL "
-    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, NULL, NULL FROM sort_operators o "
+    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, NULL, NULL, NULL FROM sort_operators o "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
     "SELECT CASE WHEN p.atomic THEN 'sql_atomic_body' ELSE 'sql_body' END, {schema}::pg_catalog.name, p.proname, "
-    "NULL, CASE WHEN p.atomic THEN pg_catalog.pg_get_function_sqlbody(p.oid) ELSE p.prosrc END, p.proconfig "
+    "NULL, CASE WHEN p.atomic THEN pg_catalog.pg_get_function_sqlbody(p.oid) ELSE p.prosrc END, p.proconfig, "
+    "NULL "
     "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
     "WHERE l.lanname OPERATOR(pg_catalog.=) 'sql' "
     "UNION ALL "
     "SELECT 'argument_defaults', {schema}::pg_catalog.name, p.proname, NULL, "
-    "pg_catalog.pg_get_expr(p.proargdefaults, 0::pg_catalog.oid), NULL FROM functions p "
+    "pg_catalog.pg_get_expr(p.proargdefaults, 0::pg_catalog.oid), NULL, NULL FROM functions p "
     "WHERE p.proargdefaults IS NOT NULL "
     "UNION ALL "
-    "SELECT 'type_function', fn.nspname, f.proname, NULL, NULL, NULL FROM operators o "
+    "SELECT 'type_function', fn.nspname, f.proname, NULL, NULL, NULL, NULL FROM operators o "
     "CROSS JOIN LATERAL (VALUES (o.oprrest), (o.oprjoin)) AS s(fn) "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT DISTINCT m.kind, m.schema, m.name, m.parent_schema, m.definition, NULL::pg_catalog.text[] FROM machinery m"
+    "SELECT DISTINCT m.kind, m.schema, m.name, m.parent_schema, m.definition, NULL::pg_catalog.text[], m.origin "
+    "FROM machinery m"
 )
 
 

@@ -825,14 +825,15 @@ async def test_type_with_builtin_machinery_passes(db_implicit_calls: DbAccess) -
     assert [row.cells["e"] for row in rows] == ["x", "y"]
 
 
-# Неявное двоично-совместимое приведение встроенного типа к типу public: класс операторов app_ic_vt по умолчанию
-# сравнивает и значения json (ORDER BY j вызывает secret.ic_vt_cmp). Такое приведение делает машинерию app_ic_vt
-# семенем любого запроса, поэтому оно живёт только в своём тесте.
-_DROP_BINARY_JSON_CAST = """
+# Неявное двоично-совместимое приведение встроенного типа к типу public: у json нет классов btree и hash, и класс
+# app_ic_vt по умолчанию сравнивает и значения json (ORDER BY j вызывает secret.ic_vt_cmp). Семейство этого класса
+# проверяется в любом запросе, поэтому приведение живёт только в своих тестах. Приведение jsonb его не делает:
+# у jsonb свои классы btree и hash по умолчанию.
+_DROP_BINARY_CAST = """
 DROP TABLE IF EXISTS public.app_ic_jt;
 DROP TYPE IF EXISTS public.app_ic_vt CASCADE;
 """
-_BINARY_JSON_CAST = """
+_BINARY_CAST = """
 CREATE TYPE public.app_ic_vt;
 CREATE FUNCTION public.app_ic_vt_in(cstring) RETURNS public.app_ic_vt AS 'textin' LANGUAGE internal IMMUTABLE STRICT;
 CREATE FUNCTION public.app_ic_vt_out(public.app_ic_vt) RETURNS cstring AS 'textout' LANGUAGE internal IMMUTABLE STRICT;
@@ -847,30 +848,127 @@ CREATE OPERATOR public.#<< (LEFTARG = public.app_ic_vt, RIGHTARG = public.app_ic
 CREATE OPERATOR public.#=# (LEFTARG = public.app_ic_vt, RIGHTARG = public.app_ic_vt, FUNCTION = public.app_ic_vt_eq);
 CREATE OPERATOR CLASS public.app_ic_vt_ops DEFAULT FOR TYPE public.app_ic_vt USING btree AS
     OPERATOR 1 public.#<<, OPERATOR 3 public.#=#, FUNCTION 1 secret.ic_vt_cmp(public.app_ic_vt, public.app_ic_vt);
-CREATE CAST (json AS public.app_ic_vt) WITHOUT FUNCTION AS IMPLICIT;
-CREATE TABLE public.app_ic_jt (j json);
-INSERT INTO public.app_ic_jt VALUES ('1'), ('2');
+CREATE CAST ({source} AS public.app_ic_vt) WITHOUT FUNCTION AS IMPLICIT;
+CREATE TABLE public.app_ic_jt (j json, jb jsonb, x int);
+INSERT INTO public.app_ic_jt VALUES ('1', '1', 1), ('2', '2', 2);
 """
 
 
 @pytest.fixture
-async def db_binary_json_cast(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
-    """db_plan_check, пока json неявно двоично приводится к public.app_ic_vt с классом операторов над secret."""
-    await db_full.sql_driver.execute(_DROP_BINARY_JSON_CAST + _BINARY_JSON_CAST, readonly=False)
+async def db_binary_cast(
+    request: pytest.FixtureRequest, db_plan_check: DbAccess, db_full: DbAccess
+) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока встроенный тип request.param неявно двоично приводится к public.app_ic_vt."""
+    setup = _BINARY_CAST.replace("{source}", request.param)
+    await db_full.sql_driver.execute(_DROP_BINARY_CAST + setup, readonly=False)
     try:
         yield db_plan_check
     finally:
-        await db_full.sql_driver.execute(_DROP_BINARY_JSON_CAST, readonly=False)
+        await db_full.sql_driver.execute(_DROP_BINARY_CAST, readonly=False)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("db_binary_cast", ["json"], indirect=True)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT j FROM app_ic_jt ORDER BY j",
+        "SELECT DISTINCT j FROM app_ic_jt",
+        "SELECT DISTINCT pg_catalog.to_json(x) AS t FROM app_ic_jt",
+    ],
+)
 async def test_binary_coercible_cast_of_a_builtin_type_is_rejected_before_it_runs(
-    db_binary_json_cast: DbAccess,
+    db_binary_cast: DbAccess, sql: str
 ) -> None:
-    """У json нет класса btree: ORDER BY j берёт класс app_ic_vt (GetDefaultOpClass принимает класс типа, к которому
-    json неявно двоично приводится) и вызвал бы secret.ic_vt_cmp при выполнении."""
-    with pytest.raises(PlanAccessError, match=r"function 'secret\.ic_vt_cmp'"):
-        await db_binary_json_cast.sql_driver.execute("SELECT j FROM app_ic_jt ORDER BY j", readonly=True)
+    """У json нет классов btree и hash: ORDER BY и DISTINCT берут класс app_ic_vt (GetDefaultOpClass принимает класс
+    типа, к которому json неявно двоично приводится) и вызвали бы secret.ic_vt_cmp при выполнении — и для json,
+    которого запрос не называет (to_json). Отказ называет приведение."""
+    with pytest.raises(
+        PlanAccessError, match=r"function 'secret\.ic_vt_cmp'.*implicit binary cast json -> public\.app_ic_vt"
+    ):
+        await db_binary_cast.sql_driver.execute(sql, readonly=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db_binary_cast", ["jsonb"], indirect=True)
+@pytest.mark.parametrize(
+    "sql", ["SELECT 1 AS n", "SELECT jb FROM app_ic_jt ORDER BY jb", "SELECT DISTINCT jb FROM app_ic_jt"]
+)
+async def test_binary_coercible_cast_of_a_type_with_its_own_classes_passes(db_binary_cast: DbAccess, sql: str) -> None:
+    """У jsonb свои классы btree и hash по умолчанию: класс app_ic_vt ему не нужен, приведение ничего не отклоняет."""
+    rows = await db_binary_cast.sql_driver.execute(sql, readonly=True)
+    assert rows
+
+
+# Цепочка представление -> SQL-функции public глубины n; самое глубокое тело называет тип app_ic_okt с классом
+# операторов над функциями public на языке sql. Тип в теле — семя машинерии, а не уровень вложенности: глубина та же,
+# что без него (до пяти — проходит, шесть — непроверяемо).
+_DROP_TYPED_CHAINS = """
+DROP VIEW IF EXISTS public.app_ic_chain3_view, public.app_ic_chain5_view, public.app_ic_chain6_view;
+DROP FUNCTION IF EXISTS public.app_ic_chain3_1(), public.app_ic_chain3_2(), public.app_ic_chain3_3(),
+    public.app_ic_chain5_1(), public.app_ic_chain5_2(), public.app_ic_chain5_3(), public.app_ic_chain5_4(),
+    public.app_ic_chain5_5(), public.app_ic_chain6_1(), public.app_ic_chain6_2(), public.app_ic_chain6_3(),
+    public.app_ic_chain6_4(), public.app_ic_chain6_5(), public.app_ic_chain6_6();
+DROP TYPE IF EXISTS public.app_ic_okt CASCADE;
+"""
+_TYPED_CHAIN_TYPE = """
+CREATE TYPE public.app_ic_okt;
+CREATE FUNCTION public.app_ic_okt_in(cstring) RETURNS public.app_ic_okt AS 'int4in' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.app_ic_okt_out(public.app_ic_okt) RETURNS cstring
+    AS 'int4out' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_okt (INPUT = public.app_ic_okt_in, OUTPUT = public.app_ic_okt_out, LIKE = int4);
+CREATE CAST (public.app_ic_okt AS int4) WITHOUT FUNCTION;
+CREATE FUNCTION public.app_ic_okt_lt(a public.app_ic_okt, b public.app_ic_okt) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 < b::int4';
+CREATE FUNCTION public.app_ic_okt_eq(a public.app_ic_okt, b public.app_ic_okt) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 = b::int4';
+CREATE FUNCTION public.app_ic_okt_cmp(a public.app_ic_okt, b public.app_ic_okt) RETURNS int LANGUAGE sql IMMUTABLE
+    AS 'SELECT CASE WHEN a::int4 < b::int4 THEN -1 WHEN a::int4 > b::int4 THEN 1 ELSE 0 END';
+CREATE OPERATOR public.#~< (LEFTARG = public.app_ic_okt, RIGHTARG = public.app_ic_okt, FUNCTION = public.app_ic_okt_lt);
+CREATE OPERATOR public.#~= (LEFTARG = public.app_ic_okt, RIGHTARG = public.app_ic_okt, FUNCTION = public.app_ic_okt_eq);
+CREATE OPERATOR CLASS public.app_ic_okt_ops DEFAULT FOR TYPE public.app_ic_okt USING btree AS
+    OPERATOR 1 public.#~<, OPERATOR 3 public.#~=, FUNCTION 1 public.app_ic_okt_cmp(public.app_ic_okt, public.app_ic_okt);
+"""
+
+
+def _typed_chain(depth: int) -> str:
+    """Представление app_ic_chain<depth>_view -> app_ic_chain<depth>_1() -> ... -> _<depth>() с типом в теле."""
+    prefix = f"public.app_ic_chain{depth}"
+    statements = [
+        f"CREATE FUNCTION {prefix}_{depth}() RETURNS int LANGUAGE sql IMMUTABLE "
+        "AS $$SELECT CASE WHEN '1'::public.app_ic_okt IS NULL THEN 1 ELSE 2 END$$;"
+    ]
+    statements += [
+        f"CREATE FUNCTION {prefix}_{level}() RETURNS int LANGUAGE sql IMMUTABLE AS $$SELECT {prefix}_{level + 1}()$$;"
+        for level in range(depth - 1, 0, -1)
+    ]
+    statements.append(f"CREATE VIEW {prefix}_view AS SELECT {prefix}_1() AS v;")
+    return "\n".join(statements)
+
+
+@pytest.fixture
+async def db_typed_chains(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть цепочки SQL-функций глубины 3, 5 и 6 с типом app_ic_okt в самом глубоком теле."""
+    setup = _TYPED_CHAIN_TYPE + "\n".join(_typed_chain(depth) for depth in (3, 5, 6))
+    await db_full.sql_driver.execute(_DROP_TYPED_CHAINS + setup, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_TYPED_CHAINS, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth", [3, 5])
+async def test_type_in_the_deepest_body_does_not_cost_depth(db_typed_chains: DbAccess, depth: int) -> None:
+    """Семя типа и тела функций его класса операторов идут кругами, которые глубину определений не тратят."""
+    rows = await db_typed_chains.sql_driver.execute(f"SELECT v FROM app_ic_chain{depth}_view", readonly=True)
+    assert [row.cells["v"] for row in rows] == [2]
+
+
+@pytest.mark.asyncio
+async def test_chain_deeper_than_the_budget_stays_unverifiable(db_typed_chains: DbAccess) -> None:
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await db_typed_chains.sql_driver.execute("SELECT v FROM app_ic_chain6_view", readonly=True)
 
 
 # Расширение citext в схеме вне public (как extensions у Supabase): его машинерию поставил скрипт расширения,

@@ -354,6 +354,24 @@ def test_type_closure_follows_implicit_binary_coercible_casts(sql: str) -> None:
 
 
 @_BOTH_QUERIES
+def test_binary_casts_of_builtin_types_reach_only_default_btree_and_hash_families(sql: str) -> None:
+    """От типа pg_catalog — только семейства классов по умолчанию btree и hash типа-цели и только для метода, у
+    которого у источника нет своего класса по умолчанию; тип-цель не становится семенем (ввод-вывод, приведения,
+    CHECK двоичное приведение не вызывает). Строки несут текст приведения (origin)."""
+    type_closure = sql[sql.index("type_closure(oid) AS (") : sql.index("machinery_set(oids) AS (")]
+    assert "ks.typnamespace" not in type_closure
+    for fragment in (
+        "oc.opcintype OPERATOR(pg_catalog.=) k.casttarget AND oc.opcdefault",
+        "am.amname OPERATOR(pg_catalog.=) ANY (ARRAY['btree', 'hash']::pg_catalog.name[])",
+        "NOT EXISTS (SELECT FROM pg_catalog.pg_opclass so WHERE so.opcintype OPERATOR(pg_catalog.=) k.castsource "
+        "AND so.opcmethod OPERATOR(pg_catalog.=) oc.opcmethod AND so.opcdefault)",
+        "pg_catalog.format_type(k.castsource, NULL::pg_catalog.int4), ' -> '",
+        "m.origin",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
 def test_type_machinery_is_seeded_by_row_types_of_relations(sql: str) -> None:
     """Ссылка на всю строку (r::int, abs(r)) вызывает приведение строкового типа отношения (pg_class.reltype)."""
     assert "SELECT c.reltype FROM" in sql

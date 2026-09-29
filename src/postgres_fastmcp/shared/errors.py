@@ -175,7 +175,15 @@ class SchemataTableAccessError(UserFacingError):
 class PlanAccessError(UserFacingError):
     """План запроса basic читает отношение, функцию или тип вне разрешённого (проверка по плану, plan_check)."""
 
-    def __init__(self, kind: str, qualified_name: str, *, allowed_schema: str, table_prefix: str | None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        qualified_name: str,
+        *,
+        allowed_schema: str,
+        table_prefix: str | None,
+        binary_cast: str | None = None,
+    ) -> None:
         """Инициализация с видом объекта, его полным именем и правилами basic для подсказки.
 
         Args:
@@ -183,6 +191,8 @@ class PlanAccessError(UserFacingError):
             qualified_name: Имя со схемой из плана (schema.name).
             allowed_schema: Разрешённая схема (public).
             table_prefix: Обязательный префикс имён таблиц или None.
+            binary_cast: Неявное двоично-совместимое приведение встроенного типа ("json -> public.app_vt"), через
+                класс операторов которого запрос доходит до объекта; None — объект найден иначе.
         """
         if kind == "function":
             hint = f"Only functions from '{allowed_schema}' or built-in functions allowed in basic mode are permitted."
@@ -193,6 +203,13 @@ class PlanAccessError(UserFacingError):
         else:
             hint = f"Only tables in '{allowed_schema}' are permitted."
         message = f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the query plan reads it. {hint}"
+        if binary_cast is not None:
+            source = binary_cast.split(" -> ", 1)[0]
+            message = (
+                f"Access to {kind} '{qualified_name}' is not allowed in basic mode: the implicit binary cast "
+                f"{binary_cast} makes Postgres sort and hash {source} values with the default operator class of the "
+                f"target type, which calls it. {hint} A database owner can drop the cast or recreate it AS ASSIGNMENT."
+            )
         super().__init__(message)
         self.kind = kind
         self.qualified_name = qualified_name
