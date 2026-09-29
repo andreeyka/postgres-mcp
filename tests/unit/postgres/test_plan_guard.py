@@ -74,6 +74,7 @@ class _Explain:
         rules: list[dict[str, Any]] | None = None,
         prepare_errors: dict[str, Exception] | None = None,
         implementations: list[dict[str, Any]] | dict[str, list[dict[str, Any]]] | None = None,
+        event_triggers: list[dict[str, Any]] | None = None,
     ) -> None:
         self._plans = plans or {}
         self._rules = rules or []
@@ -91,12 +92,18 @@ class _Explain:
         # Список — ответ на любой запрос реализаций; словарь — строки для имён, которые встречаются в запросе литералом.
         self._implementations = implementations or []
         self.implementation_queries: list[str] = []
+        # Строки EVENT_TRIGGER_FUNCTIONS_SQL (функции включённых событийных триггеров) и запросы, которые их получили.
+        self._event_triggers = event_triggers or []
+        self.event_trigger_queries: list[str] = []
 
     async def __call__(self, sql: str) -> list[RowResult] | None:  # noqa: PLR0911
         self.log.append(sql)
         if "pg_catalog.pg_rewrite" in sql:
             self.rule_queries.append(sql)
             return [RowResult(cells=_rule_row(**row)) for row in self._rules]
+        if "pg_catalog.pg_event_trigger" in sql:
+            self.event_trigger_queries.append(sql)
+            return [RowResult(cells=dict(row)) for row in self._event_triggers]
         if "pg_catalog.pg_aggregate" in sql:
             self.implementation_queries.append(sql)
             if isinstance(self._implementations, dict):
@@ -1283,8 +1290,12 @@ async def test_no_name_lookup_without_names_of_the_allowed_schema() -> None:
 
     await _guard(explain).check(_SELECT)
 
-    [footprint] = explain.implementation_queries
-    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
+    [footprint, operators] = explain.implementation_queries
+    # Имён операторов в запросе два места (операторы allowed_schema и встроенные с этим именем), функций — одно.
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 3
+    # Оператор pg_catalog — кандидат: его коммутатор или отрицание может быть оператором public.
+    assert "ARRAY['=']::pg_catalog.name[]" in operators
+    assert "'lower'" not in operators
 
 
 async def test_types_of_non_planned_statements_are_checked_but_their_names_are_not_looked_up() -> None:
@@ -1346,7 +1357,17 @@ async def test_constructs_without_an_operator_look_up_no_operators(sql: str) -> 
     await _guard(explain).check(sql)
 
     [footprint] = explain.implementation_queries
-    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 3
+
+
+async def test_builtin_operator_named_with_its_schema_is_looked_up() -> None:
+    """OPERATOR(pg_catalog.^@) в SQL агента: его коммутатор и отрицание вне pg_catalog спрашивает запрос реализаций."""
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT * FROM app_t WHERE NOT (v OPERATOR(pg_catalog.^@) 'x')")
+
+    [query] = explain.implementation_queries
+    assert "ARRAY['^@']::pg_catalog.name[]" in query
 
 
 @pytest.mark.parametrize(
@@ -1966,3 +1987,155 @@ async def test_public_type_function_is_checked_by_its_body() -> None:
 
     with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
         await _guard(explain).check(_SELECT)
+
+
+def _non_sql(name: str, language: str = "plpgsql") -> dict[str, Any]:
+    """Строка функции public не на языке sql из ALLOWED_IMPLEMENTATIONS_SQL (definition — язык)."""
+    return {"kind": "non_sql_function", "schema": "public", "name": name, "definition": language}
+
+
+@pytest.mark.parametrize(
+    ("rules", "name"),
+    [
+        pytest.param(_VIEW_CALLS, "app_count", id="view-or-trigger-function"),
+        pytest.param([{"kind": "type_function", "schema": "public", "name": "app_count"}], "app_count", id="machinery"),
+        pytest.param(
+            [{"kind": "trigger", "definition": _TRIGGER.format(when="", function="app_count")}],
+            "app_count",
+            id="trigger",
+        ),
+    ],
+)
+async def test_non_sql_public_function_is_rejected_before_explain(rules: list[dict[str, Any]], name: str) -> None:
+    """Функция public на PL/pgSQL, до которой доходит запрос (представление, триггер, машинерия типа): тело не
+    проверить — отказ до EXPLAIN, с языком и тем, как это исправить."""
+    explain = _Explain(rules=rules, implementations={name: [_non_sql(name)]})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", f"public.{name}")
+    message = str(exc_info.value)
+    assert "LANGUAGE plpgsql" in message
+    assert "rewrite it in LANGUAGE sql" in message
+    assert "plan_check_allow_non_sql_functions=true" in message
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_non_sql_function_in_the_agent_sql_is_rejected_before_prepare() -> None:
+    """Оператор public в SQL агента реализован функцией на internal (обёртка встроенной функции)."""
+    explain = _Explain(
+        implementations={
+            "<~>": [{"kind": "operator_function", "schema": "public", "name": "app_near", "parent_schema": "public"}],
+            "app_near": [_non_sql("app_near", "internal")],
+        }
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_near'.*LANGUAGE internal"):
+        await _guard(explain).check("SELECT id <~> 1 FROM app_t")
+
+    assert explain.prepared == []
+
+
+async def test_other_rows_of_a_non_sql_function_are_checked_first() -> None:
+    """Умолчание аргумента функции на PL/pgSQL вызывает secret: отказ называет secret, а не язык — в любом порядке
+    строк ответа."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [_non_sql("app_count"), _defaults("app_count", "secret.api_key()")]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.api_key'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_non_sql_functions_pass_when_allowed() -> None:
+    """allow_non_sql_functions=True — прежнее поведение: тело не проверяется, остальные строки — как раньше."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [_non_sql("app_count"), _defaults("app_count", "1")]},
+    )
+
+    await PlanGuard(explain, allowed_schema="public", table_prefix=None, allow_non_sql_functions=True).check(_SELECT)
+
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == [_EXPLAIN + _SELECT]
+
+
+async def test_non_sql_rejection_names_the_first_function_by_name() -> None:
+    """Несколько функций не на sql в одном ответе: отказ называет первую по имени, а не по порядку строк."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [_non_sql("app_z_out", "internal"), _non_sql("app_a_in", "internal")]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_a_in'"):
+        await _guard(explain).check(_SELECT)
+
+
+def _event_trigger(schema: str, name: str) -> dict[str, Any]:
+    """Строка EVENT_TRIGGER_FUNCTIONS_SQL: функция включённого событийного триггера."""
+    return {"kind": "function", "schema": schema, "name": name}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE EXTENSION IF NOT EXISTS hypopg",
+        "SELECT 1; CREATE EXTENSION IF NOT EXISTS pg_stat_statements",
+        "CREATE TABLE app_x (id int)",
+    ],
+)
+async def test_statement_that_fires_event_triggers_reads_them_once(sql: str) -> None:
+    """Команда без плана (DDL) вызывает событийные триггеры: их функции читаются один раз, до выполнения."""
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    assert len(explain.event_trigger_queries) == 1
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        _SELECT,
+        "INSERT INTO app_t (id) VALUES (1)",
+        "SHOW search_path",
+        "SET LOCAL search_path = public",
+        "PREPARE p AS SELECT * FROM app_t",
+        "DEALLOCATE p",
+        "DECLARE c CURSOR FOR SELECT * FROM app_t",
+        "FETCH NEXT FROM c",
+        "CLOSE c",
+        "EXPLAIN SELECT * FROM app_t",
+    ],
+)
+async def test_statements_that_fire_no_event_triggers_do_not_read_them(sql: str) -> None:
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    assert explain.event_trigger_queries == []
+
+
+async def test_event_trigger_function_of_a_foreign_schema_is_rejected() -> None:
+    """Функция событийного триггера — по правилу функций: secret — отказ и при разрешённых функциях не на sql."""
+    explain = _Explain(event_triggers=[_event_trigger("secret", "evt_audit")])
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.evt_audit'"):
+        await PlanGuard(explain, allowed_schema="public", table_prefix=None, allow_non_sql_functions=True).check(
+            "CREATE EXTENSION IF NOT EXISTS hypopg"
+        )
+
+
+async def test_non_sql_event_trigger_function_is_rejected_by_default() -> None:
+    """Функция событийного триггера в public (на sql не пишется) — правило не-SQL: по умолчанию отказ, с языком."""
+    explain = _Explain(
+        event_triggers=[_event_trigger("public", "app_evt")], implementations={"app_evt": [_non_sql("app_evt")]}
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_evt'.*LANGUAGE plpgsql"):
+        await _guard(explain).check("CREATE EXTENSION IF NOT EXISTS hypopg")
+
+    await PlanGuard(explain, allowed_schema="public", table_prefix=None, allow_non_sql_functions=True).check(
+        "CREATE EXTENSION IF NOT EXISTS hypopg"
+    )

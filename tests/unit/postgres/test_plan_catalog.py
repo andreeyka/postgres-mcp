@@ -9,6 +9,7 @@ from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
     ALLOWED_IMPLEMENTATIONS_SQL,
     DEFINITION_DEPENDENCIES_SQL,
+    EVENT_TRIGGER_FUNCTIONS_SQL,
     BuiltinTypeNames,
     allowed_implementations,
     pg_catalog_functions,
@@ -78,7 +79,7 @@ async def _catalog_sql() -> list[str]:
     await allowed_implementations(
         recorder, "public", operators=["===", "="], functions=["app_agg"], types=['"app_t"'], relations=['"app_x"']
     )
-    return [*recorder.sent, DEFINITION_DEPENDENCIES_SQL]
+    return [*recorder.sent, DEFINITION_DEPENDENCIES_SQL, EVENT_TRIGGER_FUNCTIONS_SQL]
 
 
 async def test_catalog_sql_resolves_nothing_through_the_search_path() -> None:
@@ -209,9 +210,11 @@ def test_allowed_implementations_return_sql_bodies_with_their_settings() -> None
         "p.prosrc",
         "p.proconfig",
         "p.prosqlbody IS NOT NULL",
-        "l.lanname OPERATOR(pg_catalog.=) 'sql'",
+        "p.prolang OPERATOR(pg_catalog.=) 14::pg_catalog.oid",
     ):
         assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
+    # Язык — по oid (SQLlanguageId): ALTER LANGUAGE sql RENAME отдал бы имя 'sql' другому языку.
+    assert "lanname OPERATOR" not in ALLOWED_IMPLEMENTATIONS_SQL
 
 
 def test_allowed_implementations_return_argument_defaults_of_any_language() -> None:
@@ -223,7 +226,31 @@ def test_allowed_implementations_return_argument_defaults_of_any_language() -> N
     ):
         assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
     defaults = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("'argument_defaults'") :]
-    assert "lanname" not in defaults
+    assert "lanname" not in defaults[: defaults.index("UNION ALL")]
+
+
+def test_allowed_implementations_return_non_sql_functions_except_aggregates_and_extension_members() -> None:
+    """Функции public не на sql: язык — в definition; агрегаты (prolang internal), члены расширений и конструкторы
+    диапазонов, созданные CREATE TYPE (внутренняя зависимость от типа), не в счёт."""
+    rows = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("'non_sql_function'") :]
+    rows = rows[: rows.index("UNION ALL")]
+    for fragment in (
+        "l.lanname::pg_catalog.text",
+        "p.prolang OPERATOR(pg_catalog.<>) 14::pg_catalog.oid",
+        "d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid "
+        "AND d.deptype OPERATOR(pg_catalog.=) 'i'",
+        "p.prokind OPERATOR(pg_catalog.<>) 'a'",
+        "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid "
+        "AND e.objid OPERATOR(pg_catalog.=) p.oid",
+    ):
+        assert fragment in rows
+
+
+def test_allowed_implementations_return_planner_support_functions() -> None:
+    """Опорная функция планировщика (prosupport) — строка type_function; у членов расширений — нет."""
+    assert "p.prokind, p.prosupport" in ALLOWED_IMPLEMENTATIONS_SQL
+    support = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("p.prosupport::pg_catalog.oid") :]
+    assert "e.objid OPERATOR(pg_catalog.=) p.oid" in support[: support.index("UNION ALL")]
 
 
 class _Sources(Visitor):
@@ -237,9 +264,9 @@ class _Sources(Visitor):
         self.names.add(node.relname if node.schemaname is None else f"{node.schemaname}.{node.relname}")
 
 
-def _cte_sources(name: str) -> set[str]:
-    """Отношения и CTE, которые читает CTE name в DEFINITION_DEPENDENCIES_SQL."""
-    [statement] = pglast.parse_sql(DEFINITION_DEPENDENCIES_SQL)
+def _cte_sources(name: str, sql: str = DEFINITION_DEPENDENCIES_SQL) -> set[str]:
+    """Отношения и CTE, которые читает CTE name в sql (по умолчанию DEFINITION_DEPENDENCIES_SQL)."""
+    [statement] = pglast.parse_sql(sql)
     [cte] = [cte for cte in statement.stmt.withClause.ctes if cte.ctename == name]
     visitor = _Sources()
     visitor(cte.ctequery)
@@ -337,8 +364,10 @@ def test_type_machinery_trusts_extensions_by_the_owning_object(sql: str) -> None
         "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) k.oid",
     ):
         assert f"e.classid OPERATOR(pg_catalog.=) {owner}" in sql
+    # Строки функций не на sql (запрос реализаций) доверяют члену расширения по самой функции — это не машинерия.
+    machinery = sql[sql.index("type_seed_set(oids)") : sql.rindex("k.conbin IS NOT NULL)")]
     for member in ("'pg_catalog.pg_proc'", "'pg_catalog.pg_operator'"):
-        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in sql
+        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in machinery
 
 
 @_BOTH_QUERIES
@@ -407,3 +436,67 @@ async def test_allowed_implementations_default_to_no_seeds() -> None:
 def test_definition_machinery_is_seeded_by_locked_relations_and_dependency_types() -> None:
     """Колонки заблокированных отношений, целей DML и их потомков, типы из pg_depend определений."""
     assert {"relation_set", "types", "pg_catalog.pg_attribute"} <= _cte_sources("type_seed_set")
+
+
+# ALLOWED_IMPLEMENTATIONS_SQL с подставленными значениями: pglast разбирает только готовый текст.
+_IMPLEMENTATIONS_TEXT = ALLOWED_IMPLEMENTATIONS_SQL.format(
+    schema="'public'",
+    operators="ARRAY['=']::pg_catalog.name[]",
+    functions="ARRAY['app_f']::pg_catalog.name[]",
+    types="ARRAY[]::pg_catalog.text[]",
+    relations="ARRAY[]::pg_catalog.text[]",
+)
+
+
+@pytest.mark.parametrize(
+    "sql", [_IMPLEMENTATIONS_TEXT, DEFINITION_DEPENDENCIES_SQL], ids=["implementations", "definitions"]
+)
+def test_family_operators_are_closed_over_commutators_and_negators(sql: str) -> None:
+    """Коммутатор и отрицание (транзитивно) операторов семейств в машинерии обоих запросов."""
+    assert "(o.oprcom), (o.oprnegate)" in sql
+    assert "family_operator_closure" in _cte_sources("family_operators", sql)
+    assert {"families", "family_operator_closure", "pg_catalog.pg_operator"} <= _cte_sources(
+        "family_operator_closure", sql
+    )
+
+
+def test_named_and_sort_operators_are_closed_over_commutators_and_negators() -> None:
+    """Названные операторы и операторы сортировки агрегатов — семена замыкания; у каждого оператора замыкания —
+    строка схемы, функция (parent_schema — схема оператора) и функции оценки."""
+    assert {"pg_catalog.pg_operator", "aggregates", "operator_closure"} <= _cte_sources(
+        "operator_closure", _IMPLEMENTATIONS_TEXT
+    )
+    assert "operator_closure" in _cte_sources("operators", _IMPLEMENTATIONS_TEXT)
+    # Встроенные операторы с названным именем дают только коммутатор и отрицание вне pg_catalog.
+    closure = _IMPLEMENTATIONS_TEXT[_IMPLEMENTATIONS_TEXT.index("operator_closure(oid) AS") :]
+    closure = closure[: closure.index("), operators AS")]
+    assert (
+        "o.oprnamespace OPERATOR(pg_catalog.=) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid "
+        "AND o.oprname OPERATOR(pg_catalog.=) ANY (ARRAY['=']::pg_catalog.name[]) "
+        "AND so.oprnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid"
+    ) in closure
+    assert "a.aggsortop" in ALLOWED_IMPLEMENTATIONS_SQL
+    assert "sort_operators" not in ALLOWED_IMPLEMENTATIONS_SQL
+    assert "{schema}::pg_catalog.name AS parent_schema" not in ALLOWED_IMPLEMENTATIONS_SQL
+
+
+def test_event_trigger_functions_are_read_for_ddl_events() -> None:
+    """Включённые событийные триггеры на события команд DDL (не login), без фильтра тегов."""
+    for fragment in (
+        "pg_catalog.pg_event_trigger t",
+        "t.evtfoid",
+        "t.evtenabled OPERATOR(pg_catalog.<>) 'D'",
+        "'ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite'",
+        "'function' AS kind",
+    ):
+        assert fragment in EVENT_TRIGGER_FUNCTIONS_SQL
+    assert "evttags" not in EVENT_TRIGGER_FUNCTIONS_SQL
+
+
+def test_event_triggers_are_trusted_by_the_owning_extension() -> None:
+    """Триггер — член расширения доверен вместе с функцией; членство самой функции не в счёт (триггер DBA)."""
+    assert (
+        "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_event_trigger'::pg_catalog.regclass::pg_catalog.oid "
+        "AND e.objid OPERATOR(pg_catalog.=) t.oid AND e.deptype OPERATOR(pg_catalog.=) 'e'"
+    ) in EVENT_TRIGGER_FUNCTIONS_SQL
+    assert "'pg_catalog.pg_proc'" not in EVENT_TRIGGER_FUNCTIONS_SQL
