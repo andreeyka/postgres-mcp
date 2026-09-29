@@ -26,12 +26,11 @@ from pglast.ast import (
     String,
     UpdateStmt,
 )
-from pglast.enums.parsenodes import SetOperation
-from pglast.parser import ParseError
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.plan_expressions import parse_target_list
 from postgres_fastmcp.postgres.security.policies import BASIC_ALLOWED_FUNCTIONS
 from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name
 from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
@@ -134,24 +133,6 @@ class _FunctionCalls(Visitor):
         self.calls.append(node)
 
 
-# Части SelectStmt, которых в "SELECT <Function Call>" быть не должно: только список целей.
-_NON_TARGET_SELECT_PARTS = (
-    "fromClause",
-    "whereClause",
-    "groupClause",
-    "havingClause",
-    "withClause",
-    "distinctClause",
-    "sortClause",
-    "limitCount",
-    "limitOffset",
-    "lockingClause",
-    "windowClause",
-    "valuesLists",
-    "intoClause",
-)
-
-
 def _call_name(call: FuncCall) -> tuple[str | None, str]:
     """Имя вызова: (схема или None, имя).
 
@@ -185,25 +166,15 @@ def _function_call_names(call: object, *, skip_outermost: bool) -> list[tuple[st
         PlanUnverifiableError: Текста нет, он не разбирается, в нём не только список целей, у одиночной
             функции он не один вызов, а у нескольких функций — ни одного вызова.
     """
-    if not isinstance(call, str) or not call.strip():
-        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
-    try:
-        statements = pglast.parse_sql(f"SELECT {call}")
-    except ParseError:
-        raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE) from None
-    statement = statements[0].stmt if len(statements) == 1 else None
-    if (
-        not isinstance(statement, SelectStmt)
-        or statement.op != SetOperation.SETOP_NONE
-        or any(getattr(statement, part) for part in _NON_TARGET_SELECT_PARTS)
-        or not statement.targetList
-    ):
+    statement = parse_target_list(call)
+    if statement is None:
         raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
     collector = _FunctionCalls()
     collector(statement)
     calls = collector.calls
     if skip_outermost:
-        outermost = statement.targetList[0].val if len(statement.targetList) == 1 else None
+        targets = statement.targetList or ()
+        outermost = targets[0].val if len(targets) == 1 else None
         if not isinstance(outermost, FuncCall):
             raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
         calls = [found for found in calls if found is not outermost]
