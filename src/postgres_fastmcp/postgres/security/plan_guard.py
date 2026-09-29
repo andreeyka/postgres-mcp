@@ -326,8 +326,13 @@ class PlanGuard:
         )
 
     def _check_expressions(self, node: dict[str, Any], pending: _CatalogNames) -> None:
-        """Выражения узла: неразборчивое — PlanUnverifiableError, имена — по правилам basic."""
+        """Выражения узла: неразборчивое — PlanUnverifiableError, имена — по правилам basic.
+
+        Имена функций Function Call пропускаются только у Function Scan: их уже проверил строгий путь
+        _check_node. У любого другого узла Function Call проверяется как обычное выражение.
+        """
         node_type = node.get("Node Type")
+        strict_function_call = node_type == _FUNCTION_SCAN_TYPE
         for key, value in node.items():
             parse = EXPRESSION_PARSERS.get(key)
             if parse is None:
@@ -339,7 +344,8 @@ class PlanGuard:
                 names = parse(text)
                 if names is None:
                     raise PlanUnverifiableError(node_type if isinstance(node_type, str) else None, key=key)
-                self._check_names(names, pending, check_functions=key != FUNCTION_CALL_KEY)
+                check_functions = key != FUNCTION_CALL_KEY or not strict_function_call
+                self._check_names(names, pending, check_functions=check_functions)
 
     def _check_names(self, names: ExpressionNames, pending: _CatalogNames, *, check_functions: bool) -> None:
         """Имена одного выражения; то, что решает только каталог, откладывается в pending."""

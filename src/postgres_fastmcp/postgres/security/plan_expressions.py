@@ -332,7 +332,7 @@ def expression_texts(value: object) -> list[str] | None:
 
 
 # Function Call узла Function Scan: имена его функций проверяет строгий путь PlanGuard (_check_function_calls),
-# здесь — только типы, операторы и последовательности.
+# общий разбор — только типы, операторы и последовательности. У других узлов — обычное выражение.
 FUNCTION_CALL_KEY = "Function Call"
 
 # Ключи узла плана с выражениями (explain.c, VERBOSE, PG 15–17) и разбор их строк.

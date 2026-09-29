@@ -462,6 +462,20 @@ async def test_function_call_with_more_than_a_target_list_is_rejected(node: dict
         await _guard(explain).check(_SELECT)
 
 
+@pytest.mark.parametrize("node_type", ["Seq Scan", "Result", "Table Function Scan", None])
+async def test_function_call_outside_a_function_scan_is_checked_as_an_expression(node_type: str | None) -> None:
+    """Имена Function Call пропускает только Function Scan: его вызовы уже проверил строгий путь."""
+    node: dict[str, Any] = {"Function Call": "secret.f(1)"}
+    if node_type is not None:
+        node["Node Type"] = node_type
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", "secret.f")
+
+
 def _with(**expressions: Any) -> dict[str, Any]:
     """Скан разрешённой таблицы с выражениями плана."""
     return {**_scan("public", "app_t"), **expressions}
