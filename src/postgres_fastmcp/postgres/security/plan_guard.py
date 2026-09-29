@@ -18,8 +18,10 @@ pglast (plan_expressions) и проверяются по тем же прави�
 После этого читаются правила заблокированного — текст правила и его зависимости (pg_depend), чего план
 не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public). Только потом EXPLAIN:
 планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не доходит.
+Оператор с GENERIC_PLAN, тип параметра которого PREPARE не выводит ($1 IS NULL), готовится ещё раз с NULL
+вместо каждого $N (блокировки те же — отношения называет текст); не вышло и так — отказ до EXPLAIN.
 После всех EXPLAIN правила читаются ещё раз — представления, до которых дошёл только планировщик (встраивание
-SQL-функций, оператор GENERIC_PLAN, тип параметра которого PREPARE не вывел).
+SQL-функций).
 
 Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
 редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
@@ -35,6 +37,7 @@ from typing import Any
 
 import pglast
 from pglast.ast import (
+    A_Const,
     A_Expr,
     DeclareCursorStmt,
     DefElem,
@@ -43,6 +46,7 @@ from pglast.ast import (
     FuncCall,
     InsertStmt,
     Node,
+    ParamRef,
     SelectStmt,
     SortBy,
     String,
@@ -52,6 +56,7 @@ from pglast.ast import (
 )
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
+from psycopg import Error as PostgresError
 from psycopg.errors import IndeterminateDatatype
 
 from postgres_fastmcp.postgres.models import RowResult
@@ -102,7 +107,8 @@ _FUNCTION_SCAN_TYPE = "Function Scan"
 
 # Служебные имена проверки: подготовленный оператор (_pgmcp_check_<метка проверки>_<номер>) и точка сохранения
 # для оператора с GENERIC_PLAN. Метка — случайная на каждую проверку: подготовленный оператор переживает ROLLBACK,
-# и имя, оставшееся в соединении после сбоя, не должно совпасть со следующим.
+# и имя, оставшееся в соединении после сбоя, не должно совпасть со следующим. Литерал у них общий намеренно:
+# имена подготовленных операторов и точек сохранения — разные пространства имён.
 _PREPARED_PREFIX = "_pgmcp_check"
 _SAVEPOINT = "_pgmcp_check"
 
@@ -184,6 +190,20 @@ class _FunctionCalls(Visitor):
     def visit_FuncCall(self, _ancestors: object, node: FuncCall) -> None:  # noqa: N802
         """Запомнить вызов."""
         self.calls.append(node)
+
+
+class _NullParameters(Visitor):
+    """Заменяет каждый параметр $N константой NULL (дерево меняется на месте)."""
+
+    def visit_ParamRef(self, _ancestors: object, _node: ParamRef) -> A_Const:  # noqa: N802
+        """NULL вместо параметра."""
+        return A_Const(isnull=True)
+
+
+def _with_null_parameters(text: str) -> str:
+    """Текст оператора, где каждый $N заменён на NULL; разбирается заново, чтобы не трогать дерево EXPLAIN."""
+    [raw] = pglast.parse_sql(text)
+    return RawStream()(_NullParameters()(raw.stmt))
 
 
 class _StatementNames(Visitor):
@@ -366,18 +386,38 @@ class PlanGuard:
 
         GENERIC_PLAN: PREPARE без типов выводит типы $N из контекста, но, в отличие от EXPLAIN (GENERIC_PLAN),
         не принимает невыводимый ($1 IS NULL, pg_typeof($1)) — 42P18. Такой оператор готовится в точке сохранения;
-        при 42P18 она откатывается, и его представления проверяет чтение правил после EXPLAIN.
+        при 42P18 она откатывается, и оператор готовится ещё раз (тоже в точке сохранения) с NULL вместо каждого
+        $N: отношения и представления называет текст, так что блокировки те же, а у NULL тип выводится
+        (unknown). Не вышло и так — отказ: EXPLAIN оператора, представления которого не проверены, выполнил бы
+        их IMMUTABLE-вызовы.
+
+        Raises:
+            PlanUnverifiableError: Оператор с GENERIC_PLAN не готовится ни с $N, ни с NULL.
         """
-        name = f"{_PREPARED_PREFIX}_{self._prepared_tag}_{self._prepared_count}"
-        self._prepared_count += 1
-        command = f"PREPARE {name} AS {text}; DEALLOCATE {name}"
         if not generic:
-            await self._run(command)
+            await self._run(self._prepare_command(text))
             return
         try:
-            await self._run(f"SAVEPOINT {_SAVEPOINT}; {command}; RELEASE SAVEPOINT {_SAVEPOINT}")
+            await self._run(self._savepoint_command(text))
         except IndeterminateDatatype:
             await self._run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}; RELEASE SAVEPOINT {_SAVEPOINT}")
+        else:
+            return
+        try:
+            await self._run(self._savepoint_command(_with_null_parameters(text)))
+        except PostgresError:
+            await self._run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}; RELEASE SAVEPOINT {_SAVEPOINT}")
+            raise PlanUnverifiableError(rules=True) from None
+
+    def _prepare_command(self, text: str) -> str:
+        """PREPARE оператора под новым служебным именем и DEALLOCATE одной командой."""
+        name = f"{_PREPARED_PREFIX}_{self._prepared_tag}_{self._prepared_count}"
+        self._prepared_count += 1
+        return f"PREPARE {name} AS {text}; DEALLOCATE {name}"
+
+    def _savepoint_command(self, text: str) -> str:
+        """Та же команда в точке сохранения: ошибка PREPARE откатывается, не обрывая транзакцию."""
+        return f"SAVEPOINT {_SAVEPOINT}; {self._prepare_command(text)}; RELEASE SAVEPOINT {_SAVEPOINT}"
 
     async def _check_rules(self) -> None:
         """Представления и правила, которые заблокировала транзакция: текст правила и его зависимости.

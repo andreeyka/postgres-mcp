@@ -1046,16 +1046,56 @@ async def test_generic_statement_is_prepared_in_a_savepoint() -> None:
     assert "AS SELECT * FROM app_t WHERE id = $1; DEALLOCATE " in command
 
 
-async def test_undeterminable_parameter_falls_back_to_rules_after_explain() -> None:
-    """PREPARE не выводит тип $1 там, где EXPLAIN (GENERIC_PLAN) проходит: точка сохранения откатывается."""
+async def test_undeterminable_parameter_is_prepared_again_with_null() -> None:
+    """PREPARE не выводит тип $1 там, где EXPLAIN (GENERIC_PLAN) проходит: точка сохранения откатывается,
+    оператор готовится ещё раз с NULL вместо $N, и правила читаются до EXPLAIN (который остаётся с $1)."""
     error = IndeterminateDatatype("could not determine data type of parameter $1")
     explain = _Explain(prepare_errors={"$1 IS NULL": error})
 
-    await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL FROM app_t")
+    await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT * FROM app_t WHERE $1 IS NULL")
 
+    first, rollback, retry = explain.prepared
+    assert "AS SELECT * FROM app_t WHERE $1 IS NULL; DEALLOCATE " in first
+    assert rollback == "ROLLBACK TO SAVEPOINT _pgmcp_check; RELEASE SAVEPOINT _pgmcp_check"
+    assert retry.startswith("SAVEPOINT _pgmcp_check; PREPARE _pgmcp_check_")
+    assert retry.endswith("; RELEASE SAVEPOINT _pgmcp_check")
+    assert "AS SELECT * FROM app_t WHERE NULL IS NULL; DEALLOCATE " in retry
+    explain_sql = "EXPLAIN (VERBOSE, FORMAT JSON, GENERIC_PLAN) SELECT * FROM app_t WHERE $1 IS NULL"
+    assert explain.sent == [explain_sql]
+    rules = [index for index, sql in enumerate(explain.log) if "pg_catalog.pg_rewrite" in sql]
+    assert len(rules) == 2
+    assert explain.log.index(retry) < rules[0] < explain.log.index(explain_sql)
+
+
+async def test_every_parameter_is_replaced_by_null_in_the_retry() -> None:
+    error = IndeterminateDatatype("could not determine data type of parameter $2")
+    explain = _Explain(prepare_errors={"pg_typeof($2)": error})
+
+    await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT pg_typeof($2), id FROM app_t WHERE id = $1 LIMIT $3")
+
+    retry = explain.prepared[-1]
+    assert "AS SELECT pg_typeof(NULL), id FROM app_t WHERE id = NULL LIMIT ALL; DEALLOCATE " in retry
+    assert "$" not in retry
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        IndeterminateDatatype("could not determine data type of parameter $1"),
+        UndefinedTable('relation "app_missing" does not exist'),
+    ],
+)
+async def test_failed_retry_is_unverifiable_without_explain(error: Exception) -> None:
+    """Повторный PREPARE с NULL не прошёл: отказ закрыто, EXPLAIN непроверенного оператора не выполняется."""
+    first = IndeterminateDatatype("could not determine data type of parameter $1")
+    explain = _Explain(prepare_errors={"$1 IS NULL": first, "NULL IS NULL": error})
+
+    with pytest.raises(PlanUnverifiableError):
+        await _guard(explain).check("EXPLAIN (GENERIC_PLAN) SELECT * FROM app_t WHERE $1 IS NULL")
+
+    assert explain.sent == []
+    assert explain.rule_queries == []
     assert explain.prepared[-1] == "ROLLBACK TO SAVEPOINT _pgmcp_check; RELEASE SAVEPOINT _pgmcp_check"
-    assert explain.sent == ["EXPLAIN (VERBOSE, FORMAT JSON, GENERIC_PLAN) SELECT $1 IS NULL FROM app_t"]
-    assert len(explain.rule_queries) == 2
 
 
 async def test_prepare_error_propagates_without_explain() -> None:

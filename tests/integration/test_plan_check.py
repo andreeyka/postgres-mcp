@@ -317,6 +317,18 @@ async def test_folded_function_of_a_view_is_not_executed_before_the_rejection(db
 
 
 @pytest.mark.asyncio
+async def test_folded_function_of_a_view_is_not_executed_with_an_undeterminable_parameter(
+    db_plan_check: DbAccess,
+) -> None:
+    """PREPARE не выводит тип $1 в $1 IS NULL (42P18): оператор готовится ещё раз с NULL вместо $1, и правила
+    представления читаются до EXPLAIN (GENERIC_PLAN) — secret.boom() не выполняется."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
+        await db_plan_check.sql_driver.execute(
+            "EXPLAIN (GENERIC_PLAN) SELECT * FROM app_boom_view WHERE $1 IS NULL", readonly=True
+        )
+
+
+@pytest.mark.asyncio
 async def test_public_operator_over_a_builtin_outside_basic_is_rejected_in_the_agent_sql(
     db_plan_check: DbAccess,
 ) -> None:
