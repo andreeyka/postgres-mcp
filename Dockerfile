@@ -87,14 +87,15 @@ ENV MCP_SERVER_HOST=0.0.0.0
 
 WORKDIR $UV_WORKDIR
 
-# Non-root пользователь для безопасности
-RUN adduser -D -h /home/app -s /bin/sh app
+# Non-root пользователь с фиксированным числовым UID: Kubernetes с runAsNonRoot
+# проверяет только числовой USER, по имени (USER app) под не стартует
+RUN addgroup -g 10001 app && adduser -D -u 10001 -G app -h /home/app -s /bin/sh app
 
 # Копируем только виртуальное окружение из build stage
 # (--no-editable в build установил пакет внутрь .venv, src/ не нужен)
 COPY --from=build --chown=app:app ${UV_WORKDIR}/.venv ${UV_WORKDIR}/.venv
 
-USER app
+USER 10001:10001
 
 # Python нативно обрабатывает SIGINT как KeyboardInterrupt
 # https://hynek.me/articles/docker-signals/
