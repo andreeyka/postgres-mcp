@@ -43,14 +43,6 @@
 - `catalog_driver` — обязательный keyword-only аргумент `ExplainPlanBuilder`, `CostEvaluator`, `IndexTuningBase`/`DatabaseTuningAdvisor`, `TopQueriesCalc`.
 - `DatabaseConfigPort` получил `max_inactive_connection_lifetime`.
 
-**При включении `plan_check`** (настройка новая, по умолчанию выключена; README, «Проверка по плану») (#18, #25, #26).
-
-- Функции `public` не на SQL (PL/pgSQL, PL/Python, C, `internal`), до которых доходит запрос, по умолчанию отклоняются. Свой триггер в `public` отклоняет `INSERT`/`UPDATE`/`DELETE` его таблицы (`SELECT` — нет). Что делать: переписать функцию на `LANGUAGE sql`, для `updated_at` взять расширение `moddatetime` либо включить `plan_check_allow_non_sql_functions`.
-- Базовый тип в `public` с C/internal вводом-выводом не из расширения отклоняет запросы к таблицам с такой колонкой.
-- `CREATE EXTENSION` отклоняется, пока включён событийный триггер не из расширения с функцией не на SQL или вне `public` (так на Supabase).
-- Неявное binary-coercible приведение от встроенного типа к типу с отклонённым семейством операторов отклоняет все запросы в базе; ошибка называет приведение — удалите его или пересоздайте `AS ASSIGNMENT`.
-- Отклоняются запросы к `information_schema`, секциям в других схемах, `ROWS FROM` из нескольких функций `public`; узлы, которые нельзя проверить (fdw pushdown, `Custom Scan`), — `PlanUnverifiableError`. Полный список ложных отказов — в README.
-
 ### Добавлено
 
 - `plan_check` (env `MCP_DATABASE_PLAN_CHECK`, по умолчанию `false`) — строгий режим basic: каждый оператор агента проверяется по плану `EXPLAIN (VERBOSE, FORMAT JSON)` до выполнения. Закрывает представления, правила и функции в `public`, читающие другие схемы (#18).
@@ -61,6 +53,14 @@
 - `StatementResult` и `execute_statement` у `SqlExecutor`/`SafeSqlExecutor`/`SqlDriverPort` (#12).
 - Новые ошибки: `SystemRelationAccessError`, `ShowParameterNotAllowedError`, `TypeNotAllowedError`, `ExplainOptionNotAllowedError`, `PlanAccessError`, `PlanUnverifiableError`.
 
+**Что `plan_check` отклоняет, хотя это может быть легитимно** (настройка новая и по умолчанию выключена, поэтому существующие развёртывания это не ломает; полный список — README, «Проверка по плану») (#18, #25, #26).
+
+- Функции `public` не на SQL (PL/pgSQL, PL/Python, C, `internal`), до которых доходит запрос, по умолчанию отклоняются. Свой триггер в `public` отклоняет `INSERT`/`UPDATE`/`DELETE` его таблицы (`SELECT` — нет). Что делать: переписать функцию на `LANGUAGE sql`, для `updated_at` взять расширение `moddatetime` либо включить `plan_check_allow_non_sql_functions`.
+- Базовый тип в `public` с C/internal вводом-выводом не из расширения отклоняет запросы к таблицам с такой колонкой.
+- `CREATE EXTENSION` отклоняется, пока включён событийный триггер не из расширения с функцией не на SQL или вне `public` (так на Supabase).
+- Неявное binary-coercible приведение от встроенного типа к типу с отклонённым семейством операторов отклоняет все запросы в базе; ошибка называет приведение — удалите его или пересоздайте `AS ASSIGNMENT`.
+- Отклоняются запросы к `information_schema`, секциям в других схемах, `ROWS FROM` из нескольких функций `public`; узлы, которые нельзя проверить (fdw pushdown, `Custom Scan`), — `PlanUnverifiableError`. Полный список ложных отказов — в README.
+
 ### Изменено
 
 - basic + `table_prefix`: `get_object_details` для объекта без префикса отвечает той же `TablePrefixAccessError`, что и `execute_sql`, до запроса и независимо от существования объекта; раньше детали последовательностей отдавались и без префикса (#13).
@@ -69,7 +69,7 @@
 - Каждая транзакция начинается с `SET LOCAL standard_conforming_strings = on` в одной команде с `BEGIN` (#19).
 - С `plan_check` проверка плана и оператор идут в одной транзакции на одном соединении: один checkout пула вместо N+1, префикс `SET LOCAL` отправляется отдельно и в тексте оператора больше не виден (#21).
 - `explain_query` возвращает настоящую ошибку валидатора или `plan_check` вместо общей (#18).
-- Цена `plan_check`: около 5 запросов на обычный оператор, около 6 на `GENERIC_PLAN` (#23).
+- Цена `plan_check`: несколько запросов к каталогу и `PREPARE`/`EXPLAIN` на каждый оператор агента в той же транзакции; разбивка — в README (#23–#26).
 
 ### Безопасность
 
