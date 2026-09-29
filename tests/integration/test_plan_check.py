@@ -28,6 +28,18 @@ CREATE OR REPLACE FUNCTION secret.get_tokens() RETURNS text[]
 CREATE OR REPLACE VIEW public.app_secret_unnest_view AS SELECT * FROM unnest(secret.get_tokens()) AS t(token);
 CREATE TABLE IF NOT EXISTS public.app_plan_items (id int);
 INSERT INTO public.app_plan_items SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM public.app_plan_items);
+CREATE OR REPLACE FUNCTION secret.reveal(t text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN upper(t); END';
+CREATE OR REPLACE VIEW public.app_expr_secret_fn_view AS SELECT secret.reveal(id::text) AS r FROM public.app_plan_items;
+CREATE OR REPLACE VIEW public.app_expr_setting_view AS
+    SELECT id, current_setting('application_name') AS s FROM public.app_plan_items;
+CREATE OR REPLACE VIEW public.app_expr_lower_view AS SELECT lower(id::text) AS l FROM public.app_plan_items;
+CREATE OR REPLACE FUNCTION public.app_double(n int) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN n * 2; END';
+CREATE OR REPLACE VIEW public.app_expr_public_fn_view AS SELECT app_double(id) AS d FROM public.app_plan_items;
+CREATE TABLE IF NOT EXISTS public.other_users (id int, secret_note text);
+CREATE TABLE IF NOT EXISTS public.app_serial_items (id serial PRIMARY KEY, v text);
+CREATE TABLE IF NOT EXISTS public.app_identity_items (id int GENERATED ALWAYS AS IDENTITY, v text);
 """
 
 
@@ -138,3 +150,67 @@ async def test_nested_call_of_a_single_function_scan_is_rejected_with_plan_check
     """Unnest — разрешённая встроенная, но её аргумент secret.get_tokens() виден только в Function Call."""
     with pytest.raises(PlanAccessError, match=r"secret\.get_tokens"):
         await db_plan_check.sql_driver.execute("SELECT * FROM app_secret_unnest_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_view_calling_a_foreign_function_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
+    """Функция plpgsql не встраивается: вызов secret.reveal виден только в Output плана."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.reveal'"):
+        await db_plan_check.sql_driver.execute("SELECT r FROM app_expr_secret_fn_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_view_calling_a_builtin_outside_basic_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
+    """current_setting печатается без схемы; каталог подтверждает, что это функция pg_catalog."""
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
+        await db_plan_check.sql_driver.execute("SELECT s FROM app_expr_setting_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_views_with_allowed_expressions_return_data(db_plan_check: DbAccess) -> None:
+    lower_rows = await db_plan_check.sql_driver.execute("SELECT l FROM app_expr_lower_view", readonly=True)
+    public_rows = await db_plan_check.sql_driver.execute("SELECT d FROM app_expr_public_fn_view", readonly=True)
+    assert "1" in [row.cells["l"] for row in lower_rows]
+    assert 2 in [row.cells["d"] for row in public_rows]
+
+
+@pytest.mark.asyncio
+async def test_row_type_of_a_table_without_the_prefix_is_rejected(db_plan_check: DbAccess) -> None:
+    """NULL::other_users — строковый тип таблицы public без префикса: оракул её структуры."""
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.other_users'"):
+        await db_plan_check.sql_driver.execute(
+            "SELECT * FROM json_populate_record(NULL::other_users, '{}')", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_type_of_a_prefixed_table_passes(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute(
+        """SELECT id FROM json_populate_record(NULL::app_plan_items, '{"id": 7}')""", readonly=True
+    )
+    assert rows[0].cells["id"] == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM app_plan_items WHERE id = (SELECT max(id) FROM app_plan_items WHERE id < 100)",
+        "SELECT id FROM app_plan_items WHERE id NOT IN (SELECT id FROM app_plan_items WHERE id > 100)",
+        "SELECT id, count(*) AS n, row_number() OVER (ORDER BY id DESC) AS r "
+        "FROM app_plan_items GROUP BY id ORDER BY id DESC NULLS LAST",
+    ],
+)
+async def test_subqueries_sorting_and_windows_pass_with_plan_check(db_plan_check: DbAccess, sql: str) -> None:
+    """Реальные формы плана: $0/(InitPlan 1).col1, (hashed SubPlan 1), Sort Key, Group Key, OVER (?)."""
+    rows = await db_plan_check.sql_driver.execute(sql, readonly=True)
+    assert 1 in [row.cells["id"] for row in rows]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["app_serial_items", "app_identity_items"])
+async def test_insert_with_a_sequence_default_passes_with_plan_check(db_plan_check: DbAccess, table: str) -> None:
+    """DEFAULT serial и identity план печатает как nextval('app_..._seq'::тип): это отношение, а не вызов."""
+    rows = await db_plan_check.sql_driver.execute(f"INSERT INTO {table} (v) VALUES ('x') RETURNING id", readonly=False)
+    await db_plan_check.sql_driver.execute(f"DELETE FROM {table} WHERE v = 'x'", readonly=False)
+    assert rows[0].cells["id"] >= 1
