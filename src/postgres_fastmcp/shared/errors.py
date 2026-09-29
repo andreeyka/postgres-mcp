@@ -173,19 +173,21 @@ class SchemataTableAccessError(UserFacingError):
 
 
 class PlanAccessError(UserFacingError):
-    """План запроса basic читает отношение или функцию вне разрешённого (проверка по плану, plan_check)."""
+    """План запроса basic читает отношение, функцию или тип вне разрешённого (проверка по плану, plan_check)."""
 
     def __init__(self, kind: str, qualified_name: str, *, allowed_schema: str, table_prefix: str | None) -> None:
         """Инициализация с видом объекта, его полным именем и правилами basic для подсказки.
 
         Args:
-            kind: Вид объекта из плана: relation или function.
+            kind: Вид объекта из плана: relation, function или type.
             qualified_name: Имя со схемой из плана (schema.name).
             allowed_schema: Разрешённая схема (public).
             table_prefix: Обязательный префикс имён таблиц или None.
         """
         if kind == "function":
             hint = f"Only functions from '{allowed_schema}' or built-in functions allowed in basic mode are permitted."
+        elif kind == "type":
+            hint = f"Only types from '{allowed_schema}' or built-in types are permitted."
         elif table_prefix:
             hint = f"Only tables in '{allowed_schema}' starting with '{table_prefix}' are permitted."
         else:
@@ -199,13 +201,20 @@ class PlanAccessError(UserFacingError):
 class PlanUnverifiableError(UserFacingError):
     """План запроса basic нельзя проверить: нет плана или узел не называет, что читает (проверка закрыта)."""
 
-    def __init__(self, node_type: str | None = None) -> None:
+    def __init__(self, node_type: str | None = None, *, key: str | None = None, rules: bool = False) -> None:
         """Инициализация с типом узла плана; текст плана в сообщение не попадает.
 
         Args:
             node_type: Узел без имени читаемого (Foreign Scan, Custom Scan, Function Scan); None — плана нет.
+            key: Ключ узла с неразборчивым выражением (Output, Filter, ...); node_type тогда — его узел
+                (None — вложенная группа без Node Type, например Grouping Sets).
+            rules: Не проверить определения представлений и правил, до которых дошёл запрос.
         """
-        if node_type is None:
+        if rules:
+            reason = "the definitions of views or rules the query reaches cannot be verified"
+        elif key is not None:
+            reason = f"an expression in {key} of a {node_type or 'plan'} node cannot be verified"
+        elif node_type is None:
             reason = "EXPLAIN returned no plan"
         else:
             objects = "functions" if node_type == "Function Scan" else "relations"
@@ -216,6 +225,7 @@ class PlanUnverifiableError(UserFacingError):
         )
         super().__init__(message)
         self.node_type = node_type
+        self.key = key
 
 
 class SqlParseError(UserFacingError):

@@ -189,3 +189,11 @@ def test_catalog_executor_never_checks_plans() -> None:
     catalog = service.catalog_driver
     assert isinstance(catalog, CatalogSqlExecutor)
     assert catalog._inner._plan_check_schema is None
+
+
+def test_basic_executors_share_one_builtin_type_cache() -> None:
+    """Пул один — и кэш имён типов pg_catalog для plan_check один на все исполнители."""
+    service = _service(access_mode=AccessMode.FULL, write_mode=True, plan_check=True)
+    drivers = [service.view(access).sql_driver for access in _ALL_ACCESS[:3]]
+    assert all(isinstance(d, SafeSqlExecutor) for d in drivers)
+    assert {id(d._builtin_types) for d in drivers} == {id(service._builtin_types)}  # type: ignore[attr-defined]

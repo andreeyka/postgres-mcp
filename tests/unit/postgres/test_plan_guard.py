@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from postgres_fastmcp.postgres.models import RowResult
+from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames
 from postgres_fastmcp.postgres.security.plan_guard import PlanGuard
 from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
@@ -26,22 +27,87 @@ def _function_scan(schema: str, function: str) -> dict[str, Any]:
     return {"Node Type": "Function Scan", "Function Name": function, "Schema": schema, "Alias": function}
 
 
-class _Explain:
-    """Исполнитель EXPLAIN в миниатюре: заготовленный план по тексту EXPLAIN, журнал отправленного."""
+# Типы pg_catalog, которые встречаются в тестовых выражениях.
+_BUILTIN_TYPES = frozenset({"text", "json", "regclass", "bpchar", "char", "int4", "int8"})
 
-    def __init__(self, plans: dict[str, dict[str, Any]] | None = None, *, as_text: bool = False) -> None:
+
+def _rule_row(
+    kind: str,
+    schema: str | None = None,
+    name: str | None = None,
+    parent_schema: str | None = None,
+    relation_schema: str | None = None,
+    relation_name: str | None = None,
+    definition: str | None = None,
+) -> dict[str, Any]:
+    """Строка запроса правил и зависимостей (plan_catalog.RULE_DEPENDENCIES_SQL)."""
+    return {
+        "kind": kind,
+        "schema": schema,
+        "name": name,
+        "parent_schema": parent_schema,
+        "relation_schema": relation_schema,
+        "relation_name": relation_name,
+        "definition": definition,
+    }
+
+
+class _Explain:
+    """Исполнитель транзакции в миниатюре: план по тексту EXPLAIN, ответы каталога, журнал отправленного.
+
+    Каталог отвечает именами из заготовленных множеств, которые встречаются в запросе литералом.
+    """
+
+    def __init__(
+        self,
+        plans: dict[str, dict[str, Any]] | None = None,
+        *,
+        as_text: bool = False,
+        pg_catalog_functions: frozenset[str] = frozenset(),
+        row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
+        rules: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._plans = plans or {}
+        self._rules = rules or []
+        self.rule_queries: list[str] = []
+        self.log: list[str] = []
         self._as_text = as_text
+        self._pg_catalog_functions = pg_catalog_functions
+        # Строковый тип -> (схема, имя) его отношения; множество — типы таблиц public с тем же именем.
+        self._row_types = row_types if isinstance(row_types, dict) else {name: ("public", name) for name in row_types}
         self.sent: list[str] = []
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
+        self.log.append(sql)
+        if "pg_catalog.pg_rewrite" in sql:
+            self.rule_queries.append(sql)
+            return [RowResult(cells=_rule_row(**row)) for row in self._rules]
         self.sent.append(sql)
+        if "pg_catalog.pg_proc" in sql:
+            return self._catalog(sql, self._pg_catalog_functions)
+        if "typrelid" in sql:
+            return [
+                RowResult(cells={"name": name, "relation_schema": schema, "relation_name": relation})
+                for name, (schema, relation) in sorted(self._row_types.items())
+                if f"'{name}'" in sql
+            ]
+        if "pg_catalog.pg_type" in sql:
+            return [RowResult(cells={"name": name}) for name in sorted(_BUILTIN_TYPES)]
         document: Any = [{"Plan": self._plans.get(sql, _RESULT)}]
         return [RowResult(cells={"QUERY PLAN": json.dumps(document) if self._as_text else document})]
 
+    @staticmethod
+    def _catalog(sql: str, names: frozenset[str]) -> list[RowResult]:
+        return [RowResult(cells={"name": name}) for name in sorted(names) if f"'{name}'" in sql]
 
-def _guard(explain: _Explain, table_prefix: str | None = None) -> PlanGuard:
-    return PlanGuard(explain, allowed_schema="public", table_prefix=table_prefix)
+    def catalog_queries(self) -> list[str]:
+        return [sql for sql in self.sent if not sql.startswith("EXPLAIN")]
+
+
+def _guard(
+    explain: _Explain, table_prefix: str | None = None, builtin_types: BuiltinTypeNames | None = None
+) -> PlanGuard:
+    return PlanGuard(explain, allowed_schema="public", table_prefix=table_prefix, builtin_types=builtin_types)
 
 
 async def test_view_over_a_foreign_schema_is_rejected() -> None:
@@ -423,3 +489,468 @@ async def test_function_call_with_more_than_a_target_list_is_rejected(node: dict
 
     with pytest.raises(PlanUnverifiableError, match="a Function Scan whose functions cannot be verified"):
         await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize("node_type", ["Seq Scan", "Result", "Table Function Scan", None])
+async def test_function_call_outside_a_function_scan_is_checked_as_an_expression(node_type: str | None) -> None:
+    """Имена Function Call пропускает только Function Scan: его вызовы уже проверил строгий путь."""
+    node: dict[str, Any] = {"Function Call": "secret.f(1)"}
+    if node_type is not None:
+        node["Node Type"] = node_type
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", "secret.f")
+
+
+def _with(**expressions: Any) -> dict[str, Any]:
+    """Скан разрешённой таблицы с выражениями плана."""
+    return {**_scan("public", "app_t"), **expressions}
+
+
+@pytest.mark.parametrize(
+    ("node", "kind", "name"),
+    [
+        (_with(Output=["secret.decrypt(app_t.c)"]), "function", "secret.decrypt"),
+        (_with(Filter="(pg_catalog.pg_read_file('x'::text) IS NOT NULL)"), "function", "pg_catalog.pg_read_file"),
+        (_with(Output=["(app_t.a OPERATOR(secret.+) 1)"]), "function", "secret.+"),
+        (_with(**{"Sort Key": ["app_t.a USING OPERATOR(secret.<)"]}), "function", "secret.<"),
+        (_with(Output=["(app_t.c)::secret.t"]), "type", "secret.t"),
+        (_with(Output=["nextval('secret.s'::regclass)"]), "relation", "secret.s"),
+        (_with(**{"Group Keys": [["app_t.a"], ["secret.f(app_t.b)"]]}), "function", "secret.f"),
+        (
+            {
+                "Node Type": "Function Scan",
+                "Function Name": "unnest",
+                "Schema": "pg_catalog",
+                "Alias": "u",
+                "Function Call": "unnest(ARRAY[NULL::secret.t])",
+            },
+            "type",
+            "secret.t",
+        ),
+    ],
+)
+async def test_expression_outside_basic_is_rejected(node: dict[str, Any], kind: str, name: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+    assert explain.catalog_queries() == []
+
+
+@pytest.mark.parametrize(
+    "expressions",
+    [
+        {"Output": ["lower(app_t.name)", "count(*)", "(app_t.a)::text", "'app_t'::regclass", "$0"]},
+        {"Filter": "(NOT (hashed SubPlan 1))", "Output": ["(InitPlan 1).col1", "PARTIAL count(*)"]},
+        {"Filter": "(ANY (app_t.a = (hashed SubPlan 1).col1))", "Run Condition": "(row_number() OVER (?) <= 10)"},
+        {"Sort Key": ["app_t.a DESC NULLS LAST", "app_t.b USING <", '(lower(app_t.name)) COLLATE "C"']},
+        {"Cache Key": "app_t.a, app_t.b", "Output": ["public.app_f(app_t.a)", "(app_t.a OPERATOR(public.===) 1)"]},
+        {"Output": ["EXTRACT(year FROM app_t.d)", "CURRENT_USER", "COALESCE(app_t.a, 0)"]},
+        {"Output": ["nextval('app_t_id_seq'::regclass)", "nextval('app_t_id_seq')"]},
+    ],
+)
+async def test_allowed_expressions_pass_without_catalog_queries(expressions: dict[str, Any]) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(**expressions)})
+
+    await _guard(explain).check(_SELECT)
+
+    assert explain.catalog_queries() == []
+
+
+async def test_unqualified_builtin_outside_basic_is_rejected_by_the_catalog() -> None:
+    """current_setting печатается без схемы (search_path = public); каталог говорит: это pg_catalog."""
+    node = _with(Output=["current_setting('app.jwt_secret'::text)", "my_public_fn(app_t.a)"])
+    explain = _Explain({_EXPLAIN + _SELECT: node}, pg_catalog_functions=frozenset({"current_setting"}))
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", "pg_catalog.current_setting")
+    [query] = explain.catalog_queries()
+    assert "'current_setting'" in query
+    assert "'my_public_fn'" in query
+
+
+async def test_unqualified_public_function_passes_after_one_catalog_query() -> None:
+    node = _with(Output=["my_public_fn(app_t.a)", "other_fn(app_t.b)"], Filter="(my_public_fn(app_t.a) > 0)")
+    explain = _Explain({_EXPLAIN + _SELECT: node}, pg_catalog_functions=frozenset({"current_setting"}))
+
+    await _guard(explain).check(_SELECT)
+
+    assert len(explain.catalog_queries()) == 1
+
+
+async def test_nextval_of_an_expression_is_checked_as_a_function() -> None:
+    node = _with(Output=["nextval(('x'::text)::regclass)"])
+    explain = _Explain({_EXPLAIN + _SELECT: node}, pg_catalog_functions=frozenset({"nextval"}))
+
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.nextval'"):
+        await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize("expression", ["nextval('users_id_seq'::regclass)", "nextval('users_id_seq')"])
+async def test_sequence_without_the_prefix_is_rejected(expression: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.users_id_seq'"):
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "call",
+    ["json_populate_record(NULL::users, '{}'::json)", "json_populate_record(NULL::public.users, '{}'::json)"],
+)
+async def test_row_type_of_a_table_without_the_prefix_is_rejected(call: str) -> None:
+    node = {**_function_scan("pg_catalog", "json_populate_record"), "Function Call": call}
+    explain = _Explain({_EXPLAIN + _SELECT: node}, row_types=frozenset({"users"}))
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", "public.users")
+
+
+@pytest.mark.parametrize(
+    ("relation", "name"),
+    [(("public", "users"), "public.users"), (("secret", "t"), "secret.t")],
+)
+async def test_domain_over_a_forbidden_row_type_is_rejected_as_its_relation(
+    relation: tuple[str, str], name: str
+) -> None:
+    """Домен (typrelid = 0) над строковым типом таблицы — оракул её структуры, как сам тип."""
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["NULL::users_dom"])}, row_types={"users_dom": relation})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", name)
+
+
+async def test_domain_over_a_prefixed_row_type_passes() -> None:
+    explain = _Explain(
+        {_EXPLAIN + _SELECT: _with(Output=["NULL::orders_dom"])}, row_types={"orders_dom": ("public", "app_orders")}
+    )
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
+
+
+async def test_row_types_are_not_checked_without_a_prefix() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["NULL::users"])}, row_types=frozenset({"users"}))
+
+    await _guard(explain).check(_SELECT)
+
+    assert explain.catalog_queries() == []
+
+
+async def test_prefixed_builtin_and_reg_types_need_no_row_type_query() -> None:
+    node = _with(Output=["NULL::app_users", 'NULL::"APP_Orders"', "(app_t.a)::text", "'app_t'::regclass"])
+    explain = _Explain({_EXPLAIN + _SELECT: node}, row_types=frozenset({"users"}))
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert [q for q in explain.catalog_queries() if "typrelid" in q] == []
+
+
+async def test_builtin_type_names_are_loaded_once() -> None:
+    node = _with(Output=["(app_t.a)::text", "NULL::my_enum"])
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+    builtin_types = BuiltinTypeNames()
+
+    for _ in range(3):
+        await _guard(explain, table_prefix="app_", builtin_types=builtin_types).check(_SELECT)
+
+    queries = explain.catalog_queries()
+    assert len([q for q in queries if "pg_catalog.pg_type" in q and "typrelid" not in q]) == 1
+    assert len([q for q in queries if "typrelid" in q]) == 3
+
+
+@pytest.mark.parametrize(
+    ("node", "key"),
+    [
+        (_with(Output=["foo bar ("]), "Output"),
+        (_with(Filter="(a) FROM secret.t"), "Filter"),
+        (_with(Output=[42]), "Output"),
+        (_with(**{"Sort Key": ["a, b"]}), "Sort Key"),
+        (_with(Output=["x::a.b.c"]), "Output"),
+        ({"Node Type": "Table Function Scan", "Table Function Call": "secret.f()"}, "Table Function Call"),
+    ],
+)
+async def test_unparsable_expression_is_rejected(node: dict[str, Any], key: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    with pytest.raises(PlanUnverifiableError, match=rf"an expression in {key} of a") as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert exc_info.value.key == key
+    assert "secret" not in str(exc_info.value)
+
+
+async def test_relation_errors_keep_precedence_over_expressions() -> None:
+    """Узлы проверяются до выражений: запрещённое отношение отклоняется прежней ошибкой."""
+    plan = {
+        "Node Type": "Hash Join",
+        "Output": ["(c.relname)::information_schema.sql_identifier"],
+        "Plans": [_scan("pg_catalog", "pg_class")],
+    }
+    explain = _Explain({_EXPLAIN + _SELECT: plan})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'pg_catalog\.pg_class'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_type_hint_names_the_allowed_schema() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["NULL::secret.t"])})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert "Only types from 'public' or built-in types are permitted." in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("expression", "kind", "name"),
+    [
+        ('"PARTIAL public".f(app_t.a)', "function", "PARTIAL public.f"),
+        ('NULL::"PARTIAL public".t', "type", "PARTIAL public.t"),
+        ('(app_t.a OPERATOR("PARTIAL public".+) 1)', "function", "PARTIAL public.+"),
+        ("""nextval('"PARTIAL public".s'::regclass)""", "relation", "PARTIAL public.s"),
+    ],
+)
+async def test_quoted_names_are_checked_as_they_are(expression: str, kind: str, name: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+
+
+async def test_quoted_sequence_without_the_prefix_is_rejected() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["""nextval('"PARTIAL app_s"'::regclass)"""])})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.PARTIAL app_s'"):
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT (NULL::users).secret_note FROM app_t",
+        "SELECT '(1,2)'::users",
+        "SELECT CAST(NULL AS public.users)",
+        "SELECT 1; SELECT NULL::users[]",
+        "SELECT * FROM ROWS FROM (json_to_record('{}') AS (u users)) AS r",
+    ],
+)
+async def test_row_type_in_the_agent_sql_is_rejected_before_explain(sql: str) -> None:
+    """Ошибка разбора EXPLAIN (нет колонки, неверное число полей) раскрыла бы структуру таблицы без префикса."""
+    explain = _Explain(row_types=frozenset({"users"}))
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(sql)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", "public.users")
+    assert [q for q in explain.sent if q.startswith("EXPLAIN")] == []
+
+
+async def test_agent_types_need_one_row_type_query_only_when_unresolved() -> None:
+    explain = _Explain(row_types=frozenset({"users"}))
+    guard = _guard(explain, table_prefix="app_")
+
+    await guard.check("SELECT NULL::app_users, 1::integer, 'x'::text, NULL::app_t[] FROM app_t")
+
+    assert [q for q in explain.catalog_queries() if "typrelid" in q] == []
+    assert explain.sent[-1].startswith("EXPLAIN")
+
+    await guard.check("SELECT NULL::my_enum FROM app_t")
+
+    [row_type_query] = [q for q in explain.catalog_queries() if "typrelid" in q]
+    assert "'my_enum'" in row_type_query
+    assert explain.sent[-1].startswith("EXPLAIN")
+    assert explain.sent.index(row_type_query) < len(explain.sent) - 1
+
+
+async def test_agent_types_are_not_looked_up_without_a_prefix() -> None:
+    explain = _Explain(row_types=frozenset({"users"}))
+
+    await _guard(explain).check("SELECT NULL::users FROM app_t")
+
+    assert explain.catalog_queries() == []
+
+
+def _rule(select: str) -> dict[str, Any]:
+    """Строка с текстом правила представления, как его печатает pg_get_ruledef."""
+    return {"kind": "rule", "definition": f'CREATE RULE "_RETURN" AS ON SELECT TO public.app_v DO INSTEAD {select};'}
+
+
+_OPERATOR_BANG = {"kind": "operator", "schema": "public", "name": "!!"}
+_AGGREGATE = {"kind": "function", "schema": "public", "name": "app_sum"}
+
+
+@pytest.mark.parametrize(
+    ("rules", "kind", "name"),
+    [
+        ([{"kind": "function", "schema": "secret", "name": "api_key"}], "function", "secret.api_key"),
+        (
+            [{"kind": "function", "schema": "pg_catalog", "name": "current_setting"}],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        (
+            [
+                _OPERATOR_BANG,
+                {
+                    "kind": "operator_function",
+                    "schema": "pg_catalog",
+                    "name": "current_setting",
+                    "parent_schema": "public",
+                },
+            ],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ([{"kind": "operator", "schema": "secret", "name": "!!"}], "function", "secret.!!"),
+        (
+            [_AGGREGATE, {"kind": "aggregate_function", "schema": "secret", "name": "f", "parent_schema": "public"}],
+            "function",
+            "secret.f",
+        ),
+        ([{"kind": "type", "schema": "secret", "name": "t"}], "type", "secret.t"),
+        (
+            [
+                {"kind": "type", "schema": "public", "name": "users_dom"},
+                {
+                    "kind": "type",
+                    "schema": "public",
+                    "name": "users",
+                    "relation_schema": "public",
+                    "relation_name": "users",
+                },
+            ],
+            "relation",
+            "public.users",
+        ),
+        ([_rule("SELECT secret.api_key() AS k")], "function", "secret.api_key"),
+        (
+            [_rule("SELECT id FROM app_t LIMIT (current_setting('max_connections'::text))::integer")],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ([_rule("SELECT NULL::secret.t AS t")], "type", "secret.t"),
+        ([_rule("SELECT nextval('users_id_seq'::regclass) AS n")], "relation", "public.users_id_seq"),
+    ],
+)
+async def test_dependency_of_a_view_or_rule_outside_basic_is_rejected(
+    rules: list[dict[str, Any]], kind: str, name: str
+) -> None:
+    """Свёртка констант, LIMIT, SubPlan PG 15/16 и функции операторов в плане не видны — видны в правиле."""
+    explain = _Explain(pg_catalog_functions=frozenset({"current_setting"}), rules=rules)
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [{"kind": "function", "schema": "pg_catalog", "name": "lower"}],
+        [{"kind": "function", "schema": "public", "name": "app_fn"}],
+        [
+            {"kind": "operator", "schema": "public", "name": "==="},
+            {"kind": "operator_function", "schema": "pg_catalog", "name": "lower", "parent_schema": "public"},
+        ],
+        [
+            {"kind": "operator", "schema": "public", "name": "==="},
+            {"kind": "operator_function", "schema": "public", "name": "app_eq", "parent_schema": "public"},
+        ],
+        [{"kind": "aggregate_function", "schema": "pg_catalog", "name": "int4pl", "parent_schema": "pg_catalog"}],
+        [
+            {"kind": "type", "schema": "public", "name": "app_dom"},
+            {
+                "kind": "type",
+                "schema": "public",
+                "name": "app_t",
+                "relation_schema": "public",
+                "relation_name": "app_t",
+            },
+            {"kind": "type", "schema": "pg_catalog", "name": "int4"},
+        ],
+        [
+            _rule(
+                "SELECT lower(name) AS l, count(*) AS n, (name)::character varying(5) AS v FROM app_t ORDER BY (lower(name))"
+            )
+        ],
+        [_rule("SELECT app_fn(id) AS f, (id OPERATOR(public.===) 1) AS e FROM app_t WHERE (id = 1)")],
+    ],
+)
+async def test_allowed_dependencies_of_views_and_rules_pass(rules: list[dict[str, Any]]) -> None:
+    explain = _Explain(pg_catalog_functions=frozenset({"current_setting"}), rules=rules)
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert len(explain.rule_queries) == 1
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [{"kind": "rule", "definition": "CREATE RULE broken ("}],
+        [{"kind": "rule", "definition": None}],
+        [{"kind": "rule", "definition": "SELECT 1"}],
+        [{"kind": "something new", "schema": "public", "name": "x"}],
+    ],
+)
+async def test_unverifiable_rule_rows_are_rejected(rules: list[dict[str, Any]]) -> None:
+    explain = _Explain(rules=rules)
+
+    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_missing_rule_rows_are_rejected() -> None:
+    async def run(sql: str) -> list[RowResult] | None:
+        if "pg_catalog.pg_rewrite" in sql:
+            return None
+        return [RowResult(cells={"QUERY PLAN": [{"Plan": _RESULT}]})]
+
+    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+        await PlanGuard(run, allowed_schema="public", table_prefix=None).check(_SELECT)
+
+
+async def test_rules_are_read_once_after_every_explain() -> None:
+    """Блокировки представлений берёт разбор EXPLAIN: запрос правил идёт после всех EXPLAIN строки."""
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT * FROM app_a; SHOW search_path; SELECT * FROM app_b")
+
+    assert [sql.split(" FROM ")[-1] if sql.startswith("EXPLAIN") else "rules" for sql in explain.log] == [
+        "app_a",
+        "app_b",
+        "rules",
+    ]
+
+
+@pytest.mark.parametrize("sql", ["SHOW search_path", "SET LOCAL search_path = public"])
+async def test_rules_are_not_read_without_a_plan(sql: str) -> None:
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    assert explain.rule_queries == []
+
+
+async def test_rules_are_not_read_after_a_rejected_plan() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _scan("secret", "accounts")})
+
+    with pytest.raises(PlanAccessError):
+        await _guard(explain).check(_SELECT)
+
+    assert explain.rule_queries == []

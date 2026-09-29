@@ -118,6 +118,22 @@ def test_correctable_error_ends_with_hint(name: str, hint: str) -> None:
     assert hint in str(_SAMPLES[name]())
 
 
+@pytest.mark.parametrize(
+    ("node_type", "reason"),
+    [
+        ("Seq Scan", "an expression in Filter of a Seq Scan node cannot be verified"),
+        (None, "an expression in Filter of a plan node cannot be verified"),
+    ],
+)
+def test_plan_unverifiable_expression_names_the_key_not_the_text(node_type: str | None, reason: str) -> None:
+    error = errors.PlanUnverifiableError(node_type, key="Filter")
+    assert str(error) == (
+        f"The query plan cannot be verified in basic mode: {reason}. "
+        "Rewrite the query to read the permitted tables directly."
+    )
+    assert error.key == "Filter"
+
+
 def test_plan_access_message_names_the_object_without_guessing_the_path() -> None:
     """Сообщение называет объект и не утверждает, что он достигнут через представление (есть секции, RLS)."""
     error = errors.PlanAccessError("relation", "secret.x", allowed_schema="public", table_prefix=None)
@@ -133,6 +149,7 @@ def test_plan_access_message_names_the_object_without_guessing_the_path() -> Non
         ("relation", None, "Only tables in 'main' are permitted."),
         ("relation", "app_", "Only tables in 'main' starting with 'app_' are permitted."),
         ("function", "app_", "Only functions from 'main' or built-in functions allowed in basic mode are permitted."),
+        ("type", "app_", "Only types from 'main' or built-in types are permitted."),
     ],
 )
 def test_plan_access_hint_follows_kind_and_rules(kind: str, table_prefix: str | None, hint: str) -> None:

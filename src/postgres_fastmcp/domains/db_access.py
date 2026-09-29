@@ -9,6 +9,7 @@ from postgres_fastmcp.postgres.driver import SqlExecutor
 from postgres_fastmcp.postgres.ports import QueryExecutorPort, SqlDriverPort
 from postgres_fastmcp.postgres.security.catalog_driver import CatalogSqlExecutor
 from postgres_fastmcp.postgres.security.driver import SafeSqlConfig, SafeSqlExecutor
+from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.logger import get_logger
@@ -106,6 +107,8 @@ class DbAccessService:
         )
         self._ceiling = EffectiveAccess(config.access_mode, write_mode=config.write_mode)
         self._executors: dict[EffectiveAccess, SqlDriverPort] = {}
+        # Имена типов pg_catalog для plan_check: пул один (одна БД), поэтому и кэш один на все исполнители.
+        self._builtin_types = BuiltinTypeNames()
         # Каталог не зависит от прав запроса: схему и префикс проверяет домен до запроса.
         self._catalog = CatalogSqlExecutor(
             SqlExecutor(conn=self._pool),
@@ -196,6 +199,8 @@ class DbAccessService:
                 safe_config.table_prefix,
                 safe_config.plan_check,
             )
-            executor = SafeSqlExecutor(delegate=base, validator=validator, config=safe_config)
+            executor = SafeSqlExecutor(
+                delegate=base, validator=validator, config=safe_config, builtin_types=self._builtin_types
+            )
         self._executors[access] = executor
         return executor
