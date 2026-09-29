@@ -12,6 +12,6 @@ def test_console_script_is_postgres_fastmcp() -> None:
     assert project["scripts"] == {"postgres-fastmcp": "postgres_fastmcp.app.main:app"}
 
 
-def test_version_is_0_1_0() -> None:
+def test_version_is_0_2_0() -> None:
     project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
-    assert project["version"] == "0.1.0"
+    assert project["version"] == "0.2.0"

@@ -1,6 +1,8 @@
 
 # Postgres MCP Pro (форк FastMCP)
 
+Изменения по версиям — [CHANGELOG.md](CHANGELOG.md).
+
 ## Обзор
 
 **Postgres MCP Pro** — MCP-сервер (Model Context Protocol) с открытым исходным кодом на базе [FastMCP](https://gofastmcp.com/), который помогает вам и ИИ-агентам на всех этапах: от написания кода до тестирования, развёртывания и эксплуатации в production.
