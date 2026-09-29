@@ -8,6 +8,10 @@ pglast (plan_expressions) и проверяются по тем же прави�
 из списка basic, типы — allowed_schema или pg_catalog, строковый тип таблицы без префикса — как сама таблица.
 Что решает только каталог (функция или тип без схемы), спрашивается SQL сервера в той же транзакции (plan_catalog).
 
+До первого EXPLAIN проверяются типы самого SQL агента (ошибка разбора EXPLAIN раскрыла бы структуру таблицы без
+префикса). После всех EXPLAIN — представления и правила, которые они заблокировали: текст правила и его
+зависимости (pg_depend), чего план не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public).
+
 Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
 редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
 Relation Name), Custom Scan без отношения. ROWS FROM из нескольких функций (Function Scan без Function Name,
@@ -37,12 +41,18 @@ from pglast.stream import RawStream
 from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames, pg_catalog_functions, row_types
+from postgres_fastmcp.postgres.security.plan_catalog import (
+    RULE_DEPENDENCIES_SQL,
+    BuiltinTypeNames,
+    pg_catalog_functions,
+    row_types,
+)
 from postgres_fastmcp.postgres.security.plan_expressions import (
     EXPRESSION_PARSERS,
     FUNCTION_CALL_KEY,
     ExpressionNames,
     expression_texts,
+    parse_rule_definition,
     parse_target_list,
 )
 from postgres_fastmcp.postgres.security.policies import BASIC_ALLOWED_FUNCTIONS, NAME_LOOKUP_TYPES
@@ -270,6 +280,7 @@ class PlanGuard:
         """
         statements = [raw.stmt for raw in pglast.parse_sql(query)]
         await self._check_statement_types(statements)
+        planned = False
         for raw_statement in statements:
             target = _plannable(raw_statement)
             if target is None:
@@ -278,6 +289,66 @@ class PlanGuard:
             options = "VERBOSE, FORMAT JSON, GENERIC_PLAN" if generic else "VERBOSE, FORMAT JSON"
             rows = await self._run(f"EXPLAIN ({options}) {RawStream()(statement)}")
             await self._check_plan(_plan_document(rows))
+            planned = True
+        if planned:
+            await self._check_rules()
+
+    async def _check_rules(self) -> None:
+        """Представления и правила, до которых дошли EXPLAIN строки: текст правила и его зависимости.
+
+        План не показывает всего, что вычисляет правило: IMMUTABLE-вызов с константами свёрнут в результат,
+        LIMIT/OFFSET и смещения рамки окна EXPLAIN не печатает, как и проверку SubPlan в PG 15/16; оператор или
+        агрегат public называет себя, а не функции, которые вызывает. Один запрос каталога после всех EXPLAIN
+        (они заблокировали представления) и до выполнения оператора: текст каждого правила проверяется как
+        выражение плана, зависимости из pg_depend — по правилам basic с функцией оператора и опорными
+        функциями агрегата. Тела SQL-функций, политики RLS и триггеры не проверяются.
+
+        Raises:
+            PlanAccessError: Правило вызывает функцию, оператор или тип вне разрешённого.
+            PlanUnverifiableError: Ответа нет, текст правила не разбирается или строка незнакомого вида.
+        """
+        rows = await self._run(RULE_DEPENDENCIES_SQL)
+        if rows is None:
+            raise PlanUnverifiableError(rules=True)
+        pending = _CatalogNames()
+        for row in rows:
+            self._check_rule_row(row.cells, pending)
+        await self._check_catalog_names(pending)
+
+    def _check_rule_row(self, cells: dict[str, Any], pending: _CatalogNames) -> None:
+        """Одна строка RULE_DEPENDENCIES_SQL; то, что решает только каталог, откладывается в pending."""
+        kind = cells.get("kind")
+        schema = cells.get("schema")
+        name = str(cells.get("name"))
+        if kind == "rule":
+            names = parse_rule_definition(cells.get("definition"))
+            if names is None:
+                raise PlanUnverifiableError(rules=True)
+            self._check_names(names, pending, check_functions=True)
+        elif kind == "function":
+            self._check_function(schema, name)
+        elif kind in ("operator_function", "aggregate_function"):
+            # Встроенные операторы и агрегаты (pg_catalog) реализованы функциями вне списка basic (int4eq,
+            # int4_sum) — проверяются сами; функции проверяются у операторов и агрегатов других схем.
+            if cells.get("parent_schema") != _BUILTIN_FUNCTION_SCHEMA:
+                self._check_function(schema, name)
+        elif kind == "operator":
+            if schema not in (self._allowed_schema, _BUILTIN_FUNCTION_SCHEMA):
+                qualified_name = f"{schema}.{name}"
+                raise self._function_error(qualified_name)
+        elif kind == "type":
+            if schema not in (self._allowed_schema, _BUILTIN_FUNCTION_SCHEMA):
+                raise PlanAccessError(
+                    TYPE_KIND,
+                    f"{schema}.{name}",
+                    allowed_schema=self._allowed_schema,
+                    table_prefix=self._prefix_for_hint,
+                )
+            relation_name = cells.get("relation_name")
+            if self._table_prefix is not None and relation_name is not None:
+                self._check_relation(cells.get("relation_schema"), str(relation_name))
+        else:
+            raise PlanUnverifiableError(rules=True)
 
     async def _check_statement_types(self, statements: list[Node]) -> None:
         """Типы из SQL агента — до первого EXPLAIN, по тем же правилам, что типы выражений плана.

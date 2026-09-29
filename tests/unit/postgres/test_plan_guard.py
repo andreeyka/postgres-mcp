@@ -31,6 +31,27 @@ def _function_scan(schema: str, function: str) -> dict[str, Any]:
 _BUILTIN_TYPES = frozenset({"text", "json", "regclass", "bpchar", "char", "int4", "int8"})
 
 
+def _rule_row(
+    kind: str,
+    schema: str | None = None,
+    name: str | None = None,
+    parent_schema: str | None = None,
+    relation_schema: str | None = None,
+    relation_name: str | None = None,
+    definition: str | None = None,
+) -> dict[str, Any]:
+    """Строка запроса правил и зависимостей (plan_catalog.RULE_DEPENDENCIES_SQL)."""
+    return {
+        "kind": kind,
+        "schema": schema,
+        "name": name,
+        "parent_schema": parent_schema,
+        "relation_schema": relation_schema,
+        "relation_name": relation_name,
+        "definition": definition,
+    }
+
+
 class _Explain:
     """Исполнитель транзакции в миниатюре: план по тексту EXPLAIN, ответы каталога, журнал отправленного.
 
@@ -44,8 +65,12 @@ class _Explain:
         as_text: bool = False,
         pg_catalog_functions: frozenset[str] = frozenset(),
         row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
+        rules: list[dict[str, Any]] | None = None,
     ) -> None:
         self._plans = plans or {}
+        self._rules = rules or []
+        self.rule_queries: list[str] = []
+        self.log: list[str] = []
         self._as_text = as_text
         self._pg_catalog_functions = pg_catalog_functions
         # Строковый тип -> (схема, имя) его отношения; множество — типы таблиц public с тем же именем.
@@ -53,6 +78,10 @@ class _Explain:
         self.sent: list[str] = []
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
+        self.log.append(sql)
+        if "pg_catalog.pg_rewrite" in sql:
+            self.rule_queries.append(sql)
+            return [RowResult(cells=_rule_row(**row)) for row in self._rules]
         self.sent.append(sql)
         if "pg_catalog.pg_proc" in sql:
             return self._catalog(sql, self._pg_catalog_functions)
@@ -753,3 +782,175 @@ async def test_agent_types_are_not_looked_up_without_a_prefix() -> None:
     await _guard(explain).check("SELECT NULL::users FROM app_t")
 
     assert explain.catalog_queries() == []
+
+
+def _rule(select: str) -> dict[str, Any]:
+    """Строка с текстом правила представления, как его печатает pg_get_ruledef."""
+    return {"kind": "rule", "definition": f'CREATE RULE "_RETURN" AS ON SELECT TO public.app_v DO INSTEAD {select};'}
+
+
+_OPERATOR_BANG = {"kind": "operator", "schema": "public", "name": "!!"}
+_AGGREGATE = {"kind": "function", "schema": "public", "name": "app_sum"}
+
+
+@pytest.mark.parametrize(
+    ("rules", "kind", "name"),
+    [
+        ([{"kind": "function", "schema": "secret", "name": "api_key"}], "function", "secret.api_key"),
+        (
+            [{"kind": "function", "schema": "pg_catalog", "name": "current_setting"}],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        (
+            [
+                _OPERATOR_BANG,
+                {
+                    "kind": "operator_function",
+                    "schema": "pg_catalog",
+                    "name": "current_setting",
+                    "parent_schema": "public",
+                },
+            ],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ([{"kind": "operator", "schema": "secret", "name": "!!"}], "function", "secret.!!"),
+        (
+            [_AGGREGATE, {"kind": "aggregate_function", "schema": "secret", "name": "f", "parent_schema": "public"}],
+            "function",
+            "secret.f",
+        ),
+        ([{"kind": "type", "schema": "secret", "name": "t"}], "type", "secret.t"),
+        (
+            [
+                {"kind": "type", "schema": "public", "name": "users_dom"},
+                {
+                    "kind": "type",
+                    "schema": "public",
+                    "name": "users",
+                    "relation_schema": "public",
+                    "relation_name": "users",
+                },
+            ],
+            "relation",
+            "public.users",
+        ),
+        ([_rule("SELECT secret.api_key() AS k")], "function", "secret.api_key"),
+        (
+            [_rule("SELECT id FROM app_t LIMIT (current_setting('max_connections'::text))::integer")],
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ([_rule("SELECT NULL::secret.t AS t")], "type", "secret.t"),
+        ([_rule("SELECT nextval('users_id_seq'::regclass) AS n")], "relation", "public.users_id_seq"),
+    ],
+)
+async def test_dependency_of_a_view_or_rule_outside_basic_is_rejected(
+    rules: list[dict[str, Any]], kind: str, name: str
+) -> None:
+    """Свёртка констант, LIMIT, SubPlan PG 15/16 и функции операторов в плане не видны — видны в правиле."""
+    explain = _Explain(pg_catalog_functions=frozenset({"current_setting"}), rules=rules)
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [{"kind": "function", "schema": "pg_catalog", "name": "lower"}],
+        [{"kind": "function", "schema": "public", "name": "app_fn"}],
+        [
+            {"kind": "operator", "schema": "public", "name": "==="},
+            {"kind": "operator_function", "schema": "pg_catalog", "name": "lower", "parent_schema": "public"},
+        ],
+        [
+            {"kind": "operator", "schema": "public", "name": "==="},
+            {"kind": "operator_function", "schema": "public", "name": "app_eq", "parent_schema": "public"},
+        ],
+        [{"kind": "aggregate_function", "schema": "pg_catalog", "name": "int4pl", "parent_schema": "pg_catalog"}],
+        [
+            {"kind": "type", "schema": "public", "name": "app_dom"},
+            {
+                "kind": "type",
+                "schema": "public",
+                "name": "app_t",
+                "relation_schema": "public",
+                "relation_name": "app_t",
+            },
+            {"kind": "type", "schema": "pg_catalog", "name": "int4"},
+        ],
+        [
+            _rule(
+                "SELECT lower(name) AS l, count(*) AS n, (name)::character varying(5) AS v FROM app_t ORDER BY (lower(name))"
+            )
+        ],
+        [_rule("SELECT app_fn(id) AS f, (id OPERATOR(public.===) 1) AS e FROM app_t WHERE (id = 1)")],
+    ],
+)
+async def test_allowed_dependencies_of_views_and_rules_pass(rules: list[dict[str, Any]]) -> None:
+    explain = _Explain(pg_catalog_functions=frozenset({"current_setting"}), rules=rules)
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert len(explain.rule_queries) == 1
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [{"kind": "rule", "definition": "CREATE RULE broken ("}],
+        [{"kind": "rule", "definition": None}],
+        [{"kind": "rule", "definition": "SELECT 1"}],
+        [{"kind": "something new", "schema": "public", "name": "x"}],
+    ],
+)
+async def test_unverifiable_rule_rows_are_rejected(rules: list[dict[str, Any]]) -> None:
+    explain = _Explain(rules=rules)
+
+    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_missing_rule_rows_are_rejected() -> None:
+    async def run(sql: str) -> list[RowResult] | None:
+        if "pg_catalog.pg_rewrite" in sql:
+            return None
+        return [RowResult(cells={"QUERY PLAN": [{"Plan": _RESULT}]})]
+
+    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+        await PlanGuard(run, allowed_schema="public", table_prefix=None).check(_SELECT)
+
+
+async def test_rules_are_read_once_after_every_explain() -> None:
+    """Блокировки представлений берёт разбор EXPLAIN: запрос правил идёт после всех EXPLAIN строки."""
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT * FROM app_a; SHOW search_path; SELECT * FROM app_b")
+
+    assert [sql.split(" FROM ")[-1] if sql.startswith("EXPLAIN") else "rules" for sql in explain.log] == [
+        "app_a",
+        "app_b",
+        "rules",
+    ]
+
+
+@pytest.mark.parametrize("sql", ["SHOW search_path", "SET LOCAL search_path = public"])
+async def test_rules_are_not_read_without_a_plan(sql: str) -> None:
+    explain = _Explain()
+
+    await _guard(explain).check(sql)
+
+    assert explain.rule_queries == []
+
+
+async def test_rules_are_not_read_after_a_rejected_plan() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _scan("secret", "accounts")})
+
+    with pytest.raises(PlanAccessError):
+        await _guard(explain).check(_SELECT)
+
+    assert explain.rule_queries == []

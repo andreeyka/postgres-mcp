@@ -44,6 +44,86 @@ _ROW_TYPES_SQL = (
     "JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
 )
 
+# Правила (pg_rewrite) отношений, которые эта транзакция уже заблокировала: представления и правила, до которых
+# дошли разбор и переписывание запросов агента (EXPLAIN берёт AccessShareLock и держит его до конца транзакции;
+# вложенные представления блокирует переписывание). pg_locks показывает и fast-path блокировки (колонка
+# fastpath) — обычный путь AccessShareLock. Блокировки pg_catalog и pg_toast берут и собственные запросы
+# каталога (pg_locks — сам представление), их правила не читаются; отношения без правил строк не дают.
+#
+# Строки (kind): rule — текст правила (definition, pg_get_ruledef: имена вне search_path — со схемой);
+# function — функция или агрегат из pg_depend правила; aggregate_function — опорная функция агрегата
+# (parent_schema — схема агрегата); operator и operator_function — оператор и его функция (oprcode); type — тип
+# и каждый тип, до которого он ведёт через typbasetype/typelem, с отношением строкового типа (relation_*).
+# pg_depend не хранит зависимостей от закреплённых (встроенных) объектов pg_catalog: они видны только в тексте.
+_PG_REWRITE = "'pg_catalog.pg_rewrite'::pg_catalog.regclass::pg_catalog.oid"
+_PG_PROC = "'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid"
+_PG_OPERATOR = "'pg_catalog.pg_operator'::pg_catalog.regclass::pg_catalog.oid"
+_PG_TYPE = "'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid"
+_NO_PARENT = "NULL::pg_catalog.name"
+_NO_RELATION = "NULL::pg_catalog.name, NULL::pg_catalog.name"
+_NO_DEFINITION = "NULL::pg_catalog.text"
+# Подстановки — константы модуля выше, ввода агента в тексте нет.
+RULE_DEPENDENCIES_SQL = (
+    "WITH RECURSIVE rules AS ("  # noqa: S608
+    "SELECT DISTINCT r.oid FROM pg_catalog.pg_locks l "
+    "JOIN pg_catalog.pg_database db ON db.oid OPERATOR(pg_catalog.=) l.database "
+    "JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) l.relation "
+    "JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace "
+    "JOIN pg_catalog.pg_rewrite r ON r.ev_class OPERATOR(pg_catalog.=) c.oid "
+    "WHERE l.locktype OPERATOR(pg_catalog.=) 'relation' "
+    "AND l.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid() "
+    "AND db.datname OPERATOR(pg_catalog.=) pg_catalog.current_database() "
+    "AND cn.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'pg_toast']::pg_catalog.name[])"
+    "), dependencies AS ("
+    "SELECT DISTINCT d.refclassid, d.refobjid FROM rules u "
+    f"JOIN pg_catalog.pg_depend d ON d.classid OPERATOR(pg_catalog.=) {_PG_REWRITE} "
+    "AND d.objid OPERATOR(pg_catalog.=) u.oid"
+    "), types(oid) AS ("
+    f"SELECT x.refobjid FROM dependencies x WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_TYPE} "
+    "UNION "
+    "SELECT v.next FROM types y JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) y.oid "
+    "CROSS JOIN LATERAL (VALUES (t.typbasetype), (t.typelem)) AS v(next) "
+    "WHERE v.next OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
+    ") "
+    "SELECT 'rule' AS kind, NULL::pg_catalog.name AS schema, NULL::pg_catalog.name AS name, "
+    f"{_NO_PARENT} AS parent_schema, NULL::pg_catalog.name AS relation_schema, "
+    "NULL::pg_catalog.name AS relation_name, pg_catalog.pg_get_ruledef(u.oid) AS definition FROM rules u "
+    "UNION ALL "
+    f"SELECT 'function', pn.nspname, p.proname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION} "
+    "FROM dependencies x JOIN pg_catalog.pg_proc p ON p.oid OPERATOR(pg_catalog.=) x.refobjid "
+    "JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) p.pronamespace "
+    f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_PROC} "
+    "UNION ALL "
+    f"SELECT 'aggregate_function', fn.nspname, f.proname, an.nspname, {_NO_RELATION}, {_NO_DEFINITION} "
+    "FROM dependencies x "
+    "JOIN pg_catalog.pg_aggregate a ON a.aggfnoid::pg_catalog.oid OPERATOR(pg_catalog.=) x.refobjid "
+    "JOIN pg_catalog.pg_proc ap ON ap.oid OPERATOR(pg_catalog.=) x.refobjid "
+    "JOIN pg_catalog.pg_namespace an ON an.oid OPERATOR(pg_catalog.=) ap.pronamespace "
+    "CROSS JOIN LATERAL (VALUES (a.aggtransfn), (a.aggfinalfn), (a.aggcombinefn), (a.aggserialfn), "
+    "(a.aggdeserialfn), (a.aggmtransfn), (a.aggminvtransfn), (a.aggmfinalfn)) AS s(fn) "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_PROC} "
+    "UNION ALL "
+    f"SELECT 'operator', opn.nspname, o.oprname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION} "
+    "FROM dependencies x JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) x.refobjid "
+    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_OPERATOR} "
+    "UNION ALL "
+    f"SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, {_NO_RELATION}, {_NO_DEFINITION} "
+    "FROM dependencies x JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) x.refobjid "
+    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_OPERATOR} "
+    "UNION ALL "
+    f"SELECT 'type', tn.nspname, t.typname, {_NO_PARENT}, cn.nspname, c.relname, {_NO_DEFINITION} "
+    "FROM types y JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) y.oid "
+    "JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) t.typnamespace "
+    "LEFT JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.typrelid "
+    "LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
+)
+
 
 def _names(rows: list[RowResult] | None) -> frozenset[str]:
     """Значения колонки name."""

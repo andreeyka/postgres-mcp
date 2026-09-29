@@ -38,6 +38,17 @@ CREATE OR REPLACE FUNCTION public.app_double(n int) RETURNS int
     LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN n * 2; END';
 CREATE OR REPLACE VIEW public.app_expr_public_fn_view AS SELECT app_double(id) AS d FROM public.app_plan_items;
 CREATE TABLE IF NOT EXISTS public.other_users (id int, secret_note text);
+CREATE OR REPLACE FUNCTION secret.api_key() RETURNS text LANGUAGE sql IMMUTABLE AS $$SELECT 'k-123'$$;
+CREATE OR REPLACE VIEW public.app_api_key_view AS SELECT secret.api_key() AS k;
+CREATE OR REPLACE VIEW public.app_limit_setting_view AS
+    SELECT id FROM public.app_plan_items LIMIT pg_catalog.current_setting('max_connections')::integer;
+CREATE TABLE IF NOT EXISTS public.app_plan_people (id int, name text);
+INSERT INTO public.app_plan_people SELECT 1, 'Alice' WHERE NOT EXISTS (SELECT 1 FROM public.app_plan_people);
+CREATE OR REPLACE VIEW public.app_plan_people_lower_view AS SELECT lower(name) AS l FROM public.app_plan_people;
+DROP VIEW IF EXISTS public.app_setting_operator_view;
+DROP OPERATOR IF EXISTS public.!! (text, boolean);
+CREATE OPERATOR public.!! (LEFTARG = text, RIGHTARG = boolean, FUNCTION = pg_catalog.current_setting);
+CREATE VIEW public.app_setting_operator_view AS SELECT ('max_connections' !! true) AS s FROM public.app_plan_people;
 DROP DOMAIN IF EXISTS public.other_users_dom;
 CREATE DOMAIN public.other_users_dom AS public.other_users;
 CREATE TABLE IF NOT EXISTS public.app_serial_items (id serial PRIMARY KEY, v text);
@@ -237,3 +248,27 @@ async def test_insert_with_a_sequence_default_passes_with_plan_check(db_plan_che
     rows = await db_plan_check.sql_driver.execute(f"INSERT INTO {table} (v) VALUES ('x') RETURNING id", readonly=False)
     await db_plan_check.sql_driver.execute(f"DELETE FROM {table} WHERE v = 'x'", readonly=False)
     assert rows[0].cells["id"] >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("view", "name"),
+    [
+        ("app_api_key_view", r"function 'secret\.api_key'"),
+        ("app_limit_setting_view", r"function 'pg_catalog\.current_setting'"),
+        ("app_setting_operator_view", r"function 'pg_catalog\.current_setting'"),
+    ],
+)
+async def test_view_dependencies_hidden_from_the_plan_are_rejected(
+    db_plan_check: DbAccess, view: str, name: str
+) -> None:
+    """План их не показывает: IMMUTABLE secret.api_key() свёрнут в константу, LIMIT EXPLAIN не печатает,
+    оператор public !! называет себя, а не current_setting. Их видит проверка правил представления."""
+    with pytest.raises(PlanAccessError, match=name):
+        await db_plan_check.sql_driver.execute(f"SELECT * FROM {view}", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_view_with_allowed_dependencies_returns_rows(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute("SELECT l FROM app_plan_people_lower_view", readonly=True)
+    assert [row.cells["l"] for row in rows] == ["alice"]

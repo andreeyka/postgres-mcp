@@ -201,15 +201,18 @@ class PlanAccessError(UserFacingError):
 class PlanUnverifiableError(UserFacingError):
     """План запроса basic нельзя проверить: нет плана или узел не называет, что читает (проверка закрыта)."""
 
-    def __init__(self, node_type: str | None = None, *, key: str | None = None) -> None:
+    def __init__(self, node_type: str | None = None, *, key: str | None = None, rules: bool = False) -> None:
         """Инициализация с типом узла плана; текст плана в сообщение не попадает.
 
         Args:
             node_type: Узел без имени читаемого (Foreign Scan, Custom Scan, Function Scan); None — плана нет.
             key: Ключ узла с неразборчивым выражением (Output, Filter, ...); node_type тогда — его узел
                 (None — вложенная группа без Node Type, например Grouping Sets).
+            rules: Не проверить определения представлений и правил, до которых дошёл запрос.
         """
-        if key is not None:
+        if rules:
+            reason = "the definitions of views or rules the query reaches cannot be verified"
+        elif key is not None:
             reason = f"an expression in {key} of a {node_type or 'plan'} node cannot be verified"
         elif node_type is None:
             reason = "EXPLAIN returned no plan"

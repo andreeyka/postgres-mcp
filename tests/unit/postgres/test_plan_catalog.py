@@ -6,7 +6,12 @@ from pglast.ast import A_Expr, FuncCall, Node, RangeVar, String, SubLink, TypeNa
 from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.models import RowResult
-from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames, pg_catalog_functions, row_types
+from postgres_fastmcp.postgres.security.plan_catalog import (
+    RULE_DEPENDENCIES_SQL,
+    BuiltinTypeNames,
+    pg_catalog_functions,
+    row_types,
+)
 
 
 class _Recorder:
@@ -68,7 +73,7 @@ async def _catalog_sql() -> list[str]:
     await BuiltinTypeNames().load(recorder)
     await pg_catalog_functions(recorder, ["current_setting", "my_fn"])
     await row_types(recorder, "public", ["users", "users_dom"])
-    return recorder.sent
+    return [*recorder.sent, RULE_DEPENDENCIES_SQL]
 
 
 async def test_catalog_sql_resolves_nothing_through_the_search_path() -> None:

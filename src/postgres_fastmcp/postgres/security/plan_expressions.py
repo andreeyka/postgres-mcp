@@ -21,6 +21,7 @@ from pglast.ast import (
     Node,
     RangeTableFunc,
     RangeVar,
+    RuleStmt,
     SelectStmt,
     SortBy,
     String,
@@ -211,9 +212,19 @@ class _Names(Visitor):
         self._add(self.types, node.names)
 
 
-def _collect(statement: SelectStmt) -> ExpressionNames | None:
+class _RuleNames(_Names):
+    """Имена текста правила: подзапросы и отношения в нём законны (отношения проверяют узлы плана)."""
+
+    def visit_SelectStmt(self, _ancestors: object, _node: SelectStmt) -> None:  # noqa: N802
+        """Подзапрос правила — не признак неразборчивого текста."""
+
+    def visit_RangeVar(self, _ancestors: object, _node: RangeVar) -> None:  # noqa: N802
+        """Отношение правила читает план — его проверили узлы плана."""
+
+
+def _collect(statement: Node, names: _Names | None = None) -> ExpressionNames | None:
     """Имена разобранного выражения; None — среди них есть неразборчивое."""
-    names = _Names()
+    names = names or _Names()
     names(statement)
     if not names.verifiable:
         return None
@@ -314,6 +325,22 @@ def parse_table_function(text: str) -> ExpressionNames | None:
     ):
         return None
     return _collect(statement)
+
+
+def parse_rule_definition(text: object) -> ExpressionNames | None:
+    """Текст правила (pg_get_ruledef: CREATE RULE ... DO ...): имена всех его действий и условия.
+
+    None — не строка, не разбирается или не ровно одно CREATE RULE.
+    """
+    if not isinstance(text, str):
+        return None
+    try:
+        statements = pglast.parse_sql(text)
+    except ParseError:
+        return None
+    if len(statements) != 1 or not isinstance(statements[0].stmt, RuleStmt):
+        return None
+    return _collect(statements[0].stmt, _RuleNames())
 
 
 def expression_texts(value: object) -> list[str] | None:
