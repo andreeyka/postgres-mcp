@@ -2,6 +2,16 @@
 
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/). До 1.0 минорная версия может ломать совместимость.
 
+## [0.2.1] — 2026-09-29
+
+### Добавлено
+
+- Образ Docker публикуется в GitHub Container Registry: `ghcr.io/andreeyka/postgres-mcp` (linux/amd64, linux/arm64), теги версии, минорной версии и `latest`; сборка — по тегу релиза (#28).
+
+### Изменено
+
+- Образ запускается под числовым UID/GID `10001` вместо пользователя `app` по имени: Kubernetes с `runAsNonRoot` проверяет только числовой UID. Если вы монтируете в контейнер тома с правами на прежнего пользователя, выдайте их UID `10001` (#28).
+
 ## [0.2.0] — 2026-09-29
 
 Главное: `access_mode=basic` теперь действительно ограничивает агента схемой `public`, серверные запросы к каталогу больше не проходят через валидатор агента, появился опциональный строгий режим `plan_check`, а соединения возвращаются в пул без состояния сессии.
@@ -101,5 +111,6 @@
 
 Первый релиз форка: переход на FastMCP 4; библиотечный API — `PostgresProvider`, нативный `Provider` FastMCP для подключения тулов к своему серверу; аутентификация, выбираемая конфигом без кода, — `none`, `static`, `jwt`, `oidc`; сужение прав по claim токена с настраиваемым источником; консольный скрипт переименован в `postgres-fastmcp`.
 
+[0.2.1]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andreeyka/postgres-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/andreeyka/postgres-mcp/releases/tag/v0.1.0
