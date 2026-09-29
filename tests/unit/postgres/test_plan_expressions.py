@@ -81,7 +81,9 @@ def test_substitution_inside_a_literal_changes_only_its_value() -> None:
     ("text", "sequence"),
     [
         ("nextval('app_t_id_seq'::regclass)", (None, "app_t_id_seq")),
-        ("nextval('app_t_id_seq'::bigint)", (None, "app_t_id_seq")),
+        ("nextval('app_t_id_seq')", (None, "app_t_id_seq")),
+        ("pg_catalog.nextval('app_t_id_seq')", (None, "app_t_id_seq")),
+        ("nextval('secret.s')", ("secret", "s")),
         ("nextval('secret.s'::regclass)", ("secret", "s")),
         ("""nextval('"App"."S q"'::regclass)""", ("App", "S q")),
     ],
@@ -94,11 +96,24 @@ def test_nextval_of_a_literal_is_a_sequence(text: str, sequence: tuple[str | Non
     assert names.functions == ()
 
 
-def test_nextval_of_an_expression_is_a_function_call() -> None:
-    names = parse_expression("nextval(('x'::text)::regclass)")
+@pytest.mark.parametrize(
+    "text",
+    ["nextval(('x'::text)::regclass)", "nextval('x'::text)", "nextval('x'::bigint)", "nextval(1)", "nextval('a', 'b')"],
+)
+def test_nextval_of_anything_but_a_literal_is_a_function_call(text: str) -> None:
+    """Литерал без приведения (identity, NextValueExpr) или '...'::regclass (serial); прочее — вызов функции."""
+    names = parse_expression(text)
 
     assert names is not None
     assert names.functions == ((None, "nextval"),)
+    assert names.sequences == ()
+
+
+def test_other_function_of_a_bare_literal_is_not_a_sequence() -> None:
+    names = parse_expression("lower('app_t_id_seq')")
+
+    assert names is not None
+    assert names.functions == ((None, "lower"),)
     assert names.sequences == ()
 
 

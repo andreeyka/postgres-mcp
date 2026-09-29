@@ -504,7 +504,7 @@ async def test_expression_outside_basic_is_rejected(node: dict[str, Any], kind: 
         {"Sort Key": ["app_t.a DESC NULLS LAST", "app_t.b USING <", '(lower(app_t.name)) COLLATE "C"']},
         {"Cache Key": "app_t.a, app_t.b", "Output": ["public.app_f(app_t.a)", "(app_t.a OPERATOR(public.===) 1)"]},
         {"Output": ["EXTRACT(year FROM app_t.d)", "CURRENT_USER", "COALESCE(app_t.a, 0)"]},
-        {"Output": ["nextval('app_t_id_seq'::regclass)", "nextval('app_t_id_seq'::bigint)"]},
+        {"Output": ["nextval('app_t_id_seq'::regclass)", "nextval('app_t_id_seq')"]},
     ],
 )
 async def test_allowed_expressions_pass_without_catalog_queries(expressions: dict[str, Any]) -> None:
@@ -546,8 +546,9 @@ async def test_nextval_of_an_expression_is_checked_as_a_function() -> None:
         await _guard(explain).check(_SELECT)
 
 
-async def test_sequence_without_the_prefix_is_rejected() -> None:
-    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["nextval('users_id_seq'::regclass)"])})
+@pytest.mark.parametrize("expression", ["nextval('users_id_seq'::regclass)", "nextval('users_id_seq')"])
+async def test_sequence_without_the_prefix_is_rejected(expression: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])})
 
     with pytest.raises(PlanAccessError, match=r"relation 'public\.users_id_seq'"):
         await _guard(explain, table_prefix="app_").check(_SELECT)

@@ -81,9 +81,12 @@ _UNQUOTED_FORBIDDEN = re.compile(r"--|/\*|\$(?!\d)|[\"']")
 _IDENTIFIER = r'(?:[A-Za-z_\x80-\U0010ffff][\w$]*|"(?:[^"]|"")+")'
 _REGCLASS_NAME = re.compile(rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})?")
 
-# nextval('последовательность'::тип): так план печатает DEFAULT serial ('...'::regclass) и identity
-# ('...'::bigint). Литерал — имя отношения, проверяется как отношение, а не как вызов функции.
+# Как план печатает nextval последовательности: DEFAULT serial — nextval('...'::regclass) (FuncExpr с константой
+# regclass), identity — nextval('...') без приведения (NextValueExpr, ruleutils PG 15–17). Литерал — имя
+# отношения, проверяется как отношение, а не как вызов функции. Любой другой аргумент (в том числе
+# 'x'::text: неявное приведение к regclass ruleutils не печатает, имя ищется при выполнении) — вызов функции.
 _NEXTVAL: frozenset[QualifiedName] = frozenset({(None, "nextval"), ("pg_catalog", "nextval")})
+_REGCLASS: frozenset[QualifiedName] = frozenset({(None, "regclass"), ("pg_catalog", "regclass")})
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,12 +135,20 @@ def sequence_name(text: str) -> QualifiedName | None:
     return relation.schemaname, relation.relname
 
 
-def _literal_argument(call: FuncCall) -> str | None:
-    """Строка единственного аргумента вида 'литерал'::тип, иначе None."""
+def _sequence_literal(call: FuncCall) -> str | None:
+    """Строка единственного аргумента nextval: 'литерал' или 'литерал'::regclass, иначе None."""
     args = call.args or ()
-    if len(args) != 1 or not isinstance(args[0], TypeCast) or not isinstance(args[0].arg, A_Const):
+    if len(args) != 1:
         return None
-    value = args[0].arg.val
+    argument = args[0]
+    if isinstance(argument, TypeCast):
+        type_name = argument.typeName
+        if type_name is None or type_name.arrayBounds or _qualified(type_name.names or ()) not in _REGCLASS:
+            return None
+        argument = argument.arg
+    if not isinstance(argument, A_Const):
+        return None
+    value = argument.val
     return value.sval if isinstance(value, String) else None
 
 
@@ -167,7 +178,7 @@ class _Names(Visitor):
     def visit_FuncCall(self, _ancestors: object, node: FuncCall) -> None:  # noqa: N802
         """Вызов функции или nextval по литералу последовательности."""
         name = _qualified(node.funcname or ())
-        literal = _literal_argument(node) if name in _NEXTVAL else None
+        literal = _sequence_literal(node) if name in _NEXTVAL else None
         if literal is None:
             self._add(self.functions, node.funcname)
             return

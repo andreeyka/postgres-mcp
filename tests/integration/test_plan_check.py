@@ -210,7 +210,8 @@ async def test_subqueries_sorting_and_windows_pass_with_plan_check(db_plan_check
 @pytest.mark.asyncio
 @pytest.mark.parametrize("table", ["app_serial_items", "app_identity_items"])
 async def test_insert_with_a_sequence_default_passes_with_plan_check(db_plan_check: DbAccess, table: str) -> None:
-    """DEFAULT serial и identity план печатает как nextval('app_..._seq'::тип): это отношение, а не вызов."""
+    """DEFAULT serial план печатает как nextval('app_..._seq'::regclass), identity — nextval('app_..._seq')
+    (NextValueExpr без приведения): это отношение, а не вызов."""
     rows = await db_plan_check.sql_driver.execute(f"INSERT INTO {table} (v) VALUES ('x') RETURNING id", readonly=False)
     await db_plan_check.sql_driver.execute(f"DELETE FROM {table} WHERE v = 'x'", readonly=False)
     assert rows[0].cells["id"] >= 1
