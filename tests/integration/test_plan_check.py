@@ -642,11 +642,17 @@ async def test_cte_used_in_every_branch_of_its_statement_passes(db_plan_check: D
 # 'abc', вывод enum_out бросает на любом значении, которое не метка перечисления. Операторы класса названы #<, #=
 # и т. д.: операторы public с именами =, < проверяются по имени, все перегрузки сразу, и затронули бы любые тесты.
 _DROP_IMPLICIT_CALLS = """
-DROP VIEW IF EXISTS public.app_ic_dom_view, public.app_ic_hidden_dom_view, public.app_ic_sorted_view;
-DROP TABLE IF EXISTS public.app_ic_cast_t, public.app_ic_io_t, public.app_ic_ct_t, public.app_ic_ok_t;
+DROP VIEW IF EXISTS public.app_ic_dom_view, public.app_ic_hidden_dom_view, public.app_ic_sorted_view,
+    public.app_ic_body_view, public.app_ic_atomic_view, public.app_ic_def_view;
+DROP TABLE IF EXISTS public.app_ic_cast_t, public.app_ic_io_t, public.app_ic_ct_t, public.app_ic_ok_t,
+    public.app_ic_bt, public.app_ic_xt_t CASCADE;
+DROP TABLE IF EXISTS public.app_ic_row_t CASCADE;
+DROP OPERATOR IF EXISTS public.#<<< (int, int);
+DROP FUNCTION IF EXISTS public.app_ic_body(), public.app_ic_atomic(), public.app_ic_def(int), public.app_ic_opf(int, int);
+DROP DOMAIN IF EXISTS public.app_ic_dc CASCADE;
 DROP TYPE IF EXISTS public.app_ic_pair, public.app_ic_rr, public.app_ic_e, public.app_ic_ok CASCADE;
 DROP DOMAIN IF EXISTS public.app_ic_rd CASCADE;
-DROP TYPE IF EXISTS public.app_ic_t, public.app_ic_ct CASCADE;
+DROP TYPE IF EXISTS public.app_ic_t, public.app_ic_ct, public.app_ic_b, public.app_ic_xt CASCADE;
 DROP OPERATOR IF EXISTS public.#~ (int, int);
 DROP FUNCTION IF EXISTS secret.ic_sel(internal, oid, internal, integer);
 """
@@ -707,6 +713,46 @@ CREATE OPERATOR public.#~ (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_
 CREATE TYPE public.app_ic_ok AS ENUM ('x', 'y');
 CREATE TABLE public.app_ic_ok_t (e public.app_ic_ok);
 INSERT INTO public.app_ic_ok_t VALUES ('y'), ('x');
+CREATE DOMAIN public.app_ic_dc AS int CHECK (VALUE > 0 AND (1::public.app_ic_e) IS NOT NULL);
+CREATE FUNCTION public.app_ic_body() RETURNS int LANGUAGE sql IMMUTABLE
+    AS $$SELECT CASE WHEN 1::public.app_ic_e IS NULL THEN 1 ELSE 2 END$$;
+CREATE FUNCTION public.app_ic_atomic() RETURNS int LANGUAGE sql IMMUTABLE
+    BEGIN ATOMIC SELECT CASE WHEN 1::public.app_ic_e IS NULL THEN 1 ELSE 2 END; END;
+CREATE FUNCTION public.app_ic_def(a int DEFAULT (CASE WHEN 1::public.app_ic_e IS NULL THEN 1 ELSE 2 END))
+    RETURNS int LANGUAGE sql IMMUTABLE AS $$SELECT a$$;
+CREATE FUNCTION public.app_ic_opf(a int, b int) RETURNS boolean LANGUAGE sql IMMUTABLE
+    AS $$SELECT a < b AND (1::public.app_ic_e) IS NOT NULL$$;
+CREATE OPERATOR public.#<<< (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_ic_opf);
+CREATE VIEW public.app_ic_body_view AS SELECT public.app_ic_body() AS v;
+CREATE VIEW public.app_ic_atomic_view AS SELECT public.app_ic_atomic() AS v;
+CREATE VIEW public.app_ic_def_view AS SELECT public.app_ic_def() AS v;
+CREATE TABLE public.app_ic_row_t (x int);
+INSERT INTO public.app_ic_row_t VALUES (1);
+CREATE FUNCTION secret.ic_row_to_int(r public.app_ic_row_t) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_row_to_int was executed'; END$$;
+CREATE CAST (public.app_ic_row_t AS int) WITH FUNCTION secret.ic_row_to_int(public.app_ic_row_t) AS IMPLICIT;
+CREATE TYPE public.app_ic_b;
+CREATE FUNCTION public.app_ic_b_in(cstring) RETURNS public.app_ic_b AS 'int4in' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.app_ic_b_out(public.app_ic_b) RETURNS cstring AS 'int4out' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_b (INPUT = public.app_ic_b_in, OUTPUT = public.app_ic_b_out, LIKE = int4);
+CREATE CAST (public.app_ic_b AS public.app_ic_ct) WITHOUT FUNCTION AS IMPLICIT;
+CREATE TABLE public.app_ic_bt (b public.app_ic_b);
+INSERT INTO public.app_ic_bt VALUES ('1'), ('2');
+CREATE TYPE public.app_ic_xt;
+CREATE FUNCTION public.app_ic_xt_in(cstring) RETURNS public.app_ic_xt AS 'int4in' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.app_ic_xt_out(public.app_ic_xt) RETURNS cstring
+    AS 'int4out' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_xt (INPUT = public.app_ic_xt_in, OUTPUT = public.app_ic_xt_out, LIKE = int4);
+CREATE FUNCTION public.app_ic_xt_hash(public.app_ic_xt) RETURNS int AS 'hashint4' LANGUAGE internal IMMUTABLE STRICT;
+CREATE OR REPLACE FUNCTION secret.ic_xt_eq(a public.app_ic_xt, b public.app_ic_xt) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_xt_eq was executed'; END$$;
+CREATE OPERATOR public.#== (
+    LEFTARG = public.app_ic_xt, RIGHTARG = public.app_ic_xt, FUNCTION = secret.ic_xt_eq, COMMUTATOR = #==
+);
+CREATE OPERATOR CLASS public.app_ic_xt_ops DEFAULT FOR TYPE public.app_ic_xt USING hash AS
+    OPERATOR 1 public.#==, FUNCTION 1 public.app_ic_xt_hash(public.app_ic_xt);
+CREATE TABLE public.app_ic_xt_t (x public.app_ic_xt, EXCLUDE USING hash (x WITH #==));
+INSERT INTO public.app_ic_xt_t VALUES ('1');
 """
 
 
@@ -740,6 +786,17 @@ async def db_implicit_calls(db_plan_check: DbAccess, db_full: DbAccess) -> Async
         pytest.param("SELECT n FROM app_ic_sorted_view", "ic_cmp", id="opclass-of-a-view-base-table"),
         pytest.param("SELECT '[1,2]'::app_ic_rr AS r", "ic_boom", id="range-over-domain-input"),
         pytest.param("SELECT id FROM app_plan_items WHERE id #~ 1", "ic_sel", id="operator-estimator"),
+        pytest.param("SELECT 1::app_ic_dc AS d", "ic_to_e", id="type-in-domain-check"),
+        pytest.param("SELECT v FROM app_ic_body_view", "ic_to_e", id="type-in-sql-body"),
+        pytest.param("SELECT v FROM app_ic_atomic_view", "ic_to_e", id="type-in-atomic-body"),
+        pytest.param("SELECT v FROM app_ic_def_view", "ic_to_e", id="type-in-argument-default"),
+        pytest.param("SELECT 1 #<<< 2 AS b", "ic_to_e", id="type-in-operator-function-body"),
+        pytest.param("SELECT r::int AS n FROM app_ic_row_t r", "ic_row_to_int", id="row-type-cast"),
+        pytest.param("SELECT r.*::int AS n FROM app_ic_row_t r", "ic_row_to_int", id="row-type-star-cast"),
+        pytest.param("SELECT pg_catalog.abs(r) AS n FROM app_ic_row_t r", "ic_row_to_int", id="row-type-implicit"),
+        pytest.param("SELECT b FROM app_ic_bt ORDER BY b", "ic_cmp", id="binary-coercible-order-by"),
+        pytest.param("SELECT b FROM app_ic_bt GROUP BY b", "ic_cmp", id="binary-coercible-group-by"),
+        pytest.param("INSERT INTO app_ic_xt_t (x) VALUES ('1')", "ic_xt_eq", id="exclusion-constraint-operator"),
     ],
 )
 async def test_implicit_call_of_a_type_is_rejected_before_it_runs(
@@ -752,7 +809,11 @@ async def test_implicit_call_of_a_type_is_rejected_before_it_runs(
 
     Типы, которых нет ни в SQL агента, ни в колонках названных отношений (приведение внутри представления, колонка
     базовой таблицы представления), находит чтение определений после PREPARE — по зависимостям правила и колонкам
-    заблокированных отношений."""
+    заблокированных отношений. Тип, названный в тексте определения (CHECK домена, тело SQL-функции строкой и
+    BEGIN ATOMIC, умолчание аргумента, тело функции оператора), — тоже семя: (1)::app_ic_e печатается без имени
+    функции, и EXPLAIN свернул бы IMMUTABLE secret.ic_to_e. Ссылка на всю строку вызывает приведение строкового типа
+    таблицы; ORDER BY и GROUP BY по типу, неявно двоично приводимому к app_ic_ct, — класс операторов app_ic_ct;
+    ограничение-исключение — оператор семейства типа колонки."""
     with pytest.raises(PlanAccessError, match=rf"function 'secret\.{function}'"):
         await db_implicit_calls.sql_driver.execute(sql, readonly=False)
 
@@ -762,3 +823,105 @@ async def test_type_with_builtin_machinery_passes(db_implicit_calls: DbAccess) -
     """Перечисление public: ввод-вывод и сравнение — встроенные функции pg_catalog."""
     rows = await db_implicit_calls.sql_driver.execute("SELECT e FROM app_ic_ok_t ORDER BY e", readonly=True)
     assert [row.cells["e"] for row in rows] == ["x", "y"]
+
+
+# Неявное двоично-совместимое приведение встроенного типа к типу public: класс операторов app_ic_vt по умолчанию
+# сравнивает и значения json (ORDER BY j вызывает secret.ic_vt_cmp). Такое приведение делает машинерию app_ic_vt
+# семенем любого запроса, поэтому оно живёт только в своём тесте.
+_DROP_BINARY_JSON_CAST = """
+DROP TABLE IF EXISTS public.app_ic_jt;
+DROP TYPE IF EXISTS public.app_ic_vt CASCADE;
+"""
+_BINARY_JSON_CAST = """
+CREATE TYPE public.app_ic_vt;
+CREATE FUNCTION public.app_ic_vt_in(cstring) RETURNS public.app_ic_vt AS 'textin' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.app_ic_vt_out(public.app_ic_vt) RETURNS cstring AS 'textout' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_vt (INPUT = public.app_ic_vt_in, OUTPUT = public.app_ic_vt_out, LIKE = text);
+CREATE FUNCTION secret.ic_vt_cmp(a public.app_ic_vt, b public.app_ic_vt) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_vt_cmp was executed'; END$$;
+CREATE FUNCTION public.app_ic_vt_lt(a public.app_ic_vt, b public.app_ic_vt) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::text < b::text';
+CREATE FUNCTION public.app_ic_vt_eq(a public.app_ic_vt, b public.app_ic_vt) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::text = b::text';
+CREATE OPERATOR public.#<< (LEFTARG = public.app_ic_vt, RIGHTARG = public.app_ic_vt, FUNCTION = public.app_ic_vt_lt);
+CREATE OPERATOR public.#=# (LEFTARG = public.app_ic_vt, RIGHTARG = public.app_ic_vt, FUNCTION = public.app_ic_vt_eq);
+CREATE OPERATOR CLASS public.app_ic_vt_ops DEFAULT FOR TYPE public.app_ic_vt USING btree AS
+    OPERATOR 1 public.#<<, OPERATOR 3 public.#=#, FUNCTION 1 secret.ic_vt_cmp(public.app_ic_vt, public.app_ic_vt);
+CREATE CAST (json AS public.app_ic_vt) WITHOUT FUNCTION AS IMPLICIT;
+CREATE TABLE public.app_ic_jt (j json);
+INSERT INTO public.app_ic_jt VALUES ('1'), ('2');
+"""
+
+
+@pytest.fixture
+async def db_binary_json_cast(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока json неявно двоично приводится к public.app_ic_vt с классом операторов над secret."""
+    await db_full.sql_driver.execute(_DROP_BINARY_JSON_CAST + _BINARY_JSON_CAST, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_BINARY_JSON_CAST, readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_binary_coercible_cast_of_a_builtin_type_is_rejected_before_it_runs(
+    db_binary_json_cast: DbAccess,
+) -> None:
+    """У json нет класса btree: ORDER BY j берёт класс app_ic_vt (GetDefaultOpClass принимает класс типа, к которому
+    json неявно двоично приводится) и вызвал бы secret.ic_vt_cmp при выполнении."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.ic_vt_cmp'"):
+        await db_binary_json_cast.sql_driver.execute("SELECT j FROM app_ic_jt ORDER BY j", readonly=True)
+
+
+# Расширение citext в схеме вне public (как extensions у Supabase): его машинерию поставил скрипт расширения,
+# ей доверяют по владельцу (тип, семейство операторов, приведение). Приведение, созданное DBA поверх функции
+# расширения, — не член расширения и проверяется по обычным правилам.
+_DROP_EXTENSION_TYPE = """
+DROP TABLE IF EXISTS public.app_ic_cit_t;
+DROP EXTENSION IF EXISTS citext CASCADE;
+DROP SCHEMA IF EXISTS ic_ext CASCADE;
+"""
+_EXTENSION_TYPE = """
+CREATE SCHEMA ic_ext;
+CREATE EXTENSION citext SCHEMA ic_ext;
+CREATE TABLE public.app_ic_cit_t (id int, c ic_ext.citext);
+INSERT INTO public.app_ic_cit_t VALUES (1, 'b'), (2, 'A');
+"""
+_DBA_CAST_OVER_AN_EXTENSION_FUNCTION = """
+CREATE CAST (cidr AS ic_ext.citext) WITH FUNCTION ic_ext.citext(inet) AS ASSIGNMENT;
+"""
+
+
+@pytest.fixture
+async def db_extension_type(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть таблица с колонкой ic_ext.citext."""
+    await db_full.sql_driver.execute(_DROP_EXTENSION_TYPE + _EXTENSION_TYPE, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_EXTENSION_TYPE, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id, c FROM app_ic_cit_t ORDER BY c",
+        "SELECT c FROM app_ic_cit_t GROUP BY c ORDER BY c",
+        "SELECT id FROM app_ic_cit_t WHERE c = 'A'",
+    ],
+)
+async def test_machinery_of_an_extension_type_outside_public_passes(db_extension_type: DbAccess, sql: str) -> None:
+    """Ввод-вывод, сравнение и хеш citext — функции ic_ext, члены расширения: доверены по типу и семейству."""
+    rows = await db_extension_type.sql_driver.execute(sql, readonly=True)
+    assert rows
+
+
+@pytest.mark.asyncio
+async def test_dba_cast_over_an_extension_function_is_checked(db_extension_type: DbAccess, db_full: DbAccess) -> None:
+    """Функция приведения следует обычному правилу basic: членство функции в расширении не в счёт, если сама строка
+    pg_cast создана DBA, — ic_ext.citext(inet) вне public отклоняется."""
+    await db_full.sql_driver.execute(_DBA_CAST_OVER_AN_EXTENSION_FUNCTION, readonly=False)
+
+    with pytest.raises(PlanAccessError, match=r"function 'ic_ext\.citext'"):
+        await db_extension_type.sql_driver.execute("SELECT id, c FROM app_ic_cit_t ORDER BY c", readonly=True)
