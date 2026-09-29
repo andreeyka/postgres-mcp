@@ -7,8 +7,10 @@ from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
+    ALLOWED_IMPLEMENTATIONS_SQL,
     RULE_DEPENDENCIES_SQL,
     BuiltinTypeNames,
+    allowed_implementations,
     pg_catalog_functions,
     row_types,
 )
@@ -73,6 +75,7 @@ async def _catalog_sql() -> list[str]:
     await BuiltinTypeNames().load(recorder)
     await pg_catalog_functions(recorder, ["current_setting", "my_fn"])
     await row_types(recorder, "public", ["users", "users_dom"])
+    await allowed_implementations(recorder, "public", operators=["===", "="], functions=["app_agg"])
     return [*recorder.sent, RULE_DEPENDENCIES_SQL]
 
 
@@ -132,3 +135,41 @@ def test_rule_dependencies_sql_gates_non_select_rules_on_a_dml_lock() -> None:
     # AccessShareLock (SELECT) и RowShareLock (SELECT FOR SHARE/UPDATE) не дают сработать DML-правилу.
     assert "'AccessShareLock'" not in RULE_DEPENDENCIES_SQL
     assert "'RowShareLock'" not in RULE_DEPENDENCIES_SQL
+
+
+async def test_allowed_implementations_look_up_operators_and_aggregates_by_name() -> None:
+    recorder = _Recorder()
+
+    await allowed_implementations(recorder, "public", operators=["!!"], functions=["app_agg", "count"])
+
+    [sql] = recorder.sent
+    assert "'!!'" in sql
+    assert "'app_agg'" in sql
+    assert "'count'" in sql
+    assert "nspname OPERATOR(pg_catalog.=) 'public'" in sql
+
+
+async def test_allowed_implementations_accept_an_empty_side() -> None:
+    """Только операторы или только функции: пустой массив имён — корректный SQL."""
+    recorder = _Recorder()
+
+    await allowed_implementations(recorder, "public", operators=[], functions=["app_agg"])
+
+    [sql] = recorder.sent
+    assert "ARRAY[]::pg_catalog.name[]" in sql
+
+
+def test_allowed_implementations_cover_support_functions_and_the_sort_operator() -> None:
+    for column in (
+        "aggtransfn",
+        "aggfinalfn",
+        "aggcombinefn",
+        "aggserialfn",
+        "aggdeserialfn",
+        "aggmtransfn",
+        "aggminvtransfn",
+        "aggmfinalfn",
+        "aggsortop",
+        "oprcode",
+    ):
+        assert column in ALLOWED_IMPLEMENTATIONS_SQL

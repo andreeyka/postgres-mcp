@@ -59,6 +59,13 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public.app_matview_setting AS SELECT curr
 CREATE OR REPLACE FUNCTION secret.boom() RETURNS text
     LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.boom was executed'; END$$;
 CREATE OR REPLACE VIEW public.app_boom_view AS SELECT secret.boom() AS b;
+CREATE OR REPLACE FUNCTION secret.agg_step(state text, value text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RETURN coalesce(state, '') || value; END$$;
+CREATE OR REPLACE AGGREGATE public.sum(text) (SFUNC = secret.agg_step, STYPE = text);
+CREATE OR REPLACE FUNCTION public.app_close_to(a int, b int) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN abs(a - b) <= 1; END';
+DROP OPERATOR IF EXISTS public.<~> (int, int);
+CREATE OPERATOR public.<~> (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_close_to);
 """
 
 
@@ -307,3 +314,28 @@ async def test_folded_function_of_a_view_is_not_executed_before_the_rejection(db
     правила читаются после PREPARE, до планирования: приходит отказ по функции, а не её исключение."""
     with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
         await db_plan_check.sql_driver.execute("SELECT * FROM app_boom_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_public_operator_over_a_builtin_outside_basic_is_rejected_in_the_agent_sql(
+    db_plan_check: DbAccess,
+) -> None:
+    """Оператор public.!! (text, boolean) реализован pg_catalog.current_setting: SQL агента видит только имя оператора."""
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
+        await db_plan_check.sql_driver.execute(
+            "SELECT ('max_connections' !! true) AS s FROM app_plan_people", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_aggregate_over_a_foreign_function_is_rejected(db_plan_check: DbAccess) -> None:
+    """Валидатор basic пускает только функции из списка basic; public.sum(text) — перегрузка разрешённого имени:
+    sum(name) по тексту выглядит встроенным агрегатом, план печатает его без схемы."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.agg_step'"):
+        await db_plan_check.sql_driver.execute("SELECT sum(name) AS c FROM app_plan_people", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_public_operator_over_a_public_function_passes(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute("SELECT (id <~> 2) AS near FROM app_plan_items", readonly=True)
+    assert rows[0].cells["near"] is True

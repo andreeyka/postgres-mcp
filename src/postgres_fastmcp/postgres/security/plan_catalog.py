@@ -44,6 +44,13 @@ _ROW_TYPES_SQL = (
     "JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
 )
 
+# Опорные функции агрегата (pg_aggregate, PG 15–17): переход, финал, комбинирование, (де)сериализация и их
+# варианты для движущегося окна; regproc, 0 — функции нет (соединение с pg_proc такую строку отбрасывает).
+_AGGREGATE_SUPPORT_FUNCTIONS = (
+    "(a.aggtransfn), (a.aggfinalfn), (a.aggcombinefn), (a.aggserialfn), "
+    "(a.aggdeserialfn), (a.aggmtransfn), (a.aggminvtransfn), (a.aggmfinalfn)"
+)
+
 # Правила (pg_rewrite) отношений, которые эта транзакция уже заблокировала: представления и правила, до которых
 # дошли разбор и переписывание запросов агента (EXPLAIN берёт AccessShareLock и держит его до конца транзакции;
 # вложенные представления блокирует переписывание). pg_locks показывает и fast-path блокировки (колонка
@@ -114,8 +121,7 @@ RULE_DEPENDENCIES_SQL = (
     "JOIN pg_catalog.pg_aggregate a ON a.aggfnoid::pg_catalog.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_proc ap ON ap.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_namespace an ON an.oid OPERATOR(pg_catalog.=) ap.pronamespace "
-    "CROSS JOIN LATERAL (VALUES (a.aggtransfn), (a.aggfinalfn), (a.aggcombinefn), (a.aggserialfn), "
-    "(a.aggdeserialfn), (a.aggmtransfn), (a.aggminvtransfn), (a.aggmfinalfn)) AS s(fn) "
+    f"CROSS JOIN LATERAL (VALUES {_AGGREGATE_SUPPORT_FUNCTIONS}) AS s(fn) "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     f"WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_PROC} "
@@ -137,6 +143,45 @@ RULE_DEPENDENCIES_SQL = (
     "JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) t.typnamespace "
     "LEFT JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.typrelid "
     "LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
+)
+
+# Реализации операторов и агрегатов allowed_schema по именам. План и SQL агента печатают оператор или агрегат
+# allowed_schema без схемы и без типов аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же
+# вида, что у RULE_DEPENDENCIES_SQL (их проверяет тот же разбор): operator_function — функция оператора (oprcode);
+# aggregate_function — опорная функция агрегата; operator и operator_function — оператор сортировки агрегата
+# (aggsortop: min/max планировщик заменяет индексным сканом с этим оператором) и его функция. parent_schema —
+# схема оператора или агрегата.
+ALLOWED_IMPLEMENTATIONS_SQL = (
+    "WITH operators AS ("  # noqa: S608
+    "SELECT o.oprcode FROM pg_catalog.pg_operator o "
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators})"
+    "), aggregates AS ("
+    "SELECT a.* FROM pg_catalog.pg_aggregate a "
+    "JOIN pg_catalog.pg_proc p ON p.oid OPERATOR(pg_catalog.=) a.aggfnoid::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND p.proname OPERATOR(pg_catalog.=) ANY ({functions})"
+    "), sort_operators AS ("
+    "SELECT o.oprname, o.oprnamespace, o.oprcode FROM aggregates a "
+    "JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) a.aggsortop"
+    ") "
+    "SELECT 'operator_function' AS kind, fn.nspname AS schema, f.proname AS name, "
+    "{schema}::pg_catalog.name AS parent_schema "
+    "FROM operators o JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    "UNION ALL "
+    "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name "
+    f"FROM aggregates a CROSS JOIN LATERAL (VALUES {_AGGREGATE_SUPPORT_FUNCTIONS}) AS s(fn) "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    "UNION ALL "
+    "SELECT 'operator', opn.nspname, o.oprname, NULL::pg_catalog.name FROM sort_operators o "
+    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "UNION ALL "
+    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname FROM sort_operators o "
+    "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace"
 )
 
 
@@ -189,3 +234,15 @@ async def row_types(run: StatementRunner, schema: str, names: Collection[str]) -
         relation = (str(row.cells["relation_schema"]), str(row.cells["relation_name"]))
         found.setdefault(str(row.cells["name"]), []).append(relation)
     return found
+
+
+async def allowed_implementations(
+    run: StatementRunner, schema: str, *, operators: Collection[str], functions: Collection[str]
+) -> list[RowResult] | None:
+    """Функции, которыми реализованы операторы и агрегаты схемы schema с этими именами (одним запросом)."""
+    sql = (
+        SQL(ALLOWED_IMPLEMENTATIONS_SQL)
+        .format(schema=Literal(schema), operators=_name_array(operators), functions=_name_array(functions))
+        .as_string()
+    )
+    return await run(sql)

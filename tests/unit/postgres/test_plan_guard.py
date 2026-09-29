@@ -69,6 +69,7 @@ class _Explain:
         row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
         rules: list[dict[str, Any]] | None = None,
         prepare_errors: dict[str, Exception] | None = None,
+        implementations: list[dict[str, Any]] | None = None,
     ) -> None:
         self._plans = plans or {}
         self._rules = rules or []
@@ -83,12 +84,17 @@ class _Explain:
         self._prepare_errors = prepare_errors or {}
         # PREPARE ... ; DEALLOCATE ..., SAVEPOINT ... и ROLLBACK TO SAVEPOINT ... — в sent не попадают.
         self.prepared: list[str] = []
+        self._implementations = implementations or []
+        self.implementation_queries: list[str] = []
 
-    async def __call__(self, sql: str) -> list[RowResult] | None:
+    async def __call__(self, sql: str) -> list[RowResult] | None:  # noqa: PLR0911
         self.log.append(sql)
         if "pg_catalog.pg_rewrite" in sql:
             self.rule_queries.append(sql)
             return [RowResult(cells=_rule_row(**row)) for row in self._rules]
+        if "pg_catalog.pg_aggregate" in sql:
+            self.implementation_queries.append(sql)
+            return [RowResult(cells=_rule_row(**row)) for row in self._implementations]
         if sql.startswith(("PREPARE ", "SAVEPOINT ", "ROLLBACK TO SAVEPOINT ")):
             self.prepared.append(sql)
             if not sql.startswith("ROLLBACK"):
@@ -1090,3 +1096,134 @@ async def test_rules_are_not_read_again_after_a_rejected_plan() -> None:
         await _guard(explain).check(_SELECT)
 
     assert len(explain.rule_queries) == 1
+
+
+_BANG_SETTING = [
+    {"kind": "operator_function", "schema": "pg_catalog", "name": "current_setting", "parent_schema": "public"}
+]
+
+
+async def test_public_operator_in_the_agent_sql_is_rejected_before_prepare() -> None:
+    """Оператор public называет себя, а не current_setting; IMMUTABLE-функцию с константами выполнил бы EXPLAIN."""
+    explain = _Explain(implementations=_BANG_SETTING)
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check("SELECT 'max_connections' !! true FROM app_t")
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", "pg_catalog.current_setting")
+    [query] = explain.implementation_queries
+    assert "'!!'" in query
+    assert explain.prepared == []
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+@pytest.mark.parametrize(
+    "expression", ["('max_connections'::text !! true)", "('max_connections'::text OPERATOR(public.!!) true)"]
+)
+async def test_public_operator_in_the_plan_is_checked_by_its_function(expression: str) -> None:
+    """Представление: SQL агента оператора не называет, его печатает план (без схемы или с allowed_schema)."""
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])}, implementations=_BANG_SETTING)
+
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
+        await _guard(explain).check(_SELECT)
+
+    [query] = explain.implementation_queries
+    assert "'!!'" in query
+
+
+async def test_public_operator_with_a_public_function_passes() -> None:
+    implementations = [
+        {"kind": "operator_function", "schema": "public", "name": "app_close_to", "parent_schema": "public"}
+    ]
+    explain = _Explain(implementations=implementations)
+
+    await _guard(explain).check("SELECT id <~> 1 FROM app_t")
+
+    [query] = explain.implementation_queries
+    assert "'<~>'" in query
+
+
+async def test_builtin_operator_rows_are_not_checked_by_their_functions() -> None:
+    """Строка оператора pg_catalog (parent_schema) — встроенный int4eq вне списка basic не отклоняется."""
+    implementations = [
+        {"kind": "operator_function", "schema": "pg_catalog", "name": "int4eq", "parent_schema": "pg_catalog"}
+    ]
+    explain = _Explain(implementations=implementations)
+
+    await _guard(explain).check("SELECT id FROM app_t WHERE id = 1")
+
+
+@pytest.mark.parametrize(
+    ("row", "name"),
+    [
+        ({"kind": "aggregate_function", "schema": "secret", "name": "f", "parent_schema": "public"}, "secret.f"),
+        (
+            {"kind": "aggregate_function", "schema": "pg_catalog", "name": "int4pl", "parent_schema": "public"},
+            "pg_catalog.int4pl",
+        ),
+        ({"kind": "operator", "schema": "secret", "name": "<"}, "secret.<"),
+        (
+            {"kind": "operator_function", "schema": "secret", "name": "lt", "parent_schema": "public"},
+            "secret.lt",
+        ),
+    ],
+)
+async def test_public_aggregate_with_a_forbidden_implementation_is_rejected(row: dict[str, Any], name: str) -> None:
+    """Опорные функции агрегата public и оператор сортировки (aggsortop, для min/max) — по правилам basic."""
+    explain = _Explain(implementations=[row])
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check("SELECT app_agg(id) FROM app_t")
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", name)
+    [query] = explain.implementation_queries
+    assert "'app_agg'" in query
+
+
+async def test_builtin_named_function_is_looked_up_as_a_possible_public_aggregate() -> None:
+    """Имя count из списка basic тоже может быть агрегатом public (count(mytype)): его спрашивают у каталога."""
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT count(*) FROM app_t")
+
+    [query] = explain.implementation_queries
+    assert "'count'" in query
+
+
+async def test_names_are_looked_up_once_per_check() -> None:
+    sql = "SELECT app_agg(id) FROM app_t WHERE id <~> 1"
+    node = _with(Filter="(app_t.id <~> 1)", Output=["app_agg(app_t.id)"])
+    explain = _Explain({_EXPLAIN + sql: node})
+
+    await _guard(explain).check(sql)
+
+    [query] = explain.implementation_queries
+    assert "'<~>'" in query
+    assert "'app_agg'" in query
+
+
+async def test_plan_only_names_get_a_second_lookup() -> None:
+    node = _with(Output=["app_agg(app_t.id)"])
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    await _guard(explain).check(_SELECT)
+
+    [query] = explain.implementation_queries
+    assert "'app_agg'" in query
+
+
+async def test_no_lookup_without_names_of_the_allowed_schema() -> None:
+    node = _with(Output=["pg_catalog.lower(app_t.name)", "(app_t.a OPERATOR(pg_catalog.=) 1)"])
+    explain = _Explain({_EXPLAIN + _SELECT: node})
+
+    await _guard(explain).check(_SELECT)
+
+    assert explain.implementation_queries == []
+
+
+async def test_types_of_non_planned_statements_are_checked_but_their_names_are_not_looked_up() -> None:
+    explain = _Explain()
+
+    await _guard(explain).check("PREPARE p AS SELECT app_agg(id) FROM app_t WHERE id <~> 1")
+
+    assert explain.implementation_queries == []

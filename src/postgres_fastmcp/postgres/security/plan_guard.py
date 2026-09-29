@@ -7,15 +7,19 @@
 pglast (plan_expressions) и проверяются по тем же правилам: функции и операторы — allowed_schema или pg_catalog
 из списка basic, типы — allowed_schema или pg_catalog, строковый тип таблицы без префикса — как сама таблица.
 Что решает только каталог (функция или тип без схемы), спрашивается SQL сервера в той же транзакции (plan_catalog).
+Оператор или агрегат без схемы (или со схемой allowed_schema) может быть объектом allowed_schema: каталог отдаёт
+функции, которыми они реализованы, и те проверяются по правилам функций.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
-таблицы без префикса). Затем каждый планируемый оператор готовится и тут же снимается (PREPARE; DEALLOCATE одной
-командой): разбор и переписывание берут блокировки представлений и таблиц до конца транзакции, но план не строится
-и функции не выполняются. После этого читаются правила заблокированного — текст правила и его зависимости
-(pg_depend), чего план не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public). Только потом
-EXPLAIN: планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не
-доходит. После всех EXPLAIN правила читаются ещё раз — представления, до которых дошёл только планировщик
-(встраивание SQL-функций, оператор GENERIC_PLAN, тип параметра которого PREPARE не вывел).
+таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
+(функция оператора и опорные функции агрегата; вызов с константами планировщик выполнил бы). Затем каждый
+планируемый оператор готовится и тут же снимается (PREPARE; DEALLOCATE одной командой): разбор и переписывание
+берут блокировки представлений и таблиц до конца транзакции, но план не строится и функции не выполняются.
+После этого читаются правила заблокированного — текст правила и его зависимости (pg_depend), чего план
+не показывает (свёртка констант, LIMIT, функции операторов и агрегатов public). Только потом EXPLAIN:
+планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не доходит.
+После всех EXPLAIN правила читаются ещё раз — представления, до которых дошёл только планировщик (встраивание
+SQL-функций, оператор GENERIC_PLAN, тип параметра которого PREPARE не вывел).
 
 Проверка закрыта по умолчанию: нет плана или узел сканирования не называет, что читает, — отказ. Цена —
 редкие формы: соединение или агрегат, вынесенные postgres_fdw на удалённый сервер (Foreign Scan без
@@ -31,6 +35,7 @@ from typing import Any
 
 import pglast
 from pglast.ast import (
+    A_Expr,
     DeclareCursorStmt,
     DefElem,
     DeleteStmt,
@@ -39,7 +44,9 @@ from pglast.ast import (
     InsertStmt,
     Node,
     SelectStmt,
+    SortBy,
     String,
+    SubLink,
     TypeName,
     UpdateStmt,
 )
@@ -51,6 +58,7 @@ from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
     RULE_DEPENDENCIES_SQL,
     BuiltinTypeNames,
+    allowed_implementations,
     pg_catalog_functions,
     row_types,
 )
@@ -74,6 +82,8 @@ ExplainRunner = Callable[[str], Awaitable[list[RowResult] | None]]
 RELATION_KIND = "relation"
 FUNCTION_KIND = "function"
 TYPE_KIND = "type"
+# Оператор — вид имени, чья реализация (oprcode) проверяется у операторов allowed_schema.
+_OPERATOR_KIND = "operator"
 
 # Операторы, у которых есть план; EXPLAIN и DECLARE разворачиваются до вложенного запроса.
 # SHOW, PREPARE, DEALLOCATE, FETCH, CLOSE, CREATE EXTENSION плана не имеют (EXECUTE запрещён валидатором).
@@ -176,21 +186,48 @@ class _FunctionCalls(Visitor):
         self.calls.append(node)
 
 
-class _TypeNames(Visitor):
-    """Собирает имена типов SQL агента: (схема или None, имя); у имени с базой данных — две последние части."""
+class _StatementNames(Visitor):
+    """Имена SQL агента: (схема или None, имя); у имени с базой данных — две последние части.
+
+    Типы проверяются до разбора на сервере (оракул ошибок разбора). Операторы и функции — кандидаты
+    в операторы и агрегаты allowed_schema: их реализация проверяется до PREPARE и EXPLAIN.
+    """
 
     def __init__(self) -> None:
-        """Пустой список имён в порядке обхода."""
+        """Пустые списки имён в порядке обхода."""
         super().__init__()
-        self.names: list[tuple[str | None, str]] = []
+        self.types: list[tuple[str | None, str]] = []
+        self.operators: list[tuple[str | None, str]] = []
+        self.functions: list[tuple[str | None, str]] = []
+
+    @staticmethod
+    def _add(found: list[tuple[str | None, str]], parts: tuple[Node, ...] | None) -> None:
+        """Добавить имя; части не строки или пустые пропускаются."""
+        names = [part.sval for part in parts or () if isinstance(part, String) and part.sval]
+        if len(names) == 1:
+            found.append((None, names[0]))
+        elif len(names) > 1:
+            found.append((names[-2], names[-1]))
 
     def visit_TypeName(self, _ancestors: object, node: TypeName) -> None:  # noqa: N802
-        """Запомнить имя типа; части не строки или пустые пропускаются."""
-        parts = [part.sval for part in node.names or () if isinstance(part, String) and part.sval]
-        if len(parts) == 1:
-            self.names.append((None, parts[0]))
-        elif len(parts) > 1:
-            self.names.append((parts[-2], parts[-1]))
+        """Имя типа."""
+        self._add(self.types, node.names)
+
+    def visit_A_Expr(self, _ancestors: object, node: A_Expr) -> None:  # noqa: N802
+        """Оператор выражения (в том числе IN, = ANY, NULLIF, IS DISTINCT FROM)."""
+        self._add(self.operators, node.name)
+
+    def visit_SubLink(self, _ancestors: object, node: SubLink) -> None:  # noqa: N802
+        """Оператор сравнения с подзапросом (x = ANY (SELECT ...))."""
+        self._add(self.operators, node.operName)
+
+    def visit_SortBy(self, _ancestors: object, node: SortBy) -> None:  # noqa: N802
+        """Оператор ORDER BY ... USING."""
+        self._add(self.operators, node.useOp)
+
+    def visit_FuncCall(self, _ancestors: object, node: FuncCall) -> None:  # noqa: N802
+        """Вызов функции или агрегата."""
+        self._add(self.functions, node.funcname)
 
 
 def _call_name(call: FuncCall) -> tuple[str | None, str]:
@@ -250,6 +287,8 @@ class _CatalogNames:
     functions: dict[str, None] = field(default_factory=dict)
     unqualified_types: dict[str, None] = field(default_factory=dict)
     schema_types: dict[str, None] = field(default_factory=dict)
+    # (вид, имя) операторов и функций без схемы или со схемой allowed_schema: чем они реализованы.
+    implementations: dict[tuple[str, str], None] = field(default_factory=dict)
 
 
 class PlanGuard:
@@ -285,6 +324,8 @@ class PlanGuard:
         self._prepared_count = 0
         # Строки правил, уже проверенные в этой проверке: второе чтение после EXPLAIN их не повторяет.
         self._seen_rows: set[tuple[object, ...]] = set()
+        # Имена, реализации которых уже спрошены в этой проверке (у второго чтения — только новые).
+        self._looked_up: set[tuple[str, str]] = set()
 
     async def check(self, query: str) -> None:
         """Проверить определения, до которых доходит запрос, затем план каждого планируемого оператора.
@@ -301,8 +342,8 @@ class PlanGuard:
                 не разбирается.
         """
         statements = [raw.stmt for raw in pglast.parse_sql(query)]
-        await self._check_statement_types(statements)
         plannable = [target for target in (_plannable(statement) for statement in statements) if target is not None]
+        await self._check_statement_names(statements, [statement for statement, _ in plannable])
         if not plannable:
             return
         targets = [(RawStream()(statement), generic) for statement, generic in plannable]
@@ -400,19 +441,29 @@ class PlanGuard:
         else:
             raise PlanUnverifiableError(rules=True)
 
-    async def _check_statement_types(self, statements: list[Node]) -> None:
-        """Типы из SQL агента — до первого EXPLAIN, по тем же правилам, что типы выражений плана.
+    async def _check_statement_names(self, statements: list[Node], targets: list[Node]) -> None:
+        """Типы SQL агента и реализации его операторов и агрегатов allowed_schema — до PREPARE и EXPLAIN.
 
-        Ошибка разбора EXPLAIN — оракул: (NULL::users).secret_note (нет колонки), '(1,2)'::users (число и
-        типы полей) раскрывают структуру таблицы без префикса раньше, чем план дойдёт до проверки. Каталог
-        спрашивается, только если есть тип без схемы вне кэша pg_catalog или со схемой allowed_schema без префикса.
+        Типы: ошибка разбора ((NULL::users).secret_note — нет колонки, '(1,2)'::users — число и типы полей)
+        раскрывает структуру таблицы без префикса; PREPARE разбирает так же, как EXPLAIN. Каталог спрашивается,
+        только если есть тип без схемы вне кэша pg_catalog или со схемой allowed_schema без префикса.
+
+        Операторы и функции планируемых операторов (targets): оператор или агрегат allowed_schema называет себя,
+        а не функции, которые вызывает, а IMMUTABLE-вызов с константами планировщик выполнил бы при EXPLAIN.
         """
-        collector = _TypeNames()
+        pending = _CatalogNames()
+        collector = _StatementNames()
         for statement in statements:
             collector(statement)
-        pending = _CatalogNames()
-        for schema, name in collector.names:
+        for schema, name in collector.types:
             self._check_type(schema, name, pending)
+        reached = _StatementNames()
+        for target in targets:
+            reached(target)
+        for schema, name in reached.operators:
+            self._note_implementation(_OPERATOR_KIND, schema, name, pending)
+        for schema, name in reached.functions:
+            self._note_implementation(FUNCTION_KIND, schema, name, pending)
         await self._check_catalog_names(pending)
 
     async def _check_plan(self, plan: object) -> None:
@@ -505,6 +556,8 @@ class PlanGuard:
 
     def _check_names(self, names: ExpressionNames, pending: _CatalogNames, *, check_functions: bool) -> None:
         """Имена одного выражения; то, что решает только каталог, откладывается в pending."""
+        for schema, name in names.functions:
+            self._note_implementation(FUNCTION_KIND, schema, name, pending)
         if check_functions:
             for schema, name in names.functions:
                 if schema is not None:
@@ -517,8 +570,18 @@ class PlanGuard:
             if schema is not None and schema not in (self._allowed_schema, _BUILTIN_FUNCTION_SCHEMA):
                 qualified_name = f"{schema}.{name}"
                 raise self._function_error(qualified_name)
+            self._note_implementation(_OPERATOR_KIND, schema, name, pending)
         for schema, name in names.types:
             self._check_type(schema, name, pending)
+
+    def _note_implementation(self, kind: str, schema: str | None, name: str, pending: _CatalogNames) -> None:
+        """Оператор или функция, которые могут быть объектом allowed_schema: их реализацию спросит каталог.
+
+        Имя без схемы может быть и встроенным (=, count) — каталог ищет только в allowed_schema. Имя, уже
+        спрошенное в этой проверке, не спрашивается снова.
+        """
+        if (schema is None or schema == self._allowed_schema) and (kind, name) not in self._looked_up:
+            pending.implementations[kind, name] = None
 
     def _check_type(self, schema: str | None, name: str, pending: _CatalogNames) -> None:
         """Тип выражения: pg_catalog и allowed_schema; строковый тип отношения без префикса — через каталог.
@@ -541,7 +604,24 @@ class PlanGuard:
         (pending.unqualified_types if schema is None else pending.schema_types)[name] = None
 
     async def _check_catalog_names(self, pending: _CatalogNames) -> None:
-        """Функции без схемы вне списка basic — не из pg_catalog; строковые типы — не отношения без префикса."""
+        """Имена, которые решает только каталог.
+
+        Реализации операторов и агрегатов allowed_schema — по правилам basic; функции без схемы вне списка
+        basic — не из pg_catalog; строковые типы — не отношения без префикса.
+        """
+        if pending.implementations:
+            keys = list(pending.implementations)
+            self._looked_up.update(keys)
+            rows = await allowed_implementations(
+                self._run,
+                self._allowed_schema,
+                operators=[name for kind, name in keys if kind == _OPERATOR_KIND],
+                functions=[name for kind, name in keys if kind == FUNCTION_KIND],
+            )
+            if rows is None:
+                raise PlanUnverifiableError(rules=True)
+            for row in rows:
+                self._check_rule_row(row.cells, pending)
         if pending.functions:
             builtin = await pg_catalog_functions(self._run, list(pending.functions))
             for name in pending.functions:
