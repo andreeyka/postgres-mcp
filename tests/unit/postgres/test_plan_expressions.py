@@ -11,6 +11,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     EXPRESSION_PARSERS,
     ExpressionNames,
     expression_texts,
+    parse_argument_defaults,
     parse_definition_expression,
     parse_expression,
     parse_function_body,
@@ -549,3 +550,86 @@ def test_function_body_names(text: str, atomic: bool, expected: ExpressionNames)
 def test_data_modifying_or_unparsable_body_is_rejected(text: object, atomic: bool) -> None:
     """Изменение данных в теле — свои цели записи, их путь записи не проверить; служебные команды — тоже."""
     assert parse_function_body(text, atomic=atomic) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Отношение в подзапросе, где CTE с тем же именем не видна: WITH ветви UNION не распространяется на соседнюю.
+        (
+            "SELECT * FROM (WITH pg_authid AS (SELECT 'x'::text AS rolname) SELECT rolname FROM pg_authid) s "
+            "UNION ALL SELECT rolname::text FROM pg_authid",
+            ExpressionNames(types=((None, "text"), (None, "text")), relations=((None, "pg_authid"),)),
+        ),
+        (
+            "SELECT pw FROM (WITH users AS (SELECT 1 AS id, 'x'::text AS pw) SELECT * FROM users) s "
+            "UNION ALL SELECT pw FROM users",
+            ExpressionNames(types=((None, "text"),), relations=((None, "users"),)),
+        ),
+        # CTE видна только в своём подзапросе, не во внешнем FROM.
+        (
+            "SELECT * FROM users, (WITH users AS (SELECT 1) SELECT * FROM users) s",
+            ExpressionNames(relations=((None, "users"),)),
+        ),
+        # Нерекурсивный WITH: CTE не видит себя и следующие — это таблицы.
+        (
+            "WITH users AS (SELECT * FROM users) SELECT * FROM users",
+            ExpressionNames(relations=((None, "users"),)),
+        ),
+        (
+            "WITH a AS (SELECT * FROM b), b AS (SELECT 1) SELECT * FROM a",
+            ExpressionNames(relations=((None, "b"),)),
+        ),
+        # CTE со схемой — всегда таблица.
+        (
+            "WITH users AS (SELECT 1) SELECT * FROM public.users",
+            ExpressionNames(relations=(("public", "users"),)),
+        ),
+    ],
+)
+def test_cte_name_outside_its_scope_is_a_table(text: str, expected: ExpressionNames) -> None:
+    """Имя без схемы — CTE, только если WITH, определяющий её, охватывает это место текста (как parse_cte)."""
+    assert parse_function_body(text, atomic=False) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "WITH app_x AS (SELECT 'a'::text AS v) SELECT v FROM app_x UNION ALL SELECT v FROM app_x",
+        "SELECT * FROM (WITH users AS (SELECT 1 AS id) SELECT * FROM (SELECT * FROM users) i) s",
+        "WITH a AS (SELECT 1 AS id), users AS (SELECT * FROM a) SELECT * FROM users WHERE id IN (SELECT id FROM a)",
+        "WITH RECURSIVE users(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM users WHERE n < 3) SELECT n FROM users",
+        "WITH RECURSIVE a AS (SELECT * FROM b), b AS (SELECT 1) SELECT * FROM a",
+        "SELECT 1 UNION ALL (WITH users AS (SELECT 2) SELECT * FROM users)",
+    ],
+)
+def test_cte_in_scope_is_not_a_table(text: str) -> None:
+    """Законные CTE: во всём операторе своего WITH, в его ветвях UNION и подзапросах; RECURSIVE видит всё."""
+    names = parse_function_body(text, atomic=False)
+    assert names is not None
+    assert names.relations == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("secret.api_key()", ExpressionNames(functions=(("secret", "api_key"),))),
+        (
+            "(1 + secret.boomi()), 'x;y'::text",
+            ExpressionNames(functions=(("secret", "boomi"),), operators=((None, "+"),), types=((None, "text"),)),
+        ),
+        ("app_helper(), now()", ExpressionNames(functions=((None, "app_helper"), (None, "now")))),
+        (
+            "(EXISTS ( SELECT 1 FROM secret.t))",
+            ExpressionNames(relations=(("secret", "t"),)),
+        ),
+    ],
+)
+def test_argument_defaults_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_expr(proargdefaults): умолчания через запятую; подзапрос и его отношения — как у определений."""
+    assert parse_argument_defaults(text) == expected
+
+
+@pytest.mark.parametrize("text", [None, 42, "", "1 FROM secret.t", "1; SELECT 2", "a.b.c.f()"])
+def test_unparsable_argument_defaults_are_rejected(text: object) -> None:
+    assert parse_argument_defaults(text) is None

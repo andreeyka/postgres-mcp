@@ -212,6 +212,18 @@ def test_allowed_implementations_return_sql_bodies_with_their_settings() -> None
         assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
 
 
+def test_allowed_implementations_return_argument_defaults_of_any_language() -> None:
+    """Умолчания аргументов: для каждой найденной функции любого языка, текст — pg_get_expr(proargdefaults)."""
+    for fragment in (
+        "'argument_defaults'",
+        "pg_catalog.pg_get_expr(p.proargdefaults, 0::pg_catalog.oid)",
+        "p.proargdefaults IS NOT NULL",
+    ):
+        assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
+    defaults = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("'argument_defaults'") :]
+    assert "lanname" not in defaults
+
+
 class _Sources(Visitor):
     """Имена отношений и CTE (RangeVar) в тексте: откуда CTE берёт строки."""
 

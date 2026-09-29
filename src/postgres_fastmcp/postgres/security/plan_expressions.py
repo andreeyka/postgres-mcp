@@ -48,7 +48,7 @@ from pglast.ast import (
 from pglast.enums.parsenodes import A_Expr_Kind, SetOperation
 from pglast.enums.primnodes import SubLinkType
 from pglast.parser import ParseError
-from pglast.visitors import Visitor
+from pglast.visitors import Ancestor, Visitor
 
 
 # Имя из плана: (схема или None, имя).
@@ -300,32 +300,53 @@ def _collect(statement: Node | tuple[Node, ...], names: _Names | None = None) ->
     )
 
 
-class _CteNames(Visitor):
-    """Имена CTE текста: отношение без схемы с таким именем — CTE, а не таблица."""
+# Операторы, у которых бывает WITH: его CTE видны во всём операторе (у SELECT с UNION — во всех ветвях под ним).
+_WITH_STATEMENTS = (SelectStmt, InsertStmt, UpdateStmt, DeleteStmt, MergeStmt)
 
-    def __init__(self) -> None:
-        """Пустое множество имён."""
-        super().__init__()
-        self.names: set[str] = set()
 
-    def visit_CommonTableExpr(self, _ancestors: object, node: CommonTableExpr) -> None:  # noqa: N802
-        """Запомнить имя CTE."""
-        if node.ctename:
-            self.names.add(node.ctename)
+def _ancestor_path(ancestors: Ancestor) -> list[tuple[object, object]]:
+    """Путь от узла к корню: (контейнер, поле или индекс в нём, по которому спускались), ближайший первым."""
+    path: list[tuple[object, object]] = []
+    current: Ancestor | None = ancestors
+    while current is not None:
+        if current.node is not None:
+            path.append((current.node, current.member))
+        current = current.parent
+    return path
+
+
+def _visible_ctes(ancestors: object) -> set[str]:
+    """Имена CTE, которые видит отношение без схемы в этом месте текста (как parse_cte/scanNameSpaceForCTE).
+
+    WITH оператора виден в самом операторе и его подзапросах, но не в соседних ветвях UNION над ним. Внутри
+    определения CTE того же WITH видны только CTE перед ним, у WITH RECURSIVE — все, включая её саму.
+    Путь неожиданной формы не даёт ни одного имени: отношение проверяется как таблица (закрыто по умолчанию).
+    """
+    if not isinstance(ancestors, Ancestor):
+        return set()
+    path = _ancestor_path(ancestors)
+    visible: set[str] = set()
+    for index, (node, member) in enumerate(path):
+        if not isinstance(node, _WITH_STATEMENTS) or node.withClause is None:
+            continue
+        ctes = tuple(node.withClause.ctes or ())
+        names = [cte.ctename if isinstance(cte, CommonTableExpr) else None for cte in ctes]
+        if member != "withClause" or node.withClause.recursive:
+            visible.update(name for name in names if name)
+            continue
+        # Путь внутрь WITH: ... -> (кортеж ctes, номер CTE) -> (WithClause, "ctes") -> (оператор, "withClause").
+        position = path[index - 2][1] if index >= 2 and path[index - 1][1] == "ctes" else None  # noqa: PLR2004
+        if isinstance(position, int):
+            visible.update(name for name in names[:position] if name)
+    return visible
 
 
 class _DefinitionNames(_Names):
     """Имена текста определения (политика, CHECK, DEFAULT, триггер, индекс, домен) вместе с отношениями.
 
-    Подзапросы законны, отношения собираются — план их не покажет. Имя без схемы, совпадающее с именем CTE
-    текста, — CTE (без учёта области видимости: одноимённая таблица в другой области того же текста
-    не проверяется; тексты пишет владелец схемы, не агент).
+    Подзапросы законны, отношения собираются — план их не покажет. Имя без схемы — CTE, только если его
+    определяет WITH, видимый в этом месте текста (_visible_ctes); иначе это таблица.
     """
-
-    def __init__(self, ctes: frozenset[str]) -> None:
-        """Пустые списки имён; ctes — имена CTE всего текста."""
-        super().__init__()
-        self._ctes = ctes
 
     def visit_SelectStmt(self, _ancestors: object, _node: SelectStmt) -> None:  # noqa: N802
         """Подзапрос определения законен."""
@@ -338,21 +359,19 @@ class _DefinitionNames(_Names):
         else:
             self._add(self.operators, node.operName)
 
-    def visit_RangeVar(self, _ancestors: object, node: RangeVar) -> None:  # noqa: N802
+    def visit_RangeVar(self, ancestors: object, node: RangeVar) -> None:  # noqa: N802
         """Отношение определения: (схема или None, имя); имя с базой данных не проверить."""
         if node.catalogname or not node.relname:
             self.verifiable = False
-        elif node.schemaname is not None or node.relname not in self._ctes:
+        elif node.schemaname is not None or node.relname not in _visible_ctes(ancestors):
             self.relations.append((node.schemaname, node.relname))
 
 
 def _collect_definition(
     root: Node | tuple[Node, ...], names_type: type[_DefinitionNames] = _DefinitionNames
 ) -> ExpressionNames | None:
-    """Имена текста определения с учётом его CTE; None — неразборчиво."""
-    ctes = _CteNames()
-    ctes(root)
-    return _collect(root, names_type(frozenset(ctes.names)))
+    """Имена текста определения с учётом области видимости его CTE; None — неразборчиво."""
+    return _collect(root, names_type())
 
 
 def _single_statement[T: Node](text: object, kind: type[T]) -> T | None:
@@ -552,6 +571,16 @@ def parse_definition_expression(text: object) -> ExpressionNames | None:
     if statement is None or not _only(statement) or len(statement.targetList or ()) != 1:
         return None
     return _collect_definition(statement)
+
+
+def parse_argument_defaults(text: object) -> ExpressionNames | None:
+    """Умолчания аргументов функции (pg_get_expr(proargdefaults)): выражения через запятую.
+
+    Планировщик подставляет их в вызов, где аргументы опущены, и сворачивает IMMUTABLE — то есть выполняет при
+    EXPLAIN. Разбирается как "SELECT <text>"; подзапросы и отношения собираются, как у других определений.
+    """
+    statement = parse_target_list(text)
+    return None if statement is None else _collect_definition(statement)
 
 
 def parse_trigger_definition(text: object) -> ExpressionNames | None:

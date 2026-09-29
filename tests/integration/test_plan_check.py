@@ -95,6 +95,17 @@ CREATE OR REPLACE VIEW public.app_secret_path_count_view AS SELECT public.app_se
 CREATE OR REPLACE FUNCTION public.app_writing_count() RETURNS bigint
     LANGUAGE sql VOLATILE AS 'INSERT INTO public.app_plan_items SELECT 1 WHERE false; SELECT 1::bigint';
 CREATE OR REPLACE VIEW public.app_writing_count_view AS SELECT public.app_writing_count() AS n;
+CREATE OR REPLACE FUNCTION public.app_escaped_text() RETURNS text
+    LANGUAGE sql STABLE SET standard_conforming_strings = off
+    AS $$SELECT 'p\\' AS a, ' || (SELECT token FROM secret.accounts LIMIT 1) || ' --'$$;
+CREATE OR REPLACE VIEW public.app_escaped_text_view AS SELECT public.app_escaped_text() AS n;
+CREATE OR REPLACE FUNCTION public.app_shadowed_roles() RETURNS SETOF text LANGUAGE sql VOLATILE AS $$
+    SELECT * FROM (WITH pg_authid AS (SELECT 'x'::text AS rolname) SELECT rolname FROM pg_authid) s
+    UNION ALL SELECT rolname::text FROM pg_authid$$;
+CREATE OR REPLACE VIEW public.app_shadowed_roles_view AS SELECT n FROM public.app_shadowed_roles() AS n;
+CREATE OR REPLACE FUNCTION public.app_cte_items() RETURNS SETOF int LANGUAGE sql STABLE AS $$
+    WITH app_i AS (SELECT id FROM public.app_plan_items) SELECT id FROM app_i UNION ALL SELECT id FROM app_i$$;
+CREATE OR REPLACE VIEW public.app_cte_items_view AS SELECT n FROM public.app_cte_items() AS n;
 """
 
 
@@ -486,8 +497,10 @@ _DROP_BOOM_DEFINITIONS = """
 DROP TABLE IF EXISTS public.app_boom_dom_t, public.app_boom_def_t, public.app_boom_pk, public.app_boom_child,
     public.app_boom_parent, public.app_boom_pp, public.app_boom_rls, public.app_boom_ip, public.app_boom_xi,
     public.app_boom_st, public.app_boom_fx CASCADE;
-DROP VIEW IF EXISTS public.app_boom_fn_view, public.app_boom_fn_atomic_view;
-DROP FUNCTION IF EXISTS public.app_boom_fn_rows(), public.app_boom_fn_rows_atomic();
+DROP VIEW IF EXISTS public.app_boom_fn_view, public.app_boom_fn_atomic_view, public.app_boom_arg_view,
+    public.app_boom_arg_caller_view;
+DROP FUNCTION IF EXISTS public.app_boom_fn_rows(), public.app_boom_fn_rows_atomic(), public.app_boom_arg(int),
+    public.app_boom_arg_caller(), public.app_boom_arg_sql(int);
 DROP DOMAIN IF EXISTS public.app_boom_text;
 DROP FUNCTION IF EXISTS public.app_pass_row();
 """
@@ -525,6 +538,13 @@ CREATE VIEW public.app_boom_fn_view AS SELECT * FROM public.app_boom_fn_rows();
 CREATE FUNCTION public.app_boom_fn_rows_atomic() RETURNS SETOF public.app_boom_fx
     LANGUAGE sql STABLE BEGIN ATOMIC SELECT * FROM public.app_boom_fx WHERE id = 1; END;
 CREATE VIEW public.app_boom_fn_atomic_view AS SELECT * FROM public.app_boom_fn_rows_atomic();
+CREATE FUNCTION public.app_boom_arg(a int DEFAULT (1 + secret.boom_int())) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RETURN a; END$$;
+CREATE VIEW public.app_boom_arg_view AS SELECT public.app_boom_arg() AS x;
+CREATE FUNCTION public.app_boom_arg_sql(a int DEFAULT secret.boom_int()) RETURNS int
+    LANGUAGE sql IMMUTABLE AS 'SELECT a';
+CREATE FUNCTION public.app_boom_arg_caller() RETURNS int LANGUAGE sql STABLE AS 'SELECT public.app_boom_arg_sql()';
+CREATE VIEW public.app_boom_arg_caller_view AS SELECT public.app_boom_arg_caller() AS x;
 """
 
 
@@ -556,6 +576,8 @@ async def db_boom_definitions(db_plan_check: DbAccess, db_full: DbAccess) -> Asy
         pytest.param("SELECT * FROM app_boom_st WHERE id = 1", id="statistics-select"),
         pytest.param("SELECT * FROM app_boom_fn_view", id="inlined-function-table-index"),
         pytest.param("SELECT * FROM app_boom_fn_atomic_view", id="inlined-atomic-function-table-index"),
+        pytest.param("SELECT * FROM app_boom_arg_view", id="argument-default"),
+        pytest.param("SELECT * FROM app_boom_arg_caller_view", id="sql-body-argument-default"),
     ],
 )
 async def test_definition_calling_a_foreign_function_is_rejected_before_it_runs(
@@ -564,7 +586,9 @@ async def test_definition_calling_a_foreign_function_is_rejected_before_it_runs(
     """Умолчание домена и колонки, ключ секционирования, CHECK каскадной таблицы, триггер секции, политика, CHECK
     наследника, индекс и статистика: EXPLAIN (или выполнение) вызвал бы secret.boom_int() и получил бы его
     исключение. Отказ по функции приходит раньше — определения читаются после PREPARE, до EXPLAIN. Таблицу,
-    которую читает только тело встраиваемой SQL-функции, блокирует PREPARE по телу — её индекс читается тоже."""
+    которую читает только тело встраиваемой SQL-функции, блокирует PREPARE по телу — её индекс читается тоже.
+    Умолчание аргумента функции public (вызов без него — в представлении или в теле SQL-функции) планировщик
+    подставляет и сворачивает — оно проверяется вместе с реализацией функции."""
     with pytest.raises(PlanAccessError, match=r"function 'secret\.boom_int'"):
         await db_boom_definitions.sql_driver.execute(sql, readonly=False)
 
@@ -586,8 +610,27 @@ async def test_view_over_a_public_sql_function_reading_a_prefixed_table_passes(d
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("view", ["app_secret_path_count_view", "app_writing_count_view"])
+@pytest.mark.parametrize("view", ["app_secret_path_count_view", "app_writing_count_view", "app_escaped_text_view"])
 async def test_view_over_an_unverifiable_sql_function_body_is_rejected(db_plan_check: DbAccess, view: str) -> None:
-    """Собственный SET search_path и изменение данных в теле — не проверить."""
+    """Собственный SET search_path, изменение данных в теле и SET standard_conforming_strings = off — не проверить.
+
+    При off обратный слэш экранирует кавычку: Postgres выполняет подзапрос, который pglast видит литералом.
+    """
     with pytest.raises(PlanUnverifiableError, match="definitions of views"):
         await db_plan_check.sql_driver.execute(f"SELECT n FROM {view}", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_table_named_like_a_cte_of_another_scope_is_checked(db_plan_check: DbAccess) -> None:
+    """CTE pg_authid видна только в своём подзапросе: вторая ветвь UNION читает pg_catalog.pg_authid.
+
+    VOLATILE-функция не встраивается: план видит только её вызов, pg_authid — только проверка тела.
+    """
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.pg_authid'"):
+        await db_plan_check.sql_driver.execute("SELECT n FROM app_shadowed_roles_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_cte_used_in_every_branch_of_its_statement_passes(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute("SELECT n FROM app_cte_items_view", readonly=True)
+    assert len(rows) >= 2

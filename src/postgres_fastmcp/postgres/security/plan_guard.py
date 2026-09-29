@@ -10,8 +10,9 @@ pglast (plan_expressions) и проверяются по тем же прави�
 Оператор или агрегат без схемы (или со схемой allowed_schema) может быть объектом allowed_schema: каталог отдаёт
 функции, которыми они реализованы, и те проверяются по правилам функций. Функция allowed_schema на языке sql
 проверяется по тексту тела (prosrc или pg_get_function_sqlbody) теми же правилами вместе с отношениями тела;
-вызовы в теле — следующим кругом, не глубже _MAX_DEFINITION_DEPTH. Тело, меняющее данные, и SET search_path
-вне allowed_schema — отказ: их не проверить.
+вызовы в теле — следующим кругом, не глубже _MAX_DEFINITION_DEPTH. Тело, меняющее данные, SET search_path
+вне allowed_schema и SET standard_conforming_strings не on — отказ: их не проверить. Умолчания аргументов функции
+allowed_schema любого языка (планировщик подставляет их в вызов и сворачивает) проверяются как текст определения.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
@@ -84,6 +85,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     FUNCTION_CALL_KEY,
     ExpressionNames,
     expression_texts,
+    parse_argument_defaults,
     parse_definition_expression,
     parse_function_body,
     parse_index_definition,
@@ -136,6 +138,8 @@ _DEFINITION_PARSERS: dict[str, Callable[[object], ExpressionNames | None]] = {
     "index": parse_index_definition,
     "partition": parse_partition_key_definition,
     **dict.fromkeys(("check", "default", "domain", "policy", "statistics"), parse_definition_expression),
+    # Умолчания аргументов функции allowed_schema (строка ALLOWED_IMPLEMENTATIONS_SQL).
+    "argument_defaults": parse_argument_defaults,
 }
 
 # Кругов имён, которые решает каталог: тело функции -> функция в нём -> …, отношение текста -> его правила -> ….
@@ -607,8 +611,13 @@ class PlanGuard:
         (search_path = secret: SELECT x FROM t читает secret.t) — такое тело не проверить. SECURITY DEFINER ничего
         не меняет: права владельца делают утечку опаснее, тело проверяется так же.
 
+        SET standard_conforming_strings, отличный от on, меняет лексику тела: при off обратный слэш перед кавычкой
+        экранирует её (строка не закрывается), и Postgres делит текст на строки и код иначе, чем pglast
+        (он лексит под on, как и транзакция агента). То, что pglast видит в литерале, Postgres выполнил бы.
+
         Raises:
-            PlanUnverifiableError: search_path другой или настройки не список строк.
+            PlanUnverifiableError: search_path другой, standard_conforming_strings не on или настройки
+                не список строк.
         """
         if config is None:
             return
@@ -618,7 +627,10 @@ class PlanGuard:
             if not isinstance(entry, str):
                 raise PlanUnverifiableError(rules=True)
             setting, _, value = entry.partition("=")
-            if setting.strip().lower() == "search_path" and value != self._allowed_schema:
+            name = setting.strip().lower()
+            if name == "search_path" and value != self._allowed_schema:
+                raise PlanUnverifiableError(rules=True)
+            if name == "standard_conforming_strings" and value.strip().lower() != "on":
                 raise PlanUnverifiableError(rules=True)
 
     async def _check_statement_names(self, statements: list[Node], targets: list[Node]) -> None:

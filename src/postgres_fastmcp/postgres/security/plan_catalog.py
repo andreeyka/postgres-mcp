@@ -305,14 +305,17 @@ DEFINITION_DEPENDENCIES_SQL = (
 # функция агрегата; operator и operator_function — оператор сортировки агрегата (aggsortop: min/max планировщик
 # заменяет индексным сканом с этим оператором) и его функция; sql_body — тело SQL-функции как написано (prosrc;
 # config — proconfig: SET search_path меняет разрешение имён тела); sql_atomic_body — тело BEGIN ATOMIC / RETURN
-# (pg_get_function_sqlbody: имена вне search_path — со схемой). parent_schema — схема оператора или агрегата.
+# (pg_get_function_sqlbody: имена вне search_path — со схемой); argument_defaults — умолчания аргументов функции
+# любого языка через запятую (pg_get_expr(proargdefaults)): планировщик подставляет их в вызов без этих аргументов
+# и сворачивает IMMUTABLE. parent_schema — схема оператора или агрегата.
 ALLOWED_IMPLEMENTATIONS_SQL = (
     "WITH operators AS ("  # noqa: S608
     "SELECT o.oprcode FROM pg_catalog.pg_operator o "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators})"
     "), functions AS ("
-    "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig "
+    "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig, "
+    "p.proargdefaults "
     "FROM pg_catalog.pg_proc p "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND p.proname OPERATOR(pg_catalog.=) ANY ({functions})"
@@ -345,7 +348,11 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "SELECT CASE WHEN p.atomic THEN 'sql_atomic_body' ELSE 'sql_body' END, {schema}::pg_catalog.name, p.proname, "
     "NULL, CASE WHEN p.atomic THEN pg_catalog.pg_get_function_sqlbody(p.oid) ELSE p.prosrc END, p.proconfig "
     "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
-    "WHERE l.lanname OPERATOR(pg_catalog.=) 'sql'"
+    "WHERE l.lanname OPERATOR(pg_catalog.=) 'sql' "
+    "UNION ALL "
+    "SELECT 'argument_defaults', {schema}::pg_catalog.name, p.proname, NULL, "
+    "pg_catalog.pg_get_expr(p.proargdefaults, 0::pg_catalog.oid), NULL FROM functions p "
+    "WHERE p.proargdefaults IS NOT NULL"
 )
 
 
@@ -403,7 +410,7 @@ async def row_types(run: StatementRunner, schema: str, names: Collection[str]) -
 async def allowed_implementations(
     run: StatementRunner, schema: str, *, operators: Collection[str], functions: Collection[str]
 ) -> list[RowResult] | None:
-    """Функции, которыми реализованы операторы и агрегаты схемы schema с этими именами, и тела её SQL-функций."""
+    """Реализации операторов и агрегатов схемы schema с этими именами, тела и умолчания аргументов её функций."""
     sql = (
         SQL(ALLOWED_IMPLEMENTATIONS_SQL)
         .format(schema=Literal(schema), operators=_name_array(operators), functions=_name_array(functions))

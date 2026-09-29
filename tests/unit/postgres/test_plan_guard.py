@@ -1579,6 +1579,14 @@ async def test_allowed_sql_function_body_passes_and_its_relations_are_prepared()
         _body("app_count", "SELECT count(*) FROM app_t", config=["search_path=public, secret"]),
         _body("app_count", "SELECT count(*) FROM app_t", config=["SEARCH_PATH=secret"]),
         _body("app_count", "SELECT count(*) FROM app_t", config="search_path=secret"),
+        # standard_conforming_strings = off: обратный слэш экранирует кавычку, Postgres лексит тело иначе, чем pglast.
+        _body(
+            "app_count",
+            "SELECT 'p\\' AS a, ' , (SELECT pw FROM secret.acc) AS q, ' AS b --'",
+            config=["standard_conforming_strings=off"],
+        ),
+        _body("app_count", "SELECT 1", config=["Standard_Conforming_Strings=OFF"]),
+        _body("app_count", "SELECT 1", config=["standard_conforming_strings=false"]),
         _body("app_count", "INSERT INTO app_t VALUES (1)"),
         _body("app_count", "SELECT count(*) FROM"),
         _body("app_count", "SELECT 1", atomic=True),
@@ -1596,6 +1604,8 @@ async def test_unverifiable_sql_function_body_is_rejected(body: dict[str, Any]) 
     [
         _body("app_count", "SELECT count(*) FROM app_t", config=["search_path=public"]),
         _body("app_count", "SELECT count(*) FROM app_t", config=["work_mem=64MB"]),
+        _body("app_count", "SELECT 1", config=["standard_conforming_strings=ON"]),
+        _body("app_count", "RETURN 1", atomic=True, config=["standard_conforming_strings=off"]),
         _body("app_count", "RETURN 1", atomic=True, config=["search_path=secret"]),
     ],
 )
@@ -1673,3 +1683,62 @@ async def test_function_called_in_the_agent_sql_is_checked_by_its_body_before_pr
         await _guard(explain).check("SELECT * FROM app_rows()")
 
     assert explain.prepared == []
+
+
+def _defaults(name: str, text: str) -> dict[str, Any]:
+    """Строка умолчаний аргументов функции public из ALLOWED_IMPLEMENTATIONS_SQL."""
+    return {"kind": "argument_defaults", "schema": "public", "name": name, "definition": text, "config": None}
+
+
+@pytest.mark.parametrize(
+    ("defaults", "kind", "name"),
+    [
+        (_defaults("app_count", "secret.api_key()"), "function", "secret.api_key"),
+        (_defaults("app_count", "1, (1 + secret.boomi())"), "function", "secret.boomi"),
+        (_defaults("app_count", "current_setting('x')"), "function", "pg_catalog.current_setting"),
+    ],
+)
+async def test_argument_defaults_outside_basic_are_rejected_before_explain(
+    defaults: dict[str, Any], kind: str, name: str
+) -> None:
+    """Представление вызывает app_count() без аргументов: планировщик подставил бы умолчание и свернул его."""
+    explain = _Explain(
+        pg_catalog_functions=frozenset({"current_setting"}),
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [defaults]},
+    )
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_argument_default_calling_a_public_function_is_checked_by_its_body() -> None:
+    """Умолчание вызывает функцию public: её тело (и умолчания) — следующий круг."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={
+            "app_count": [_defaults("app_count", "app_key()")],
+            "app_key": [_body("app_key", "SELECT pw FROM secret.acc")],
+        },
+    )
+
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.acc'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_argument_defaults_within_basic_pass() -> None:
+    explain = _Explain(
+        rules=_VIEW_CALLS, implementations={"app_count": [_defaults("app_count", "1, now(), 'x'::text")]}
+    )
+
+    await _guard(explain).check(_SELECT)
+
+
+async def test_unparsable_argument_defaults_are_unverifiable() -> None:
+    explain = _Explain(rules=_VIEW_CALLS, implementations={"app_count": [_defaults("app_count", "1 FROM secret.t")]})
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
