@@ -922,11 +922,15 @@ class PlanGuard:
     def _note_implementation(self, kind: str, schema: str | None, name: str, pending: _CatalogNames) -> None:
         """Оператор или функция, которые могут быть объектом allowed_schema: их реализацию спросит каталог.
 
-        Имя без схемы может быть и встроенным (=, count) — каталог ищет только в allowed_schema. Имя, уже
-        спрошенное в этой проверке, не спрашивается снова. Функция — кандидат и в агрегат (опорные функции),
-        и в SQL-функцию (тело).
+        Имя без схемы может быть и встроенным (=, count) — каталог ищет в allowed_schema, а у операторов ещё
+        коммутаторы и отрицания вне pg_catalog встроенных операторов с этим именем (поэтому оператор со схемой
+        pg_catalog — тоже кандидат). Имя, уже спрошенное в этой проверке, не спрашивается снова. Функция — кандидат
+        и в агрегат (опорные функции), и в SQL-функцию (тело).
         """
-        if (schema is None or schema == self._allowed_schema) and (kind, name) not in self._looked_up:
+        schemas: tuple[str | None, ...] = (None, self._allowed_schema)
+        if kind == _OPERATOR_KIND:
+            schemas += (_BUILTIN_FUNCTION_SCHEMA,)
+        if schema in schemas and (kind, name) not in self._looked_up:
             pending.implementations[kind, name] = None
 
     def _check_type(self, schema: str | None, name: str, pending: _CatalogNames) -> None:

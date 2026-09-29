@@ -1290,8 +1290,12 @@ async def test_no_name_lookup_without_names_of_the_allowed_schema() -> None:
 
     await _guard(explain).check(_SELECT)
 
-    [footprint] = explain.implementation_queries
-    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
+    [footprint, operators] = explain.implementation_queries
+    # Имён операторов в запросе два места (операторы allowed_schema и встроенные с этим именем), функций — одно.
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 3
+    # Оператор pg_catalog — кандидат: его коммутатор или отрицание может быть оператором public.
+    assert "ARRAY['=']::pg_catalog.name[]" in operators
+    assert "'lower'" not in operators
 
 
 async def test_types_of_non_planned_statements_are_checked_but_their_names_are_not_looked_up() -> None:
@@ -1353,7 +1357,17 @@ async def test_constructs_without_an_operator_look_up_no_operators(sql: str) -> 
     await _guard(explain).check(sql)
 
     [footprint] = explain.implementation_queries
-    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 3
+
+
+async def test_builtin_operator_named_with_its_schema_is_looked_up() -> None:
+    """OPERATOR(pg_catalog.^@) в SQL агента: его коммутатор и отрицание вне pg_catalog спрашивает запрос реализаций."""
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT * FROM app_t WHERE NOT (v OPERATOR(pg_catalog.^@) 'x')")
+
+    [query] = explain.implementation_queries
+    assert "ARRAY['^@']::pg_catalog.name[]" in query
 
 
 @pytest.mark.parametrize(

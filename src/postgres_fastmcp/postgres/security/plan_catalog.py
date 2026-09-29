@@ -592,21 +592,23 @@ _NON_SQL_FUNCTION_ROWS = (
 )
 
 # Реализации операторов и функций allowed_schema по именам. План и SQL агента печатают их без схемы и без типов
-# аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же вида, что у DEFINITION_DEPENDENCIES_SQL
-# (их проверяет тот же разбор). Операторы (operator_closure) — названные, операторы сортировки агрегатов (aggsortop:
-# min/max планировщик заменяет индексным сканом с этим оператором) и, транзитивно, их коммутаторы и отрицания
-# (_OPERATOR_LINKS; могут быть и в другой схеме). У каждого: operator — схема оператора; operator_function — его
-# функция (oprcode; parent_schema — схема оператора); type_function — функции оценки селективности (oprrest,
-# oprjoin): их вызывает планировщик. aggregate_function — опорная функция агрегата (parent_schema — схема агрегата);
-# sql_body — тело SQL-функции как написано (prosrc; config — proconfig: SET search_path меняет разрешение имён тела);
-# sql_atomic_body — тело BEGIN ATOMIC / RETURN (pg_get_function_sqlbody: имена вне search_path — со схемой);
-# argument_defaults — умолчания аргументов функции любого языка через запятую (pg_get_expr(proargdefaults)):
-# планировщик подставляет их в вызов без этих аргументов и сворачивает IMMUTABLE. Плюс строки машинерии типов
-# (_type_machinery) от семян seeds: типы ({types}: из SQL агента и из текстов определений — тел, умолчаний, CHECK
-# доменов), колонки и строковые типы отношений ({relations}) SQL агента, типы аргументов и результатов найденных
-# функций и операторов, типы состояния агрегатов. Плюс _NON_SQL_FUNCTION_ROWS: функции не на sql и опорные функции
-# планировщика. Функции операторов, найденных замыканием, PlanGuard спрашивает следующим кругом по имени — к ним
-# применяются тела, умолчания и правило не-SQL.
+# аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же вида, что у DEFINITION_DEPENDENCIES_SQL (их
+# проверяет тот же разбор). Операторы (operator_closure) — названные, операторы сортировки агрегатов (aggsortop: min/max
+# планировщик заменяет индексным сканом с этим оператором) и, транзитивно, их коммутаторы и отрицания (_OPERATOR_LINKS;
+# могут быть и в другой схеме). У встроенных операторов с названным именем берутся коммутатор и отрицание вне
+# pg_catalog: пустой слот оператора pg_catalog заполняет CREATE OPERATOR ... NEGATOR = OPERATOR(pg_catalog.^@)
+# (суперпользователь), и NOT (v ^@ 'x') планировщик оценивает отрицанием public — сами встроенные операторы (все
+# перегрузки =) замыкание не раскрывает. У каждого: operator — схема оператора; operator_function — его функция
+# (oprcode; parent_schema — схема оператора); type_function — функции оценки селективности (oprrest, oprjoin): их
+# вызывает планировщик. aggregate_function — опорная функция агрегата (parent_schema — схема агрегата); sql_body — тело
+# SQL-функции как написано (prosrc; config — proconfig: SET search_path меняет разрешение имён тела); sql_atomic_body —
+# тело BEGIN ATOMIC / RETURN (pg_get_function_sqlbody: имена вне search_path — со схемой); argument_defaults — умолчания
+# аргументов функции любого языка через запятую (pg_get_expr(proargdefaults)): планировщик подставляет их в вызов без
+# этих аргументов и сворачивает IMMUTABLE. Плюс строки машинерии типов (_type_machinery) от семян seeds: типы ({types}:
+# из SQL агента и из текстов определений — тел, умолчаний, CHECK доменов), колонки и строковые типы отношений
+# ({relations}) SQL агента, типы аргументов и результатов найденных функций и операторов, типы состояния агрегатов. Плюс
+# _NON_SQL_FUNCTION_ROWS: функции не на sql и опорные функции планировщика. Функции операторов, найденных замыканием,
+# PlanGuard спрашивает следующим кругом по имени — к ним применяются тела, умолчания и правило не-SQL.
 ALLOWED_IMPLEMENTATIONS_SQL = (
     "WITH RECURSIVE functions AS ("  # noqa: S608
     "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig, "
@@ -621,6 +623,12 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "SELECT o.oid FROM pg_catalog.pg_operator o "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators}) "
+    "UNION SELECT s.oid FROM pg_catalog.pg_operator o "
+    "CROSS JOIN LATERAL (VALUES (o.oprcom), (o.oprnegate)) AS s(oid) "
+    "JOIN pg_catalog.pg_operator so ON so.oid OPERATOR(pg_catalog.=) s.oid "
+    f"WHERE o.oprnamespace OPERATOR(pg_catalog.=) {_PG_CATALOG_NAMESPACE} "
+    "AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators}) "
+    f"AND so.oprnamespace OPERATOR(pg_catalog.<>) {_PG_CATALOG_NAMESPACE} "
     "UNION SELECT a.aggsortop::pg_catalog.oid FROM aggregates a "
     "WHERE a.aggsortop::pg_catalog.oid OPERATOR(pg_catalog.<>) 0::pg_catalog.oid "
     f"UNION {_OPERATOR_LINKS.format(closure='operator_closure', extra='')}"

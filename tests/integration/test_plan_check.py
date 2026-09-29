@@ -1457,3 +1457,85 @@ async def test_event_trigger_is_trusted_by_its_owning_extension(
     else:
         with pytest.raises(PlanAccessError, match=r"function 'secret\.evt_member_fn'"):
             await db_plan_check.sql_driver.execute(sql, readonly=False)
+
+
+# Пустой слот коммутатора или отрицания оператора pg_catalog заполняет CREATE OPERATOR в public (COMMUTATOR/NEGATOR =
+# OPERATOR(pg_catalog.^@); нужен владелец pg_catalog — суперпользователь). NOT (v ^@ 'x') планировщик заменяет
+# отрицанием public.#!^ и оценивает его RESTRICT (scalarltsel вызывает функцию по гистограмме) — уже при EXPLAIN.
+# DROP OPERATOR возвращает слот ^@ в 0.
+_DROP_CATALOG_LINKS = """
+DROP OPERATOR IF EXISTS public.#!^ (text, text);
+DROP OPERATOR IF EXISTS public.#@^ (text, text);
+DROP TABLE IF EXISTS public.app_pc_t;
+DROP FUNCTION IF EXISTS public.app_pc_tleak(text, text), secret.pc_tleak(text, text);
+"""
+_CATALOG_LINKS = """
+CREATE TABLE public.app_pc_t AS SELECT 'v' || g AS v FROM generate_series(1, 1000) AS g;
+ANALYZE public.app_pc_t;
+CREATE FUNCTION public.app_pc_tleak(a text, b text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+    AS $$BEGIN RAISE EXCEPTION 'TLEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE FUNCTION secret.pc_tleak(a text, b text) RETURNS boolean LANGUAGE plpgsql IMMUTABLE
+    AS $$BEGIN RAISE EXCEPTION 'TLEAK %', (SELECT token FROM secret.accounts LIMIT 1); END$$;
+"""
+# Отрицание и коммутатор — в разных фикстурах: в одном ответе каталога отказ по функции secret пришёл бы раньше.
+_CATALOG_LINK_OPERATORS = {
+    "negator": """
+CREATE OPERATOR public.#!^ (
+    LEFTARG = text, RIGHTARG = text, FUNCTION = public.app_pc_tleak, NEGATOR = OPERATOR(pg_catalog.^@),
+    RESTRICT = scalarltsel
+);
+""",
+    "commutator": """
+CREATE OPERATOR public.#@^ (
+    LEFTARG = text, RIGHTARG = text, FUNCTION = secret.pc_tleak, COMMUTATOR = OPERATOR(pg_catalog.^@)
+);
+""",
+}
+
+
+@pytest.fixture
+async def db_catalog_links(
+    request: pytest.FixtureRequest, db_plan_check: DbAccess, db_full: DbAccess
+) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока отрицание или коммутатор (request.param) pg_catalog.^@(text, text) — оператор public над
+    бросающей функцией."""
+    setup = _CATALOG_LINKS + _CATALOG_LINK_OPERATORS[request.param]
+    await db_full.sql_driver.execute(_DROP_CATALOG_LINKS + setup, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_CATALOG_LINKS, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("db_catalog_links", "sql", "error"),
+    [
+        pytest.param(
+            "negator",
+            "SELECT v FROM app_pc_t WHERE NOT (v ^@ 'x')",
+            r"function 'public\.app_pc_tleak'.*LANGUAGE plpgsql",
+            id="negator-of-a-builtin",
+        ),
+        pytest.param(
+            "negator",
+            "SELECT v FROM app_pc_t WHERE NOT (v OPERATOR(pg_catalog.^@) 'x')",
+            r"function 'public\.app_pc_tleak'.*LANGUAGE plpgsql",
+            id="negator-of-a-qualified-builtin",
+        ),
+        pytest.param(
+            "commutator",
+            "SELECT v FROM app_pc_t WHERE 'x' ^@ v",
+            r"function 'secret\.pc_tleak'",
+            id="commutator-of-a-builtin",
+        ),
+    ],
+    indirect=["db_catalog_links"],
+)
+async def test_links_of_a_builtin_operator_outside_pg_catalog_are_checked(
+    db_catalog_links: DbAccess, sql: str, error: str
+) -> None:
+    """Коммутатор и отрицание встроенного оператора — операторы public: без проверки EXPLAIN отдал бы 'TLEAK
+    top-secret' (отрицание) — отказ до него."""
+    with pytest.raises(PlanAccessError, match=error):
+        await db_catalog_links.sql_driver.execute(sql, readonly=True)

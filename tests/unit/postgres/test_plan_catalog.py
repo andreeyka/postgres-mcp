@@ -467,6 +467,14 @@ def test_named_and_sort_operators_are_closed_over_commutators_and_negators() -> 
         "operator_closure", _IMPLEMENTATIONS_TEXT
     )
     assert "operator_closure" in _cte_sources("operators", _IMPLEMENTATIONS_TEXT)
+    # Встроенные операторы с названным именем дают только коммутатор и отрицание вне pg_catalog.
+    closure = _IMPLEMENTATIONS_TEXT[_IMPLEMENTATIONS_TEXT.index("operator_closure(oid) AS") :]
+    closure = closure[: closure.index("), operators AS")]
+    assert (
+        "o.oprnamespace OPERATOR(pg_catalog.=) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid "
+        "AND o.oprname OPERATOR(pg_catalog.=) ANY (ARRAY['=']::pg_catalog.name[]) "
+        "AND so.oprnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid"
+    ) in closure
     assert "a.aggsortop" in ALLOWED_IMPLEMENTATIONS_SQL
     assert "sort_operators" not in ALLOWED_IMPLEMENTATIONS_SQL
     assert "{schema}::pg_catalog.name AS parent_schema" not in ALLOWED_IMPLEMENTATIONS_SQL
