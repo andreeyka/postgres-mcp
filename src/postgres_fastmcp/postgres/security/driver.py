@@ -12,6 +12,7 @@ from psycopg.sql import SQL, Composable, Literal
 
 from postgres_fastmcp.postgres.models import RowResult, StatementResult
 from postgres_fastmcp.postgres.ports import Precheck, PrecheckSqlDriverPort, StatementRunner
+from postgres_fastmcp.postgres.security.plan_catalog import BuiltinTypeNames
 from postgres_fastmcp.postgres.security.plan_guard import PlanGuard
 from postgres_fastmcp.postgres.security.query_validator import QueryValidator
 from postgres_fastmcp.shared.errors import QueryCancelledError, QueryTimeoutError
@@ -75,6 +76,8 @@ class SafeSqlExecutor:
         delegate: PrecheckSqlDriverPort,
         validator: QueryValidator,
         config: SafeSqlConfig,
+        *,
+        builtin_types: BuiltinTypeNames | None = None,
     ) -> None:
         """Инициализация с делегирующим исполнителем, валидатором и конфигурацией.
 
@@ -82,10 +85,12 @@ class SafeSqlExecutor:
             delegate: Исполнитель без проверок (SqlExecutor): execute и execute_statement с precheck.
             validator: Валидатор, используемый для валидации каждого запроса перед выполнением.
             config: Конфигурация безопасного SQL (тег, таймаут, схема, read_only, префикс).
+            builtin_types: Кэш имён типов pg_catalog для plan_check (один на пул); None — свой.
         """
         self._delegate = delegate
         self._validator = validator
         self._config = config
+        self._builtin_types = builtin_types or BuiltinTypeNames()
         # Проверка по плану — только для basic (allowed_schema задан); full и канал сервера её не получают.
         self._plan_check_schema = config.allowed_schema if config.plan_check else None
 
@@ -160,10 +165,10 @@ class SafeSqlExecutor:
         """Выполнение с SET LOCAL через делегата; с plan_check — проверка по плану в той же транзакции.
 
         С plan_check делегат получает precheck: на том же соединении, после BEGIN, он один раз ставит
-        SET LOCAL statement_timeout/search_path и строит план каждого оператора; оператор идёт без префикса
-        и наследует настройки транзакции. AccessShareLock, взятый разбором, держится до конца транзакции:
-        определение представления между проверкой и выполнением не меняется. Отказ проверки откатывает
-        транзакцию, оператор не выполняется.
+        SET LOCAL statement_timeout/search_path и строит план каждого оператора (и, если выражения плана этого
+        требуют, спрашивает каталог); оператор идёт без префикса и наследует настройки транзакции.
+        AccessShareLock, взятый разбором, держится до конца транзакции: определение представления между
+        проверкой и выполнением не меняется. Отказ проверки откатывает транзакцию, оператор не выполняется.
 
         Ограничение: PlanGuard строит планы всех операторов строки до выполнения первого, поэтому строка,
         где поздний оператор зависит от раннего (CREATE EXTENSION …; SELECT функция расширения), отклоняется
@@ -175,16 +180,21 @@ class SafeSqlExecutor:
         settings = self._session_settings()
         tag = self._config.query_tag
         table_prefix = self._config.table_prefix
+        builtin_types = self._builtin_types
 
         async def precheck(runner: StatementRunner) -> None:
             if settings:
                 await runner(settings)
 
-            async def explain(explain_sql: str) -> list[RowResult] | None:
-                # Текст EXPLAIN — deparse pglast (standard_conforming_strings = on закрепляет SqlExecutor в BEGIN).
-                return await runner(f"/* {tag} */ {explain_sql}")
+            async def run(sql: str) -> list[RowResult] | None:
+                # EXPLAIN (deparse pglast; standard_conforming_strings = on закрепляет SqlExecutor в BEGIN)
+                # и запросы каталога PlanGuard — с тегом, в той же транзакции.
+                return await runner(f"/* {tag} */ {sql}")
 
-            await PlanGuard(explain, allowed_schema=allowed_schema, table_prefix=table_prefix).check(query)
+            guard = PlanGuard(
+                run, allowed_schema=allowed_schema, table_prefix=table_prefix, builtin_types=builtin_types
+            )
+            await guard.check(query)
 
         return await self._run(query, run, readonly=self._config.read_only, precheck=precheck)
 

@@ -398,3 +398,18 @@ class TestSafeSqlExecutorPlanCheck:
 
         with pytest.raises(QueryTimeoutError):
             await _basic_executor(delegate).execute("SELECT * FROM app_t")
+
+    async def test_builtin_type_names_are_loaded_once_per_executor(self) -> None:
+        """Кэш типов pg_catalog живёт в исполнителе: второй вызов не повторяет запрос каталога."""
+        plan = {"Node Type": "Seq Scan", "Relation Name": "app_t", "Schema": "public", "Output": ["NULL::my_type"]}
+        delegate = _precheck_delegate([RowResult(cells={"QUERY PLAN": [{"Plan": plan}]})])
+        executor = _basic_executor(delegate)
+
+        await executor.execute("SELECT * FROM app_t")
+        await executor.execute("SELECT * FROM app_t")
+
+        builtin = [q for q in delegate.sent if "pg_catalog.pg_type" in q and "typrelid" not in q]
+        row_types = [q for q in delegate.sent if "typrelid" in q]
+        assert len(builtin) == 1
+        assert builtin[0].startswith("/* t */ SELECT t.typname")
+        assert len(row_types) == 2
