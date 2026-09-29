@@ -41,8 +41,9 @@ def _rule_row(
     relation_schema: str | None = None,
     relation_name: str | None = None,
     definition: str | None = None,
+    config: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Строка запроса правил и зависимостей (plan_catalog.DEFINITION_DEPENDENCIES_SQL)."""
+    """Строка запроса определений (DEFINITION_DEPENDENCIES_SQL) или реализаций (ALLOWED_IMPLEMENTATIONS_SQL)."""
     return {
         "kind": kind,
         "schema": schema,
@@ -51,6 +52,7 @@ def _rule_row(
         "relation_schema": relation_schema,
         "relation_name": relation_name,
         "definition": definition,
+        "config": config,
     }
 
 
@@ -69,7 +71,7 @@ class _Explain:
         row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
         rules: list[dict[str, Any]] | None = None,
         prepare_errors: dict[str, Exception] | None = None,
-        implementations: list[dict[str, Any]] | None = None,
+        implementations: list[dict[str, Any]] | dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._plans = plans or {}
         self._rules = rules or []
@@ -84,6 +86,7 @@ class _Explain:
         self._prepare_errors = prepare_errors or {}
         # PREPARE ... ; DEALLOCATE ..., SAVEPOINT ... и ROLLBACK TO SAVEPOINT ... — в sent не попадают.
         self.prepared: list[str] = []
+        # Список — ответ на любой запрос реализаций; словарь — строки для имён, которые встречаются в запросе литералом.
         self._implementations = implementations or []
         self.implementation_queries: list[str] = []
 
@@ -94,7 +97,11 @@ class _Explain:
             return [RowResult(cells=_rule_row(**row)) for row in self._rules]
         if "pg_catalog.pg_aggregate" in sql:
             self.implementation_queries.append(sql)
-            return [RowResult(cells=_rule_row(**row)) for row in self._implementations]
+            if isinstance(self._implementations, dict):
+                found = [row for name, rows in self._implementations.items() if f"'{name}'" in sql for row in rows]
+            else:
+                found = self._implementations
+            return [RowResult(cells=_rule_row(**row)) for row in found]
         if sql.startswith(("PREPARE ", "SAVEPOINT ", "ROLLBACK TO SAVEPOINT ")):
             self.prepared.append(sql)
             if not sql.startswith("ROLLBACK"):
@@ -1179,8 +1186,9 @@ async def test_public_operator_with_a_public_function_passes() -> None:
 
     await _guard(explain).check("SELECT id <~> 1 FROM app_t")
 
-    [query] = explain.implementation_queries
-    assert "'<~>'" in query
+    assert len(explain.implementation_queries) == 2
+    assert "'<~>'" in explain.implementation_queries[0]
+    assert "'app_close_to'" in explain.implementation_queries[1]
 
 
 async def test_builtin_operator_rows_are_not_checked_by_their_functions() -> None:
@@ -1508,3 +1516,160 @@ async def test_relation_seen_twice_is_prepared_once() -> None:
     await _guard(explain).check(_INSERT)
 
     assert len([command for command in explain.prepared if "AS SELECT FROM " in command]) == 1
+
+
+def _body(name: str, text: str, *, atomic: bool = False, config: list[str] | None = None) -> dict[str, Any]:
+    """Строка тела SQL-функции public из ALLOWED_IMPLEMENTATIONS_SQL."""
+    kind = "sql_atomic_body" if atomic else "sql_body"
+    return {"kind": kind, "schema": "public", "name": name, "definition": text, "config": config}
+
+
+_VIEW_CALLS = [{"kind": "function", "schema": "public", "name": "app_count"}]
+
+
+@pytest.mark.parametrize(
+    ("body", "kind", "name"),
+    [
+        (_body("app_count", "SELECT count(*) FROM secret.accounts"), "relation", "secret.accounts"),
+        (_body("app_count", "SELECT count(*) FROM users"), "relation", "public.users"),
+        (_body("app_count", "SELECT current_setting('x')::bigint"), "function", "pg_catalog.current_setting"),
+        (_body("app_count", "RETURN ((secret.valid($1))::integer + 1)", atomic=True), "function", "secret.valid"),
+        (
+            _body("app_count", "BEGIN ATOMIC\n SELECT count(*) AS count\n    FROM secret.t;\nEND", atomic=True),
+            "relation",
+            "secret.t",
+        ),
+    ],
+)
+async def test_sql_function_body_outside_basic_is_rejected_before_explain(
+    body: dict[str, Any], kind: str, name: str
+) -> None:
+    """Представление вызывает app_count: тело SQL-функции public проверяется теми же правилами, с отношениями."""
+    explain = _Explain(
+        pg_catalog_functions=frozenset({"current_setting"}), rules=_VIEW_CALLS, implementations={"app_count": [body]}
+    )
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_allowed_sql_function_body_passes_and_its_relations_are_prepared() -> None:
+    """Отношения тела блокирует PREPARE до EXPLAIN: их определения (индексы, CHECK) читает следующее чтение."""
+    body = _body("app_count", "SELECT count(*) FROM public.app_items")
+    explain = _Explain(rules=_VIEW_CALLS, implementations={"app_count": [body]})
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    locks = [command for command in explain.prepared if "AS SELECT FROM " in command]
+    assert len(locks) == 1
+    assert '"public"."app_items"' in locks[0]
+    first_explain = next(index for index, sql in enumerate(explain.log) if sql.startswith("EXPLAIN"))
+    lock_index = explain.log.index(locks[0])
+    assert lock_index < first_explain
+    assert any("pg_catalog.pg_rewrite" in sql for sql in explain.log[lock_index:first_explain])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _body("app_count", "SELECT count(*) FROM t", config=["search_path=secret"]),
+        _body("app_count", "SELECT count(*) FROM app_t", config=["search_path=public, secret"]),
+        _body("app_count", "SELECT count(*) FROM app_t", config=["SEARCH_PATH=secret"]),
+        _body("app_count", "SELECT count(*) FROM app_t", config="search_path=secret"),
+        _body("app_count", "INSERT INTO app_t VALUES (1)"),
+        _body("app_count", "SELECT count(*) FROM"),
+        _body("app_count", "SELECT 1", atomic=True),
+    ],
+)
+async def test_unverifiable_sql_function_body_is_rejected(body: dict[str, Any]) -> None:
+    explain = _Explain(rules=_VIEW_CALLS, implementations={"app_count": [body]})
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _body("app_count", "SELECT count(*) FROM app_t", config=["search_path=public"]),
+        _body("app_count", "SELECT count(*) FROM app_t", config=["work_mem=64MB"]),
+        _body("app_count", "RETURN 1", atomic=True, config=["search_path=secret"]),
+    ],
+)
+async def test_function_settings_that_keep_the_names_pass(body: dict[str, Any]) -> None:
+    """search_path = allowed_schema не меняет разрешение имён; у BEGIN ATOMIC/RETURN имена связаны при создании."""
+    explain = _Explain(rules=_VIEW_CALLS, implementations={"app_count": [body]})
+
+    await _guard(explain).check(_SELECT)
+
+
+def _chain(length: int) -> dict[str, list[dict[str, Any]]]:
+    """f0 -> f1 -> ... -> f<length-1>, последняя ничего не вызывает."""
+    bodies = {f"f{index}": [_body(f"f{index}", f"SELECT f{index + 1}(1)")] for index in range(length - 1)}
+    bodies[f"f{length - 1}"] = [_body(f"f{length - 1}", "SELECT 1")]
+    return bodies
+
+
+async def test_chain_of_bodies_within_the_depth_passes() -> None:
+    explain = _Explain(rules=[{"kind": "function", "schema": "public", "name": "f0"}], implementations=_chain(4))
+
+    await _guard(explain).check(_SELECT)
+
+    assert len(explain.implementation_queries) == 4
+
+
+async def test_chain_of_bodies_beyond_the_depth_is_unverifiable() -> None:
+    explain = _Explain(rules=[{"kind": "function", "schema": "public", "name": "f0"}], implementations=_chain(6))
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_recursive_body_is_looked_up_once() -> None:
+    explain = _Explain(
+        rules=[{"kind": "function", "schema": "public", "name": "f0"}],
+        implementations={"f0": [_body("f0", "SELECT f0(1)")]},
+    )
+
+    await _guard(explain).check(_SELECT)
+
+    assert len(explain.implementation_queries) == 1
+
+
+async def test_function_scan_of_the_allowed_schema_is_checked_by_its_body() -> None:
+    explain = _Explain(
+        {_EXPLAIN + _SELECT: _function_scan("public", "app_rows")},
+        implementations={"app_rows": [_body("app_rows", "SELECT * FROM secret.accounts")]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_function_of_a_public_operator_is_checked_by_its_body() -> None:
+    """Оператор public реализован SQL-функцией public: её тело вызывает current_setting."""
+    explain = _Explain(
+        pg_catalog_functions=frozenset({"current_setting"}),
+        implementations={
+            "<~>": [
+                {"kind": "operator_function", "schema": "public", "name": "app_close_to", "parent_schema": "public"}
+            ],
+            "app_close_to": [_body("app_close_to", "SELECT current_setting('x') IS NULL")],
+        },
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
+        await _guard(explain).check("SELECT id <~> 1 FROM app_t")
+
+
+async def test_function_called_in_the_agent_sql_is_checked_by_its_body_before_prepare() -> None:
+    """Функция public в SQL агента: тело проверяется до PREPARE — встраивание выполнило бы его при EXPLAIN."""
+    explain = _Explain(implementations={"app_rows": [_body("app_rows", "SELECT * FROM secret.accounts")]})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
+        await _guard(explain).check("SELECT * FROM app_rows()")
+
+    assert explain.prepared == []

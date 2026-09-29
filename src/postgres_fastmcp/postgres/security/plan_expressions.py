@@ -18,17 +18,24 @@ from pglast.ast import (
     A_Expr,
     CaseExpr,
     CommonTableExpr,
+    CreateFunctionStmt,
     CreateStmt,
     CreateTrigStmt,
+    DeleteStmt,
     FuncCall,
     IndexElem,
     IndexStmt,
+    InsertStmt,
+    IntoClause,
     JoinExpr,
     JsonTable,
+    LockingClause,
+    MergeStmt,
     Node,
     PartitionElem,
     RangeTableFunc,
     RangeVar,
+    ReturnStmt,
     RuleStmt,
     SelectStmt,
     SortBy,
@@ -36,6 +43,7 @@ from pglast.ast import (
     SubLink,
     TypeCast,
     TypeName,
+    UpdateStmt,
 )
 from pglast.enums.parsenodes import A_Expr_Kind, SetOperation
 from pglast.enums.primnodes import SubLinkType
@@ -357,6 +365,79 @@ def _single_statement[T: Node](text: object, kind: type[T]) -> T | None:
         return None
     statement = statements[0].stmt if len(statements) == 1 else None
     return statement if isinstance(statement, kind) else None
+
+
+class _BodyNames(_DefinitionNames):
+    """Имена тела SQL-функции: как у определения, но изменение данных (в том числе в WITH) — неразборчиво.
+
+    SELECT INTO создаёт таблицу, FOR UPDATE/SHARE блокирует строки (в SQL агента basic их запрещает валидатор) —
+    тоже неразборчиво.
+    """
+
+    def _modifies(self) -> None:
+        """У изменения данных свои цели записи: их путь записи не проверить."""
+        self.verifiable = False
+
+    def visit_InsertStmt(self, _ancestors: object, _node: InsertStmt) -> None:  # noqa: N802
+        """INSERT в теле."""
+        self._modifies()
+
+    def visit_UpdateStmt(self, _ancestors: object, _node: UpdateStmt) -> None:  # noqa: N802
+        """UPDATE в теле."""
+        self._modifies()
+
+    def visit_DeleteStmt(self, _ancestors: object, _node: DeleteStmt) -> None:  # noqa: N802
+        """DELETE в теле."""
+        self._modifies()
+
+    def visit_MergeStmt(self, _ancestors: object, _node: MergeStmt) -> None:  # noqa: N802
+        """MERGE в теле."""
+        self._modifies()
+
+    def visit_IntoClause(self, _ancestors: object, _node: IntoClause) -> None:  # noqa: N802
+        """SELECT INTO в теле."""
+        self._modifies()
+
+    def visit_LockingClause(self, _ancestors: object, _node: LockingClause) -> None:  # noqa: N802
+        """FOR UPDATE/SHARE в теле."""
+        self._modifies()
+
+
+def _atomic_body(text: str) -> ReturnStmt | tuple[Node, ...] | None:
+    """Тело pg_get_function_sqlbody как тело CREATE FUNCTION: RETURN или операторы BEGIN ATOMIC; None — не оно."""
+    # Текст только разбирается pglast, в Postgres не отправляется.
+    function = _single_statement(f"CREATE FUNCTION _pgmcp_body() RETURNS void LANGUAGE sql {text}", CreateFunctionStmt)
+    body = None if function is None else function.sql_body
+    if isinstance(body, ReturnStmt):
+        return body
+    # BEGIN ATOMIC: список из одного списка операторов (у пустого блока — None).
+    if not isinstance(body, tuple) or len(body) != 1:
+        return None
+    return tuple(body[0] or ())
+
+
+def parse_function_body(text: object, *, atomic: bool) -> ExpressionNames | None:
+    """Тело SQL-функции: имена, как у выражений плана, и отношения.
+
+    atomic=False — prosrc: операторы через «;», только SELECT (и VALUES); пустое тело законно (функция void).
+    atomic=True — pg_get_function_sqlbody: BEGIN ATOMIC ... END (только SELECT) или RETURN <выражение>,
+    разбирается как тело CREATE FUNCTION. Изменение данных и служебные команды — None.
+    """
+    if not isinstance(text, str):
+        return None
+    if atomic:
+        body = _atomic_body(text)
+        if body is None or isinstance(body, ReturnStmt):
+            return None if body is None else _collect_definition(body, _BodyNames)
+        statements = body
+    else:
+        try:
+            statements = tuple(raw.stmt for raw in pglast.parse_sql(text))
+        except ParseError:
+            return None
+    if not all(isinstance(statement, SelectStmt) for statement in statements):
+        return None
+    return _collect_definition(statements, _BodyNames)
 
 
 def _nullify_planner_references(text: str) -> str | None:

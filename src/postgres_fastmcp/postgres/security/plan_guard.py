@@ -8,7 +8,10 @@ pglast (plan_expressions) и проверяются по тем же прави�
 из списка basic, типы — allowed_schema или pg_catalog, строковый тип таблицы без префикса — как сама таблица.
 Что решает только каталог (функция или тип без схемы), спрашивается SQL сервера в той же транзакции (plan_catalog).
 Оператор или агрегат без схемы (или со схемой allowed_schema) может быть объектом allowed_schema: каталог отдаёт
-функции, которыми они реализованы, и те проверяются по правилам функций.
+функции, которыми они реализованы, и те проверяются по правилам функций. Функция allowed_schema на языке sql
+проверяется по тексту тела (prosrc или pg_get_function_sqlbody) теми же правилами вместе с отношениями тела;
+вызовы в теле — следующим кругом, не глубже _MAX_DEFINITION_DEPTH. Тело, меняющее данные, и SET search_path
+вне allowed_schema — отказ: их не проверить.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
@@ -20,9 +23,9 @@ pglast (plan_expressions) и проверяются по тем же прави�
 выражения расширенной статистики, политики RLS); путь записи целей DML (триггеры, умолчания колонок и доменов,
 генерируемые колонки, CHECK доменов) — их тексты и зависимости (pg_depend), чего план не показывает (свёртка
 констант, LIMIT, функции операторов и агрегатов public, всё время записи). Отношения из текстов (подзапрос политики)
-проверяются как отношения плана и тоже готовятся (PREPARE SELECT FROM …): их представления читает следующее чтение
-определений. Только потом EXPLAIN: планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое
-представление до него не доходит.
+и тел SQL-функций проверяются как отношения плана и тоже готовятся (PREPARE SELECT FROM …): их представления и
+определения (индексы таблицы встраиваемой функции) читает следующее чтение определений. Только потом EXPLAIN:
+планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не доходит.
 Оператор с GENERIC_PLAN, тип параметра которого PREPARE не выводит ($1 IS NULL), готовится ещё раз с NULL
 вместо каждого $N (блокировки те же — отношения называет текст); не вышло и так — отказ до EXPLAIN.
 После всех EXPLAIN определения читаются ещё раз — представления, до которых дошёл только планировщик (встраивание
@@ -82,6 +85,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     ExpressionNames,
     expression_texts,
     parse_definition_expression,
+    parse_function_body,
     parse_index_definition,
     parse_partition_key_definition,
     parse_rule_definition,
@@ -563,11 +567,21 @@ class PlanGuard:
             self._check_names(names, pending, check_functions=True)
         elif kind == "function":
             self._check_function(schema, name)
+            self._note_implementation(FUNCTION_KIND, schema, name, pending)
         elif kind in ("operator_function", "aggregate_function"):
             # Встроенные операторы и агрегаты (pg_catalog) реализованы функциями вне списка basic (int4eq,
             # int4_sum) — проверяются сами; функции проверяются у операторов и агрегатов других схем.
             if cells.get("parent_schema") != _BUILTIN_FUNCTION_SCHEMA:
                 self._check_function(schema, name)
+                self._note_implementation(FUNCTION_KIND, schema, name, pending)
+        elif kind in ("sql_body", "sql_atomic_body"):
+            atomic = kind == "sql_atomic_body"
+            if not atomic:
+                self._check_function_config(cells.get("config"))
+            names = parse_function_body(cells.get("definition"), atomic=atomic)
+            if names is None:
+                raise PlanUnverifiableError(rules=True)
+            self._check_names(names, pending, check_functions=True)
         elif kind == "operator":
             if schema not in (self._allowed_schema, _BUILTIN_FUNCTION_SCHEMA):
                 qualified_name = f"{schema}.{name}"
@@ -586,6 +600,27 @@ class PlanGuard:
         else:
             raise PlanUnverifiableError(rules=True)
 
+    def _check_function_config(self, config: object) -> None:
+        """Настройки (proconfig) SQL-функции с телом prosrc: search_path — только allowed_schema.
+
+        SET search_path, отличный от allowed_schema, резолвит имена тела при выполнении в другой схеме
+        (search_path = secret: SELECT x FROM t читает secret.t) — такое тело не проверить. SECURITY DEFINER ничего
+        не меняет: права владельца делают утечку опаснее, тело проверяется так же.
+
+        Raises:
+            PlanUnverifiableError: search_path другой или настройки не список строк.
+        """
+        if config is None:
+            return
+        if not isinstance(config, list):
+            raise PlanUnverifiableError(rules=True)
+        for entry in config:
+            if not isinstance(entry, str):
+                raise PlanUnverifiableError(rules=True)
+            setting, _, value = entry.partition("=")
+            if setting.strip().lower() == "search_path" and value != self._allowed_schema:
+                raise PlanUnverifiableError(rules=True)
+
     async def _check_statement_names(self, statements: list[Node], targets: list[Node]) -> None:
         """Типы SQL агента и реализации его операторов и агрегатов allowed_schema — до PREPARE и EXPLAIN.
 
@@ -595,6 +630,7 @@ class PlanGuard:
 
         Операторы и функции планируемых операторов (targets): оператор или агрегат allowed_schema называет себя,
         а не функции, которые вызывает, а IMMUTABLE-вызов с константами планировщик выполнил бы при EXPLAIN.
+        Функция allowed_schema на языке sql — по телу: встраивание при EXPLAIN выполнило бы и его свёртки.
         """
         pending = _CatalogNames()
         collector = _StatementNames()
@@ -615,12 +651,15 @@ class PlanGuard:
         """Сначала узлы (отношения и функции сканов), затем выражения, затем имена, которые решает каталог.
 
         Порядок сохраняет прежние отказы: узел, запрещённый и раньше, отклоняется с той же ошибкой, даже
-        если выражение выше по плану тоже запрещено.
+        если выражение выше по плану тоже запрещено. Табличная функция allowed_schema — кандидат в SQL-функцию:
+        её тело проверяет каталог.
         """
         nodes = list(_plan_nodes(plan))
+        pending = _CatalogNames()
         for node in nodes:
             self._check_node(node)
-        pending = _CatalogNames()
+            if node.get("Node Type") == _FUNCTION_SCAN_TYPE and "Function Name" in node:
+                self._note_implementation(FUNCTION_KIND, node.get("Schema"), str(node["Function Name"]), pending)
         for node in nodes:
             self._check_expressions(node, pending)
         await self._check_catalog_names(pending)
@@ -728,7 +767,8 @@ class PlanGuard:
         """Оператор или функция, которые могут быть объектом allowed_schema: их реализацию спросит каталог.
 
         Имя без схемы может быть и встроенным (=, count) — каталог ищет только в allowed_schema. Имя, уже
-        спрошенное в этой проверке, не спрашивается снова.
+        спрошенное в этой проверке, не спрашивается снова. Функция — кандидат и в агрегат (опорные функции),
+        и в SQL-функцию (тело).
         """
         if (schema is None or schema == self._allowed_schema) and (kind, name) not in self._looked_up:
             pending.implementations[kind, name] = None
@@ -778,7 +818,7 @@ class PlanGuard:
     async def _check_implementations(
         self, implementations: dict[tuple[str, str], None], pending: _CatalogNames
     ) -> None:
-        """Функции, которыми реализованы операторы и агрегаты allowed_schema с этими именами, — по правилам basic."""
+        """Функции операторов и агрегатов allowed_schema с этими именами и тела её SQL-функций — по правилам basic."""
         if not implementations:
             return
         keys = list(implementations)

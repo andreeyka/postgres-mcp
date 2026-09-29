@@ -13,6 +13,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     expression_texts,
     parse_definition_expression,
     parse_expression,
+    parse_function_body,
     parse_index_definition,
     parse_partition_key_definition,
     parse_rule_definition,
@@ -480,3 +481,71 @@ def test_partition_key_definition_names(text: str, expected: ExpressionNames) ->
 )
 def test_unparsable_partition_key_definition_is_rejected(text: object) -> None:
     assert parse_partition_key_definition(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "atomic", "expected"),
+    [
+        (
+            "SELECT count(*) FROM secret.accounts",
+            False,
+            ExpressionNames(functions=((None, "count"),), relations=(("secret", "accounts"),)),
+        ),
+        (
+            "SELECT x FROM app_t WHERE id = $1; SELECT 1",
+            False,
+            ExpressionNames(operators=((None, "="),), relations=((None, "app_t"),)),
+        ),
+        ("", False, ExpressionNames()),
+        (
+            "WITH w AS (SELECT id FROM app_t) SELECT count(*) FROM w",
+            False,
+            ExpressionNames(functions=((None, "count"),), relations=((None, "app_t"),)),
+        ),
+        (
+            "SELECT * FROM app_rows() WHERE id IN (SELECT id FROM app_t)",
+            False,
+            ExpressionNames(functions=((None, "app_rows"),), operators=((None, "="),), relations=((None, "app_t"),)),
+        ),
+        (
+            "RETURN ((secret.valid($1))::integer + 1)",
+            True,
+            ExpressionNames(
+                functions=(("secret", "valid"),), operators=((None, "+"),), types=(("pg_catalog", "int4"),)
+            ),
+        ),
+        (
+            "BEGIN ATOMIC\n SELECT t.x\n    FROM secret.t\n  LIMIT 1;\nEND",
+            True,
+            ExpressionNames(relations=(("secret", "t"),)),
+        ),
+        ("BEGIN ATOMIC\nEND", True, ExpressionNames()),
+    ],
+)
+def test_function_body_names(text: str, atomic: bool, expected: ExpressionNames) -> None:
+    """Тело prosrc (операторы через ;) и pg_get_function_sqlbody (BEGIN ATOMIC / RETURN)."""
+    assert parse_function_body(text, atomic=atomic) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "atomic"),
+    [
+        (None, False),
+        ("SELEC 1", False),
+        ("INSERT INTO app_t VALUES (1)", False),
+        ("SELECT 1; DELETE FROM app_t", False),
+        ("WITH d AS (DELETE FROM app_t RETURNING id) SELECT count(*) FROM d", False),
+        ("CREATE TABLE app_x (id int)", False),
+        ("SELECT 1 INTO app_x", False),
+        ("SELECT id FROM app_t FOR UPDATE", False),
+        ("SELECT id FROM secret.a.t", False),
+        ("BEGIN ATOMIC\n INSERT INTO app_t VALUES (1);\nEND", True),
+        ("BEGIN ATOMIC\n UPDATE app_t SET id = 2;\nEND", True),
+        ("BEGIN ATOMIC\n SELECT 1;\n CREATE TABLE app_x (id int);\nEND", True),
+        ("SELECT 1", True),
+        ("RETURN 1; SELECT 2", True),
+    ],
+)
+def test_data_modifying_or_unparsable_body_is_rejected(text: object, atomic: bool) -> None:
+    """Изменение данных в теле — свои цели записи, их путь записи не проверить; служебные команды — тоже."""
+    assert parse_function_body(text, atomic=atomic) is None

@@ -198,6 +198,20 @@ def test_allowed_implementations_cover_support_functions_and_the_sort_operator()
         assert column in ALLOWED_IMPLEMENTATIONS_SQL
 
 
+def test_allowed_implementations_return_sql_bodies_with_their_settings() -> None:
+    """Тело SQL-функции: prosrc или (BEGIN ATOMIC/RETURN) pg_get_function_sqlbody; proconfig — для search_path."""
+    for fragment in (
+        "'sql_body'",
+        "'sql_atomic_body'",
+        "pg_catalog.pg_get_function_sqlbody(p.oid)",
+        "p.prosrc",
+        "p.proconfig",
+        "p.prosqlbody IS NOT NULL",
+        "l.lanname OPERATOR(pg_catalog.=) 'sql'",
+    ):
+        assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
+
+
 class _Sources(Visitor):
     """Имена отношений и CTE (RangeVar) в тексте: откуда CTE берёт строки."""
 

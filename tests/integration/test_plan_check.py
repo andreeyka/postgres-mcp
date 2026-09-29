@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS public.app_policy_items (id int);
 ALTER TABLE public.app_policy_items ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS app_policy_items_check ON public.app_policy_items;
 CREATE POLICY app_policy_items_check ON public.app_policy_items WITH CHECK (secret.valid(id));
+CREATE OR REPLACE FUNCTION public.app_secret_count() RETURNS bigint
+    LANGUAGE sql STABLE AS 'SELECT count(*) FROM secret.accounts';
+CREATE OR REPLACE VIEW public.app_secret_count_view AS SELECT public.app_secret_count() AS n;
+CREATE OR REPLACE FUNCTION public.app_secret_count_atomic() RETURNS bigint
+    LANGUAGE sql STABLE BEGIN ATOMIC SELECT count(*) FROM secret.accounts; END;
+CREATE OR REPLACE VIEW public.app_secret_count_atomic_view AS SELECT public.app_secret_count_atomic() AS n;
+CREATE OR REPLACE FUNCTION public.app_item_count() RETURNS bigint
+    LANGUAGE sql STABLE AS 'SELECT count(*) FROM public.app_plan_items';
+CREATE OR REPLACE VIEW public.app_item_count_view AS SELECT public.app_item_count() AS n;
+CREATE OR REPLACE FUNCTION public.app_secret_path_count() RETURNS bigint
+    LANGUAGE sql STABLE SET search_path = secret AS 'SELECT count(*) FROM accounts';
+CREATE OR REPLACE VIEW public.app_secret_path_count_view AS SELECT public.app_secret_path_count() AS n;
+CREATE OR REPLACE FUNCTION public.app_writing_count() RETURNS bigint
+    LANGUAGE sql VOLATILE AS 'INSERT INTO public.app_plan_items SELECT 1 WHERE false; SELECT 1::bigint';
+CREATE OR REPLACE VIEW public.app_writing_count_view AS SELECT public.app_writing_count() AS n;
 """
 
 
@@ -470,7 +485,9 @@ CREATE OR REPLACE FUNCTION secret.boom_int() RETURNS int
 _DROP_BOOM_DEFINITIONS = """
 DROP TABLE IF EXISTS public.app_boom_dom_t, public.app_boom_def_t, public.app_boom_pk, public.app_boom_child,
     public.app_boom_parent, public.app_boom_pp, public.app_boom_rls, public.app_boom_ip, public.app_boom_xi,
-    public.app_boom_st CASCADE;
+    public.app_boom_st, public.app_boom_fx CASCADE;
+DROP VIEW IF EXISTS public.app_boom_fn_view, public.app_boom_fn_atomic_view;
+DROP FUNCTION IF EXISTS public.app_boom_fn_rows(), public.app_boom_fn_rows_atomic();
 DROP DOMAIN IF EXISTS public.app_boom_text;
 DROP FUNCTION IF EXISTS public.app_pass_row();
 """
@@ -500,6 +517,14 @@ CREATE TABLE public.app_boom_xi (id int);
 CREATE INDEX app_boom_xi_expr ON public.app_boom_xi ((id + secret.boom_int()));
 CREATE TABLE public.app_boom_st (id int, v int);
 CREATE STATISTICS public.app_boom_st_expr ON (id + secret.boom_int()), v FROM public.app_boom_st;
+CREATE TABLE public.app_boom_fx (id int);
+CREATE INDEX app_boom_fx_expr ON public.app_boom_fx ((id + secret.boom_int()));
+CREATE FUNCTION public.app_boom_fn_rows() RETURNS SETOF public.app_boom_fx
+    LANGUAGE sql STABLE AS 'SELECT * FROM public.app_boom_fx WHERE id = 1';
+CREATE VIEW public.app_boom_fn_view AS SELECT * FROM public.app_boom_fn_rows();
+CREATE FUNCTION public.app_boom_fn_rows_atomic() RETURNS SETOF public.app_boom_fx
+    LANGUAGE sql STABLE BEGIN ATOMIC SELECT * FROM public.app_boom_fx WHERE id = 1; END;
+CREATE VIEW public.app_boom_fn_atomic_view AS SELECT * FROM public.app_boom_fn_rows_atomic();
 """
 
 
@@ -529,6 +554,8 @@ async def db_boom_definitions(db_plan_check: DbAccess, db_full: DbAccess) -> Asy
         pytest.param("SELECT * FROM app_boom_ip WHERE id = 1", id="inheritance-child-check-select"),
         pytest.param("SELECT * FROM app_boom_xi WHERE id = 1", id="expression-index-select"),
         pytest.param("SELECT * FROM app_boom_st WHERE id = 1", id="statistics-select"),
+        pytest.param("SELECT * FROM app_boom_fn_view", id="inlined-function-table-index"),
+        pytest.param("SELECT * FROM app_boom_fn_atomic_view", id="inlined-atomic-function-table-index"),
     ],
 )
 async def test_definition_calling_a_foreign_function_is_rejected_before_it_runs(
@@ -536,6 +563,31 @@ async def test_definition_calling_a_foreign_function_is_rejected_before_it_runs(
 ) -> None:
     """Умолчание домена и колонки, ключ секционирования, CHECK каскадной таблицы, триггер секции, политика, CHECK
     наследника, индекс и статистика: EXPLAIN (или выполнение) вызвал бы secret.boom_int() и получил бы его
-    исключение. Отказ по функции приходит раньше — определения читаются после PREPARE, до EXPLAIN."""
+    исключение. Отказ по функции приходит раньше — определения читаются после PREPARE, до EXPLAIN. Таблицу,
+    которую читает только тело встраиваемой SQL-функции, блокирует PREPARE по телу — её индекс читается тоже."""
     with pytest.raises(PlanAccessError, match=r"function 'secret\.boom_int'"):
         await db_boom_definitions.sql_driver.execute(sql, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("view", ["app_secret_count_view", "app_secret_count_atomic_view"])
+async def test_view_over_a_public_sql_function_reading_a_foreign_table_is_rejected(
+    db_plan_check: DbAccess, view: str
+) -> None:
+    """Скалярная SQL-функция с FROM не встраивается: план видит только app_secret_count(), тело — проверка тел."""
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
+        await db_plan_check.sql_driver.execute(f"SELECT n FROM {view}", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_view_over_a_public_sql_function_reading_a_prefixed_table_passes(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute("SELECT n FROM app_item_count_view", readonly=True)
+    assert rows[0].cells["n"] >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("view", ["app_secret_path_count_view", "app_writing_count_view"])
+async def test_view_over_an_unverifiable_sql_function_body_is_rejected(db_plan_check: DbAccess, view: str) -> None:
+    """Собственный SET search_path и изменение данных в теле — не проверить."""
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await db_plan_check.sql_driver.execute(f"SELECT n FROM {view}", readonly=True)

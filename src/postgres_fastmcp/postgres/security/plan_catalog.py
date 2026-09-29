@@ -299,43 +299,53 @@ DEFINITION_DEPENDENCIES_SQL = (
     "LEFT JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
 )
 
-# Реализации операторов и агрегатов allowed_schema по именам. План и SQL агента печатают оператор или агрегат
-# allowed_schema без схемы и без типов аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же
-# вида, что у DEFINITION_DEPENDENCIES_SQL (их проверяет тот же разбор): operator_function — функция оператора (oprcode);
-# aggregate_function — опорная функция агрегата; operator и operator_function — оператор сортировки агрегата
-# (aggsortop: min/max планировщик заменяет индексным сканом с этим оператором) и его функция. parent_schema —
-# схема оператора или агрегата.
+# Реализации операторов и функций allowed_schema по именам. План и SQL агента печатают их без схемы и без типов
+# аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же вида, что у DEFINITION_DEPENDENCIES_SQL
+# (их проверяет тот же разбор): operator_function — функция оператора (oprcode); aggregate_function — опорная
+# функция агрегата; operator и operator_function — оператор сортировки агрегата (aggsortop: min/max планировщик
+# заменяет индексным сканом с этим оператором) и его функция; sql_body — тело SQL-функции как написано (prosrc;
+# config — proconfig: SET search_path меняет разрешение имён тела); sql_atomic_body — тело BEGIN ATOMIC / RETURN
+# (pg_get_function_sqlbody: имена вне search_path — со схемой). parent_schema — схема оператора или агрегата.
 ALLOWED_IMPLEMENTATIONS_SQL = (
     "WITH operators AS ("  # noqa: S608
     "SELECT o.oprcode FROM pg_catalog.pg_operator o "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators})"
-    "), aggregates AS ("
-    "SELECT a.* FROM pg_catalog.pg_aggregate a "
-    "JOIN pg_catalog.pg_proc p ON p.oid OPERATOR(pg_catalog.=) a.aggfnoid::pg_catalog.oid "
+    "), functions AS ("
+    "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig "
+    "FROM pg_catalog.pg_proc p "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND p.proname OPERATOR(pg_catalog.=) ANY ({functions})"
+    "), aggregates AS ("
+    "SELECT a.* FROM functions p "
+    "JOIN pg_catalog.pg_aggregate a ON a.aggfnoid::pg_catalog.oid OPERATOR(pg_catalog.=) p.oid"
     "), sort_operators AS ("
     "SELECT o.oprname, o.oprnamespace, o.oprcode FROM aggregates a "
     "JOIN pg_catalog.pg_operator o ON o.oid OPERATOR(pg_catalog.=) a.aggsortop"
     ") "
     "SELECT 'operator_function' AS kind, fn.nspname AS schema, f.proname AS name, "
-    "{schema}::pg_catalog.name AS parent_schema "
+    "{schema}::pg_catalog.name AS parent_schema, NULL::pg_catalog.text AS definition, "
+    "NULL::pg_catalog.text[] AS config "
     "FROM operators o JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name "
+    "SELECT 'aggregate_function', fn.nspname, f.proname, {schema}::pg_catalog.name, NULL, NULL "
     f"FROM aggregates a CROSS JOIN LATERAL (VALUES {_AGGREGATE_SUPPORT_FUNCTIONS}) AS s(fn) "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
     "UNION ALL "
-    "SELECT 'operator', opn.nspname, o.oprname, NULL::pg_catalog.name FROM sort_operators o "
+    "SELECT 'operator', opn.nspname, o.oprname, NULL, NULL, NULL FROM sort_operators o "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "UNION ALL "
-    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname FROM sort_operators o "
+    "SELECT 'operator_function', fn.nspname, f.proname, opn.nspname, NULL, NULL FROM sort_operators o "
     "JOIN pg_catalog.pg_namespace opn ON opn.oid OPERATOR(pg_catalog.=) o.oprnamespace "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) o.oprcode::pg_catalog.oid "
-    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace"
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    "UNION ALL "
+    "SELECT CASE WHEN p.atomic THEN 'sql_atomic_body' ELSE 'sql_body' END, {schema}::pg_catalog.name, p.proname, "
+    "NULL, CASE WHEN p.atomic THEN pg_catalog.pg_get_function_sqlbody(p.oid) ELSE p.prosrc END, p.proconfig "
+    "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
+    "WHERE l.lanname OPERATOR(pg_catalog.=) 'sql'"
 )
 
 
@@ -393,7 +403,7 @@ async def row_types(run: StatementRunner, schema: str, names: Collection[str]) -
 async def allowed_implementations(
     run: StatementRunner, schema: str, *, operators: Collection[str], functions: Collection[str]
 ) -> list[RowResult] | None:
-    """Функции, которыми реализованы операторы и агрегаты схемы schema с этими именами (одним запросом)."""
+    """Функции, которыми реализованы операторы и агрегаты схемы schema с этими именами, и тела её SQL-функций."""
     sql = (
         SQL(ALLOWED_IMPLEMENTATIONS_SQL)
         .format(schema=Literal(schema), operators=_name_array(operators), functions=_name_array(functions))
