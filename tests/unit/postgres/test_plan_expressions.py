@@ -1,5 +1,7 @@
 """Тесты разбора выражений плана EXPLAIN (VERBOSE): формы ruleutils PG 15–17 и имена, которые они называют."""
 
+from collections.abc import Callable
+
 import pglast
 import pytest
 from pglast.ast import Node
@@ -9,10 +11,16 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     EXPRESSION_PARSERS,
     ExpressionNames,
     expression_texts,
+    parse_argument_defaults,
+    parse_definition_expression,
     parse_expression,
+    parse_function_body,
+    parse_index_definition,
+    parse_partition_key_definition,
     parse_rule_definition,
     parse_sort_key,
     parse_table_function,
+    parse_trigger_definition,
     parser_operators,
     sequence_name,
 )
@@ -346,3 +354,282 @@ def test_rule_names_include_the_equality_of_join_using() -> None:
     )
     assert names is not None
     assert names.operators == ((None, "="),)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("secret.valid(id)", ExpressionNames(functions=(("secret", "valid"),))),
+        (
+            "((VALUE)::integer > 0)",
+            ExpressionNames(operators=((None, ">"),), types=(("pg_catalog", "int4"),)),
+        ),
+        (
+            "nextval('app_t_id_seq'::regclass)",
+            ExpressionNames(types=((None, "regclass"),), sequences=((None, "app_t_id_seq"),)),
+        ),
+        (
+            "(EXISTS ( SELECT 1\n   FROM secret.t\n  WHERE (t.x = w.id)))",
+            ExpressionNames(operators=((None, "="),), relations=(("secret", "t"),)),
+        ),
+        (
+            "(id IN ( SELECT app_owners.id FROM app_owners))",
+            ExpressionNames(operators=((None, "="),), relations=((None, "app_owners"),)),
+        ),
+        (
+            "(id < ALL ( SELECT app_owners.id FROM app_owners))",
+            ExpressionNames(operators=((None, "<"),), relations=((None, "app_owners"),)),
+        ),
+        (
+            "((WITH x AS (SELECT 1 AS a) SELECT count(*) AS count FROM x) > 0)",
+            ExpressionNames(functions=((None, "count"),), operators=((None, ">"),)),
+        ),
+    ],
+)
+def test_definition_expression_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_expr: CHECK, DEFAULT, генерируемая колонка, CHECK домена (VALUE), USING/WITH CHECK политики.
+
+    x IN (подзапрос) — = без имени в тексте (как у SQL агента и выражений плана).
+    """
+    assert parse_definition_expression(text) == expected
+
+
+@pytest.mark.parametrize("text", [None, 42, "", "1; DROP TABLE x", "a.b.c.f(1)", "(SELECT 1 FROM db.s.t)"])
+def test_unparsable_definition_expression_is_rejected(text: object) -> None:
+    assert parse_definition_expression(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "CREATE TRIGGER w_tr BEFORE INSERT ON public.w FOR EACH ROW WHEN (secret.valid(new.id)) "
+            "EXECUTE FUNCTION secret.audit('a')",
+            ExpressionNames(functions=(("secret", "audit"), ("secret", "valid"))),
+        ),
+        (
+            "CREATE TRIGGER t AFTER UPDATE ON public.app_t FOR EACH STATEMENT EXECUTE FUNCTION app_audit()",
+            ExpressionNames(functions=((None, "app_audit"),)),
+        ),
+    ],
+)
+def test_trigger_definition_names(text: str, expected: ExpressionNames) -> None:
+    """Функция триггера и имена WHEN; аргументы триггера — строковые константы."""
+    assert parse_trigger_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "CREATE INDEX w_expr ON public.w USING btree (lower(g), ((id + 1)), v secret.myops) WHERE secret.valid(id)",
+            ExpressionNames(
+                functions=((None, "lower"), ("secret", "valid")), operators=((None, "+"), ("secret", "myops"))
+            ),
+        ),
+        ("CREATE UNIQUE INDEX i ON public.app_t USING btree (v text_pattern_ops)", ExpressionNames()),
+    ],
+)
+def test_index_definition_names(text: str, expected: ExpressionNames) -> None:
+    """Выражения ключей, предикат и класс операторов со схемой (без схемы он виден в search_path)."""
+    assert parse_index_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("parse", "text"),
+    [
+        (parse_trigger_definition, "SELECT 1"),
+        (parse_trigger_definition, None),
+        (parse_index_definition, "CREATE TRIGGER t AFTER UPDATE ON t EXECUTE FUNCTION f()"),
+        (parse_index_definition, "CREATE INDEX i ON t (x); CREATE INDEX j ON t (y)"),
+    ],
+)
+def test_foreign_statement_text_is_rejected(parse: Callable[[object], ExpressionNames | None], text: object) -> None:
+    assert parse(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "RANGE (((id + secret.boomi())))",
+            ExpressionNames(functions=(("secret", "boomi"),), operators=((None, "+"),)),
+        ),
+        ("LIST (id)", ExpressionNames()),
+        (
+            'HASH (id, lower(v) COLLATE "C" secret.ops, w text_pattern_ops)',
+            ExpressionNames(functions=((None, "lower"),), operators=(("secret", "ops"),)),
+        ),
+    ],
+)
+def test_partition_key_definition_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_partkeydef: выражения ключей и класс операторов со схемой (collation пропускается)."""
+    assert parse_partition_key_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "",
+        "RANGE (id); DROP TABLE x",
+        "RANGE (id)) ; CREATE TABLE y (a int",
+        "RANGE (id) WITH (fillfactor = 1)",
+        "RANGE (id) TABLESPACE t",
+        "RANGE (id) USING heap",
+        "RANGE (a.b.c.f(id))",
+    ],
+)
+def test_unparsable_partition_key_definition_is_rejected(text: object) -> None:
+    assert parse_partition_key_definition(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "atomic", "expected"),
+    [
+        (
+            "SELECT count(*) FROM secret.accounts",
+            False,
+            ExpressionNames(functions=((None, "count"),), relations=(("secret", "accounts"),)),
+        ),
+        (
+            "SELECT x FROM app_t WHERE id = $1; SELECT 1",
+            False,
+            ExpressionNames(operators=((None, "="),), relations=((None, "app_t"),)),
+        ),
+        ("", False, ExpressionNames()),
+        (
+            "WITH w AS (SELECT id FROM app_t) SELECT count(*) FROM w",
+            False,
+            ExpressionNames(functions=((None, "count"),), relations=((None, "app_t"),)),
+        ),
+        (
+            "SELECT * FROM app_rows() WHERE id IN (SELECT id FROM app_t)",
+            False,
+            ExpressionNames(functions=((None, "app_rows"),), operators=((None, "="),), relations=((None, "app_t"),)),
+        ),
+        (
+            "RETURN ((secret.valid($1))::integer + 1)",
+            True,
+            ExpressionNames(
+                functions=(("secret", "valid"),), operators=((None, "+"),), types=(("pg_catalog", "int4"),)
+            ),
+        ),
+        (
+            "BEGIN ATOMIC\n SELECT t.x\n    FROM secret.t\n  LIMIT 1;\nEND",
+            True,
+            ExpressionNames(relations=(("secret", "t"),)),
+        ),
+        ("BEGIN ATOMIC\nEND", True, ExpressionNames()),
+    ],
+)
+def test_function_body_names(text: str, atomic: bool, expected: ExpressionNames) -> None:
+    """Тело prosrc (операторы через ;) и pg_get_function_sqlbody (BEGIN ATOMIC / RETURN)."""
+    assert parse_function_body(text, atomic=atomic) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "atomic"),
+    [
+        (None, False),
+        ("SELEC 1", False),
+        ("INSERT INTO app_t VALUES (1)", False),
+        ("SELECT 1; DELETE FROM app_t", False),
+        ("WITH d AS (DELETE FROM app_t RETURNING id) SELECT count(*) FROM d", False),
+        ("CREATE TABLE app_x (id int)", False),
+        ("SELECT 1 INTO app_x", False),
+        ("SELECT id FROM app_t FOR UPDATE", False),
+        ("SELECT id FROM secret.a.t", False),
+        ("BEGIN ATOMIC\n INSERT INTO app_t VALUES (1);\nEND", True),
+        ("BEGIN ATOMIC\n UPDATE app_t SET id = 2;\nEND", True),
+        ("BEGIN ATOMIC\n SELECT 1;\n CREATE TABLE app_x (id int);\nEND", True),
+        ("SELECT 1", True),
+        ("RETURN 1; SELECT 2", True),
+    ],
+)
+def test_data_modifying_or_unparsable_body_is_rejected(text: object, atomic: bool) -> None:
+    """Изменение данных в теле — свои цели записи, их путь записи не проверить; служебные команды — тоже."""
+    assert parse_function_body(text, atomic=atomic) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Отношение в подзапросе, где CTE с тем же именем не видна: WITH ветви UNION не распространяется на соседнюю.
+        (
+            "SELECT * FROM (WITH pg_authid AS (SELECT 'x'::text AS rolname) SELECT rolname FROM pg_authid) s "
+            "UNION ALL SELECT rolname::text FROM pg_authid",
+            ExpressionNames(types=((None, "text"), (None, "text")), relations=((None, "pg_authid"),)),
+        ),
+        (
+            "SELECT pw FROM (WITH users AS (SELECT 1 AS id, 'x'::text AS pw) SELECT * FROM users) s "
+            "UNION ALL SELECT pw FROM users",
+            ExpressionNames(types=((None, "text"),), relations=((None, "users"),)),
+        ),
+        # CTE видна только в своём подзапросе, не во внешнем FROM.
+        (
+            "SELECT * FROM users, (WITH users AS (SELECT 1) SELECT * FROM users) s",
+            ExpressionNames(relations=((None, "users"),)),
+        ),
+        # Нерекурсивный WITH: CTE не видит себя и следующие — это таблицы.
+        (
+            "WITH users AS (SELECT * FROM users) SELECT * FROM users",
+            ExpressionNames(relations=((None, "users"),)),
+        ),
+        (
+            "WITH a AS (SELECT * FROM b), b AS (SELECT 1) SELECT * FROM a",
+            ExpressionNames(relations=((None, "b"),)),
+        ),
+        # CTE со схемой — всегда таблица.
+        (
+            "WITH users AS (SELECT 1) SELECT * FROM public.users",
+            ExpressionNames(relations=(("public", "users"),)),
+        ),
+    ],
+)
+def test_cte_name_outside_its_scope_is_a_table(text: str, expected: ExpressionNames) -> None:
+    """Имя без схемы — CTE, только если WITH, определяющий её, охватывает это место текста (как parse_cte)."""
+    assert parse_function_body(text, atomic=False) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "WITH app_x AS (SELECT 'a'::text AS v) SELECT v FROM app_x UNION ALL SELECT v FROM app_x",
+        "SELECT * FROM (WITH users AS (SELECT 1 AS id) SELECT * FROM (SELECT * FROM users) i) s",
+        "WITH a AS (SELECT 1 AS id), users AS (SELECT * FROM a) SELECT * FROM users WHERE id IN (SELECT id FROM a)",
+        "WITH RECURSIVE users(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM users WHERE n < 3) SELECT n FROM users",
+        "WITH RECURSIVE a AS (SELECT * FROM b), b AS (SELECT 1) SELECT * FROM a",
+        "SELECT 1 UNION ALL (WITH users AS (SELECT 2) SELECT * FROM users)",
+    ],
+)
+def test_cte_in_scope_is_not_a_table(text: str) -> None:
+    """Законные CTE: во всём операторе своего WITH, в его ветвях UNION и подзапросах; RECURSIVE видит всё."""
+    names = parse_function_body(text, atomic=False)
+    assert names is not None
+    assert names.relations == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("secret.api_key()", ExpressionNames(functions=(("secret", "api_key"),))),
+        (
+            "(1 + secret.boomi()), 'x;y'::text",
+            ExpressionNames(functions=(("secret", "boomi"),), operators=((None, "+"),), types=((None, "text"),)),
+        ),
+        ("app_helper(), now()", ExpressionNames(functions=((None, "app_helper"), (None, "now")))),
+        (
+            "(EXISTS ( SELECT 1 FROM secret.t))",
+            ExpressionNames(relations=(("secret", "t"),)),
+        ),
+    ],
+)
+def test_argument_defaults_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_expr(proargdefaults): умолчания через запятую; подзапрос и его отношения — как у определений."""
+    assert parse_argument_defaults(text) == expected
+
+
+@pytest.mark.parametrize("text", [None, 42, "", "1 FROM secret.t", "1; SELECT 2", "a.b.c.f()"])
+def test_unparsable_argument_defaults_are_rejected(text: object) -> None:
+    assert parse_argument_defaults(text) is None

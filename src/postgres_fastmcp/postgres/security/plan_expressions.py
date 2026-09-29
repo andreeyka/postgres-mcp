@@ -10,19 +10,32 @@ ruleutils в плане не печатает — такой текст не р�
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
     CaseExpr,
+    CommonTableExpr,
+    CreateFunctionStmt,
+    CreateStmt,
+    CreateTrigStmt,
+    DeleteStmt,
     FuncCall,
+    IndexElem,
+    IndexStmt,
+    InsertStmt,
+    IntoClause,
     JoinExpr,
     JsonTable,
+    LockingClause,
+    MergeStmt,
     Node,
+    PartitionElem,
     RangeTableFunc,
     RangeVar,
+    ReturnStmt,
     RuleStmt,
     SelectStmt,
     SortBy,
@@ -30,11 +43,12 @@ from pglast.ast import (
     SubLink,
     TypeCast,
     TypeName,
+    UpdateStmt,
 )
 from pglast.enums.parsenodes import A_Expr_Kind, SetOperation
 from pglast.enums.primnodes import SubLinkType
 from pglast.parser import ParseError
-from pglast.visitors import Visitor
+from pglast.visitors import Ancestor, Visitor
 
 
 # Имя из плана: (схема или None, имя).
@@ -111,6 +125,7 @@ class ExpressionNames:
     operators: tuple[QualifiedName, ...] = ()
     types: tuple[QualifiedName, ...] = ()
     sequences: tuple[QualifiedName, ...] = ()
+    relations: tuple[QualifiedName, ...] = ()
 
 
 def parser_operators(node: Node) -> tuple[str, ...]:
@@ -197,6 +212,8 @@ class _Names(Visitor):
         self.operators: list[QualifiedName] = []
         self.types: list[QualifiedName] = []
         self.sequences: list[QualifiedName] = []
+        # Отношения текста определения (заполняет _DefinitionNames; у выражений плана и правил пусто).
+        self.relations: list[QualifiedName] = []
         self.verifiable = True
         self._selects = 0
 
@@ -268,8 +285,8 @@ class _RuleNames(_Names):
         """Отношение правила читает план — его проверили узлы плана."""
 
 
-def _collect(statement: Node, names: _Names | None = None) -> ExpressionNames | None:
-    """Имена разобранного выражения; None — среди них есть неразборчивое."""
+def _collect(statement: Node | tuple[Node, ...], names: _Names | None = None) -> ExpressionNames | None:
+    """Имена разобранного выражения (или кортежа узлов); None — среди них есть неразборчивое."""
     names = names or _Names()
     names(statement)
     if not names.verifiable:
@@ -279,7 +296,167 @@ def _collect(statement: Node, names: _Names | None = None) -> ExpressionNames | 
         operators=tuple(names.operators),
         types=tuple(names.types),
         sequences=tuple(names.sequences),
+        relations=tuple(names.relations),
     )
+
+
+# Операторы, у которых бывает WITH: его CTE видны во всём операторе (у SELECT с UNION — во всех ветвях под ним).
+_WITH_STATEMENTS = (SelectStmt, InsertStmt, UpdateStmt, DeleteStmt, MergeStmt)
+
+
+def _ancestor_path(ancestors: Ancestor) -> list[tuple[object, object]]:
+    """Путь от узла к корню: (контейнер, поле или индекс в нём, по которому спускались), ближайший первым."""
+    path: list[tuple[object, object]] = []
+    current: Ancestor | None = ancestors
+    while current is not None:
+        if current.node is not None:
+            path.append((current.node, current.member))
+        current = current.parent
+    return path
+
+
+def _visible_ctes(ancestors: object) -> set[str]:
+    """Имена CTE, которые видит отношение без схемы в этом месте текста (как parse_cte/scanNameSpaceForCTE).
+
+    WITH оператора виден в самом операторе и его подзапросах, но не в соседних ветвях UNION над ним. Внутри
+    определения CTE того же WITH видны только CTE перед ним, у WITH RECURSIVE — все, включая её саму.
+    Путь неожиданной формы не даёт ни одного имени: отношение проверяется как таблица (закрыто по умолчанию).
+    """
+    if not isinstance(ancestors, Ancestor):
+        return set()
+    path = _ancestor_path(ancestors)
+    visible: set[str] = set()
+    for index, (node, member) in enumerate(path):
+        if not isinstance(node, _WITH_STATEMENTS) or node.withClause is None:
+            continue
+        ctes = tuple(node.withClause.ctes or ())
+        names = [cte.ctename if isinstance(cte, CommonTableExpr) else None for cte in ctes]
+        if member != "withClause" or node.withClause.recursive:
+            visible.update(name for name in names if name)
+            continue
+        # Путь внутрь WITH: ... -> (кортеж ctes, номер CTE) -> (WithClause, "ctes") -> (оператор, "withClause").
+        position = path[index - 2][1] if index >= 2 and path[index - 1][1] == "ctes" else None  # noqa: PLR2004
+        if isinstance(position, int):
+            visible.update(name for name in names[:position] if name)
+    return visible
+
+
+class _DefinitionNames(_Names):
+    """Имена текста определения (политика, CHECK, DEFAULT, триггер, индекс, домен) вместе с отношениями.
+
+    Подзапросы законны, отношения собираются — план их не покажет. Имя без схемы — CTE, только если его
+    определяет WITH, видимый в этом месте текста (_visible_ctes); иначе это таблица.
+    """
+
+    def visit_SelectStmt(self, _ancestors: object, _node: SelectStmt) -> None:  # noqa: N802
+        """Подзапрос определения законен."""
+
+    def visit_SubLink(self, _ancestors: object, node: SubLink) -> None:  # noqa: N802
+        """Оператор сравнения с подзапросом (x < ALL (SELECT ...)); x IN (SELECT ...) — =, у EXISTS оператора нет."""
+        generated = parser_operators(node)
+        if generated:
+            self.operators.extend((None, name) for name in generated)
+        else:
+            self._add(self.operators, node.operName)
+
+    def visit_RangeVar(self, ancestors: object, node: RangeVar) -> None:  # noqa: N802
+        """Отношение определения: (схема или None, имя); имя с базой данных не проверить."""
+        if node.catalogname or not node.relname:
+            self.verifiable = False
+        elif node.schemaname is not None or node.relname not in _visible_ctes(ancestors):
+            self.relations.append((node.schemaname, node.relname))
+
+
+def _collect_definition(
+    root: Node | tuple[Node, ...], names_type: type[_DefinitionNames] = _DefinitionNames
+) -> ExpressionNames | None:
+    """Имена текста определения с учётом области видимости его CTE; None — неразборчиво."""
+    return _collect(root, names_type())
+
+
+def _single_statement[T: Node](text: object, kind: type[T]) -> T | None:
+    """Ровно один оператор вида kind; None — не строка, не разбирается или не он."""
+    if not isinstance(text, str):
+        return None
+    try:
+        statements = pglast.parse_sql(text)
+    except ParseError:
+        return None
+    statement = statements[0].stmt if len(statements) == 1 else None
+    return statement if isinstance(statement, kind) else None
+
+
+class _BodyNames(_DefinitionNames):
+    """Имена тела SQL-функции: как у определения, но изменение данных (в том числе в WITH) — неразборчиво.
+
+    SELECT INTO создаёт таблицу, FOR UPDATE/SHARE блокирует строки (в SQL агента basic их запрещает валидатор) —
+    тоже неразборчиво.
+    """
+
+    def _modifies(self) -> None:
+        """У изменения данных свои цели записи: их путь записи не проверить."""
+        self.verifiable = False
+
+    def visit_InsertStmt(self, _ancestors: object, _node: InsertStmt) -> None:  # noqa: N802
+        """INSERT в теле."""
+        self._modifies()
+
+    def visit_UpdateStmt(self, _ancestors: object, _node: UpdateStmt) -> None:  # noqa: N802
+        """UPDATE в теле."""
+        self._modifies()
+
+    def visit_DeleteStmt(self, _ancestors: object, _node: DeleteStmt) -> None:  # noqa: N802
+        """DELETE в теле."""
+        self._modifies()
+
+    def visit_MergeStmt(self, _ancestors: object, _node: MergeStmt) -> None:  # noqa: N802
+        """MERGE в теле."""
+        self._modifies()
+
+    def visit_IntoClause(self, _ancestors: object, _node: IntoClause) -> None:  # noqa: N802
+        """SELECT INTO в теле."""
+        self._modifies()
+
+    def visit_LockingClause(self, _ancestors: object, _node: LockingClause) -> None:  # noqa: N802
+        """FOR UPDATE/SHARE в теле."""
+        self._modifies()
+
+
+def _atomic_body(text: str) -> ReturnStmt | tuple[Node, ...] | None:
+    """Тело pg_get_function_sqlbody как тело CREATE FUNCTION: RETURN или операторы BEGIN ATOMIC; None — не оно."""
+    # Текст только разбирается pglast, в Postgres не отправляется.
+    function = _single_statement(f"CREATE FUNCTION _pgmcp_body() RETURNS void LANGUAGE sql {text}", CreateFunctionStmt)
+    body = None if function is None else function.sql_body
+    if isinstance(body, ReturnStmt):
+        return body
+    # BEGIN ATOMIC: список из одного списка операторов (у пустого блока — None).
+    if not isinstance(body, tuple) or len(body) != 1:
+        return None
+    return tuple(body[0] or ())
+
+
+def parse_function_body(text: object, *, atomic: bool) -> ExpressionNames | None:
+    """Тело SQL-функции: имена, как у выражений плана, и отношения.
+
+    atomic=False — prosrc: операторы через «;», только SELECT (и VALUES); пустое тело законно (функция void).
+    atomic=True — pg_get_function_sqlbody: BEGIN ATOMIC ... END (только SELECT) или RETURN <выражение>,
+    разбирается как тело CREATE FUNCTION. Изменение данных и служебные команды — None.
+    """
+    if not isinstance(text, str):
+        return None
+    if atomic:
+        body = _atomic_body(text)
+        if body is None or isinstance(body, ReturnStmt):
+            return None if body is None else _collect_definition(body, _BodyNames)
+        statements = body
+    else:
+        try:
+            statements = tuple(raw.stmt for raw in pglast.parse_sql(text))
+        except ParseError:
+            return None
+    if not all(isinstance(statement, SelectStmt) for statement in statements):
+        return None
+    return _collect_definition(statements, _BodyNames)
 
 
 def _nullify_planner_references(text: str) -> str | None:
@@ -378,15 +555,101 @@ def parse_rule_definition(text: object) -> ExpressionNames | None:
 
     None — не строка, не разбирается или не ровно одно CREATE RULE.
     """
-    if not isinstance(text, str):
+    statement = _single_statement(text, RuleStmt)
+    return None if statement is None else _collect(statement, _RuleNames())
+
+
+def parse_definition_expression(text: object) -> ExpressionNames | None:
+    """Выражение определения (pg_get_expr): CHECK, DEFAULT, генерируемая колонка, домен, политика RLS.
+
+    CHECK домена — с VALUE; политика — USING и WITH CHECK. Разбирается как "SELECT <text>"; подзапросы
+    и отношения законны (политика).
+    """
+    if not isinstance(text, str) or not text.strip():
         return None
-    try:
-        statements = pglast.parse_sql(text)
-    except ParseError:
+    statement = _single_select(f"SELECT {text}")
+    if statement is None or not _only(statement) or len(statement.targetList or ()) != 1:
         return None
-    if len(statements) != 1 or not isinstance(statements[0].stmt, RuleStmt):
+    return _collect_definition(statement)
+
+
+def parse_argument_defaults(text: object) -> ExpressionNames | None:
+    """Умолчания аргументов функции (pg_get_expr(proargdefaults)): выражения через запятую.
+
+    Планировщик подставляет их в вызов, где аргументы опущены, и сворачивает IMMUTABLE — то есть выполняет при
+    EXPLAIN. Разбирается как "SELECT <text>"; подзапросы и отношения собираются, как у других определений.
+    """
+    statement = parse_target_list(text)
+    return None if statement is None else _collect_definition(statement)
+
+
+def parse_trigger_definition(text: object) -> ExpressionNames | None:
+    """Триггер (pg_get_triggerdef): функция триггера и имена условия WHEN; аргументы — строковые константы."""
+    statement = _single_statement(text, CreateTrigStmt)
+    if statement is None:
         return None
-    return _collect(statements[0].stmt, _RuleNames())
+    function = _qualified(statement.funcname or ())
+    names = ExpressionNames() if statement.whenClause is None else _collect_definition(statement.whenClause)
+    if function is None or names is None:
+        return None
+    return replace(names, functions=(function, *names.functions))
+
+
+def _key_names(
+    elements: tuple[Node, ...], element_type: type[IndexElem | PartitionElem], where: Node | None = None
+) -> ExpressionNames | None:
+    """Ключи индекса или секционирования: выражения, предикат where и класс операторов со схемой.
+
+    Класс без схемы виден в search_path (pg_catalog или allowed_schema); со схемой он проверяется как оператор
+    (схема — allowed_schema или pg_catalog). Collation пропускается. None — элемент не того вида или неразборчиво.
+    """
+    keys = [element for element in elements if isinstance(element, element_type)]
+    if len(keys) != len(elements):
+        return None
+    roots = tuple(key.expr for key in keys if key.expr is not None)
+    if where is not None:
+        roots = (*roots, where)
+    names = _collect_definition(roots) if roots else ExpressionNames()
+    if names is None:
+        return None
+    opclasses: list[QualifiedName] = []
+    for key in keys:
+        if key.opclass:
+            opclass = _qualified(key.opclass)
+            if opclass is None:
+                return None
+            if opclass[0] is not None:
+                opclasses.append(opclass)
+    return replace(names, operators=(*names.operators, *opclasses))
+
+
+def parse_index_definition(text: object) -> ExpressionNames | None:
+    """Индекс (pg_get_indexdef): выражения ключей, предикат WHERE и класс операторов со схемой.
+
+    Выражения и предикат вычисляются при записи, а планировщик сворачивает их и при чтении (сопоставление
+    индексов с условиями запроса).
+    """
+    statement = _single_statement(text, IndexStmt)
+    if statement is None:
+        return None
+    return _key_names(tuple(statement.indexParams or ()), IndexElem, statement.whereClause)
+
+
+def parse_partition_key_definition(text: object) -> ExpressionNames | None:
+    """Ключ секционирования (pg_get_partkeydef: RANGE (...), LIST (...), HASH (...)): выражения и класс операторов.
+
+    Кэш отношения сворачивает выражения ключа при любом обращении к секционированной таблице, в том числе
+    при планировании SELECT. Текст разбирается как "CREATE TABLE t () PARTITION BY <text>".
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    statement = _single_statement(f"CREATE TABLE t () PARTITION BY {text}", CreateStmt)
+    if statement is None or statement.partspec is None:
+        return None
+    extra = (statement.tableElts, statement.inhRelations, statement.constraints, statement.options)
+    if any(extra) or statement.ofTypename or statement.tablespacename or statement.accessMethod:
+        return None
+    return _key_names(tuple(statement.partspec.partParams or ()), PartitionElem)
 
 
 def expression_texts(value: object) -> list[str] | None:

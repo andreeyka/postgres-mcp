@@ -333,7 +333,7 @@ class TestSafeSqlExecutorPlanCheck:
         )
         assert prepared is not None
         # Правила представлений читаются после PREPARE (он их заблокировал, план не строился), с тегом, ...
-        assert delegate.sent[2].startswith("/* t */ WITH RECURSIVE rules AS")
+        assert delegate.sent[2].startswith("/* t */ WITH RECURSIVE locked AS")
         assert "pg_catalog.pg_rewrite" in delegate.sent[2]
         assert delegate.sent[3] == "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
         # ... и ещё раз после EXPLAIN, до оператора.
