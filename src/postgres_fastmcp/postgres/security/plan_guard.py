@@ -30,6 +30,7 @@ from pglast.ast import (
     Node,
     SelectStmt,
     String,
+    TypeName,
     UpdateStmt,
 )
 from pglast.stream import RawStream
@@ -147,6 +148,23 @@ class _FunctionCalls(Visitor):
         self.calls.append(node)
 
 
+class _TypeNames(Visitor):
+    """Собирает имена типов SQL агента: (схема или None, имя); у имени с базой данных — две последние части."""
+
+    def __init__(self) -> None:
+        """Пустой список имён в порядке обхода."""
+        super().__init__()
+        self.names: list[tuple[str | None, str]] = []
+
+    def visit_TypeName(self, _ancestors: object, node: TypeName) -> None:  # noqa: N802
+        """Запомнить имя типа; части не строки или пустые пропускаются."""
+        parts = [part.sval for part in node.names or () if isinstance(part, String) and part.sval]
+        if len(parts) == 1:
+            self.names.append((None, parts[0]))
+        elif len(parts) > 1:
+            self.names.append((parts[-2], parts[-1]))
+
+
 def _call_name(call: FuncCall) -> tuple[str | None, str]:
     """Имя вызова: (схема или None, имя).
 
@@ -250,14 +268,31 @@ class PlanGuard:
             PlanUnverifiableError: Плана нет, узел сканирования не называет, что читает, или выражение
                 не разбирается.
         """
-        for raw in pglast.parse_sql(query):
-            target = _plannable(raw.stmt)
+        statements = [raw.stmt for raw in pglast.parse_sql(query)]
+        await self._check_statement_types(statements)
+        for raw_statement in statements:
+            target = _plannable(raw_statement)
             if target is None:
                 continue
             statement, generic = target
             options = "VERBOSE, FORMAT JSON, GENERIC_PLAN" if generic else "VERBOSE, FORMAT JSON"
             rows = await self._run(f"EXPLAIN ({options}) {RawStream()(statement)}")
             await self._check_plan(_plan_document(rows))
+
+    async def _check_statement_types(self, statements: list[Node]) -> None:
+        """Типы из SQL агента — до первого EXPLAIN, по тем же правилам, что типы выражений плана.
+
+        Ошибка разбора EXPLAIN — оракул: (NULL::users).secret_note (нет колонки), '(1,2)'::users (число и
+        типы полей) раскрывают структуру таблицы без префикса раньше, чем план дойдёт до проверки. Каталог
+        спрашивается, только если есть тип без схемы вне кэша pg_catalog или со схемой allowed_schema без префикса.
+        """
+        collector = _TypeNames()
+        for statement in statements:
+            collector(statement)
+        pending = _CatalogNames()
+        for schema, name in collector.names:
+            self._check_type(schema, name, pending)
+        await self._check_catalog_names(pending)
 
     async def _check_plan(self, plan: object) -> None:
         """Сначала узлы (отношения и функции сканов), затем выражения, затем имена, которые решает каталог.

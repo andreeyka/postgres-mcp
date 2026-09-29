@@ -707,3 +707,49 @@ async def test_quoted_sequence_without_the_prefix_is_rejected() -> None:
 
     with pytest.raises(PlanAccessError, match=r"relation 'public\.PARTIAL app_s'"):
         await _guard(explain, table_prefix="app_").check(_SELECT)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT (NULL::users).secret_note FROM app_t",
+        "SELECT '(1,2)'::users",
+        "SELECT CAST(NULL AS public.users)",
+        "SELECT 1; SELECT NULL::users[]",
+        "SELECT * FROM ROWS FROM (json_to_record('{}') AS (u users)) AS r",
+    ],
+)
+async def test_row_type_in_the_agent_sql_is_rejected_before_explain(sql: str) -> None:
+    """Ошибка разбора EXPLAIN (нет колонки, неверное число полей) раскрыла бы структуру таблицы без префикса."""
+    explain = _Explain(row_types=frozenset({"users"}))
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(sql)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", "public.users")
+    assert [q for q in explain.sent if q.startswith("EXPLAIN")] == []
+
+
+async def test_agent_types_need_one_row_type_query_only_when_unresolved() -> None:
+    explain = _Explain(row_types=frozenset({"users"}))
+    guard = _guard(explain, table_prefix="app_")
+
+    await guard.check("SELECT NULL::app_users, 1::integer, 'x'::text, NULL::app_t[] FROM app_t")
+
+    assert [q for q in explain.catalog_queries() if "typrelid" in q] == []
+    assert explain.sent[-1].startswith("EXPLAIN")
+
+    await guard.check("SELECT NULL::my_enum FROM app_t")
+
+    [row_type_query] = [q for q in explain.catalog_queries() if "typrelid" in q]
+    assert "'my_enum'" in row_type_query
+    assert explain.sent[-1].startswith("EXPLAIN")
+    assert explain.sent.index(row_type_query) < len(explain.sent) - 1
+
+
+async def test_agent_types_are_not_looked_up_without_a_prefix() -> None:
+    explain = _Explain(row_types=frozenset({"users"}))
+
+    await _guard(explain).check("SELECT NULL::users FROM app_t")
+
+    assert explain.catalog_queries() == []

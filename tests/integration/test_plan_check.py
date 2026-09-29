@@ -186,6 +186,17 @@ async def test_row_type_of_a_table_without_the_prefix_is_rejected(db_plan_check:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT (NULL::other_users).no_such_column FROM app_plan_items", "SELECT '(1,2,3)'::other_users"],
+)
+async def test_row_type_error_oracle_is_closed_before_explain(db_plan_check: DbAccess, sql: str) -> None:
+    """Без проверки до EXPLAIN ошибка разбора (нет колонки, лишнее поле) раскрыла бы структуру other_users."""
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.other_users'"):
+        await db_plan_check.sql_driver.execute(sql, readonly=True)
+
+
+@pytest.mark.asyncio
 async def test_domain_over_a_row_type_without_the_prefix_is_rejected(db_plan_check: DbAccess) -> None:
     """У домена typrelid = 0: строковый тип other_users виден только через typbasetype."""
     with pytest.raises(PlanAccessError, match=r"relation 'public\.other_users'"):
