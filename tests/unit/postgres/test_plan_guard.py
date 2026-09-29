@@ -42,7 +42,7 @@ def _rule_row(
     relation_name: str | None = None,
     definition: str | None = None,
 ) -> dict[str, Any]:
-    """Строка запроса правил и зависимостей (plan_catalog.RULE_DEPENDENCIES_SQL)."""
+    """Строка запроса правил и зависимостей (plan_catalog.DEFINITION_DEPENDENCIES_SQL)."""
     return {
         "kind": kind,
         "schema": schema,
@@ -933,7 +933,7 @@ async def test_allowed_dependencies_of_views_and_rules_pass(rules: list[dict[str
 async def test_unverifiable_rule_rows_are_rejected(rules: list[dict[str, Any]]) -> None:
     explain = _Explain(rules=rules)
 
-    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
         await _guard(explain).check(_SELECT)
 
 
@@ -943,7 +943,7 @@ async def test_missing_rule_rows_are_rejected() -> None:
             return None
         return [RowResult(cells={"QUERY PLAN": [{"Plan": _RESULT}]})]
 
-    with pytest.raises(PlanUnverifiableError, match="views or rules"):
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
         await PlanGuard(run, allowed_schema="public", table_prefix=None).check(_SELECT)
 
 
@@ -1339,3 +1339,140 @@ async def test_retry_text_that_does_not_parse_is_unverifiable_without_sending_it
     assert rollback == "ROLLBACK TO SAVEPOINT _pgmcp_check; RELEASE SAVEPOINT _pgmcp_check"
     assert explain.sent == []
     assert explain.rule_queries == []
+
+
+_INSERT = "INSERT INTO app_t (id) VALUES (1)"
+_TRIGGER = "CREATE TRIGGER t BEFORE INSERT ON public.app_t FOR EACH ROW {when}EXECUTE FUNCTION {function}()"
+
+
+@pytest.mark.parametrize(
+    ("row", "kind", "name"),
+    [
+        (
+            {"kind": "trigger", "definition": _TRIGGER.format(when="", function="secret.audit")},
+            "function",
+            "secret.audit",
+        ),
+        (
+            {
+                "kind": "trigger",
+                "definition": _TRIGGER.format(
+                    when="WHEN ((new.id > (current_setting('x'::text))::integer)) ", function="app_audit"
+                ),
+            },
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ({"kind": "check", "definition": "secret.valid(id)"}, "function", "secret.valid"),
+        (
+            {"kind": "default", "definition": "current_setting('app.tenant'::text)"},
+            "function",
+            "pg_catalog.current_setting",
+        ),
+        ({"kind": "default", "definition": "(secret.valid(id))::text"}, "function", "secret.valid"),
+        ({"kind": "default", "definition": "nextval('users_id_seq'::regclass)"}, "relation", "public.users_id_seq"),
+        (
+            {"kind": "index", "definition": "CREATE INDEX i ON public.app_t USING btree (secret.norm(v))"},
+            "function",
+            "secret.norm",
+        ),
+        (
+            {"kind": "index", "definition": "CREATE INDEX i ON public.app_t USING btree (id) WHERE secret.valid(id)"},
+            "function",
+            "secret.valid",
+        ),
+        (
+            {"kind": "index", "definition": "CREATE INDEX i ON public.app_t USING btree (v secret.ops)"},
+            "function",
+            "secret.ops",
+        ),
+        ({"kind": "domain", "definition": "secret.valid(VALUE)"}, "function", "secret.valid"),
+        (
+            {"kind": "policy", "definition": "(EXISTS ( SELECT 1 FROM secret.t WHERE (t.x = app_t.id)))"},
+            "relation",
+            "secret.t",
+        ),
+        ({"kind": "policy", "definition": "(id IN ( SELECT users.id FROM users))"}, "relation", "public.users"),
+        (
+            {"kind": "policy", "definition": "(tenant = (current_setting('app.tenant'::text))::integer)"},
+            "function",
+            "pg_catalog.current_setting",
+        ),
+    ],
+)
+async def test_write_path_definition_outside_basic_is_rejected_before_explain(
+    row: dict[str, Any], kind: str, name: str
+) -> None:
+    """Триггер, CHECK, DEFAULT/генерируемая колонка, индекс, домен, политика цели DML — по правилам basic."""
+    explain = _Explain(pg_catalog_functions=frozenset({"current_setting"}), rules=[row])
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_INSERT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"kind": "trigger", "definition": _TRIGGER.format(when="", function="app_audit")},
+        {"kind": "check", "definition": "(id > 0)"},
+        {"kind": "default", "definition": "nextval('app_t_id_seq'::regclass)"},
+        {
+            "kind": "index",
+            "definition": "CREATE INDEX i ON public.app_t USING btree (lower(v) text_pattern_ops) WHERE (id > 0)",
+        },
+        {
+            "kind": "domain",
+            "definition": "((VALUE)::text = ANY ((ARRAY['a'::character varying, 'b'::character varying])::text[]))",
+        },
+        {"kind": "policy", "definition": "(owner = CURRENT_USER)"},
+    ],
+)
+async def test_allowed_write_path_definitions_pass(row: dict[str, Any]) -> None:
+    explain = _Explain(rules=[row])
+
+    await _guard(explain, table_prefix="app_").check(_INSERT)
+
+    assert explain.sent[-1] == _EXPLAIN + _INSERT
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"kind": "trigger", "definition": "SELECT 1"},
+        {"kind": "index", "definition": None},
+        {"kind": "check", "definition": "(id > 0"},
+        {"kind": "policy", "definition": "(id IN ( SELECT 1 FROM db.s.t))"},
+    ],
+)
+async def test_unparsable_write_path_definition_is_rejected(row: dict[str, Any]) -> None:
+    explain = _Explain(rules=[row])
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_INSERT)
+
+
+async def test_relation_of_a_definition_is_prepared_and_the_definitions_are_read_again() -> None:
+    """Политика читает app_owners: если это представление, его правила видны только после его PREPARE."""
+    explain = _Explain(rules=[{"kind": "policy", "definition": "(id IN ( SELECT app_owners.id FROM app_owners))"}])
+
+    await _guard(explain, table_prefix="app_").check(_INSERT)
+
+    locks = [command for command in explain.prepared if "AS SELECT FROM " in command]
+    assert len(locks) == 1
+    assert 'AS SELECT FROM "public"."app_owners"; DEALLOCATE _pgmcp_check_' in locks[0]
+    assert len(explain.rule_queries) == 3
+
+
+async def test_relation_seen_twice_is_prepared_once() -> None:
+    rows = [
+        {"kind": "policy", "definition": "(id IN ( SELECT app_owners.id FROM app_owners))"},
+        {"kind": "check", "definition": "(id > ( SELECT 0 FROM public.app_owners LIMIT 1))"},
+    ]
+    explain = _Explain(rules=rows)
+
+    await _guard(explain).check(_INSERT)
+
+    assert len([command for command in explain.prepared if "AS SELECT FROM " in command]) == 1

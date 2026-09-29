@@ -10,14 +10,18 @@ ruleutils в плане не печатает — такой текст не р�
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
     CaseExpr,
+    CommonTableExpr,
+    CreateTrigStmt,
     FuncCall,
+    IndexElem,
+    IndexStmt,
     JoinExpr,
     JsonTable,
     Node,
@@ -111,6 +115,7 @@ class ExpressionNames:
     operators: tuple[QualifiedName, ...] = ()
     types: tuple[QualifiedName, ...] = ()
     sequences: tuple[QualifiedName, ...] = ()
+    relations: tuple[QualifiedName, ...] = ()
 
 
 def parser_operators(node: Node) -> tuple[str, ...]:
@@ -197,6 +202,8 @@ class _Names(Visitor):
         self.operators: list[QualifiedName] = []
         self.types: list[QualifiedName] = []
         self.sequences: list[QualifiedName] = []
+        # Отношения текста определения (заполняет _DefinitionNames; у выражений плана и правил пусто).
+        self.relations: list[QualifiedName] = []
         self.verifiable = True
         self._selects = 0
 
@@ -268,8 +275,8 @@ class _RuleNames(_Names):
         """Отношение правила читает план — его проверили узлы плана."""
 
 
-def _collect(statement: Node, names: _Names | None = None) -> ExpressionNames | None:
-    """Имена разобранного выражения; None — среди них есть неразборчивое."""
+def _collect(statement: Node | tuple[Node, ...], names: _Names | None = None) -> ExpressionNames | None:
+    """Имена разобранного выражения (или кортежа узлов); None — среди них есть неразборчивое."""
     names = names or _Names()
     names(statement)
     if not names.verifiable:
@@ -279,7 +286,75 @@ def _collect(statement: Node, names: _Names | None = None) -> ExpressionNames | 
         operators=tuple(names.operators),
         types=tuple(names.types),
         sequences=tuple(names.sequences),
+        relations=tuple(names.relations),
     )
+
+
+class _CteNames(Visitor):
+    """Имена CTE текста: отношение без схемы с таким именем — CTE, а не таблица."""
+
+    def __init__(self) -> None:
+        """Пустое множество имён."""
+        super().__init__()
+        self.names: set[str] = set()
+
+    def visit_CommonTableExpr(self, _ancestors: object, node: CommonTableExpr) -> None:  # noqa: N802
+        """Запомнить имя CTE."""
+        if node.ctename:
+            self.names.add(node.ctename)
+
+
+class _DefinitionNames(_Names):
+    """Имена текста определения (политика, CHECK, DEFAULT, триггер, индекс, домен) вместе с отношениями.
+
+    Подзапросы законны, отношения собираются — план их не покажет. Имя без схемы, совпадающее с именем CTE
+    текста, — CTE (без учёта области видимости: одноимённая таблица в другой области того же текста
+    не проверяется; тексты пишет владелец схемы, не агент).
+    """
+
+    def __init__(self, ctes: frozenset[str]) -> None:
+        """Пустые списки имён; ctes — имена CTE всего текста."""
+        super().__init__()
+        self._ctes = ctes
+
+    def visit_SelectStmt(self, _ancestors: object, _node: SelectStmt) -> None:  # noqa: N802
+        """Подзапрос определения законен."""
+
+    def visit_SubLink(self, _ancestors: object, node: SubLink) -> None:  # noqa: N802
+        """Оператор сравнения с подзапросом (x < ALL (SELECT ...)); x IN (SELECT ...) — =, у EXISTS оператора нет."""
+        generated = parser_operators(node)
+        if generated:
+            self.operators.extend((None, name) for name in generated)
+        else:
+            self._add(self.operators, node.operName)
+
+    def visit_RangeVar(self, _ancestors: object, node: RangeVar) -> None:  # noqa: N802
+        """Отношение определения: (схема или None, имя); имя с базой данных не проверить."""
+        if node.catalogname or not node.relname:
+            self.verifiable = False
+        elif node.schemaname is not None or node.relname not in self._ctes:
+            self.relations.append((node.schemaname, node.relname))
+
+
+def _collect_definition(
+    root: Node | tuple[Node, ...], names_type: type[_DefinitionNames] = _DefinitionNames
+) -> ExpressionNames | None:
+    """Имена текста определения с учётом его CTE; None — неразборчиво."""
+    ctes = _CteNames()
+    ctes(root)
+    return _collect(root, names_type(frozenset(ctes.names)))
+
+
+def _single_statement[T: Node](text: object, kind: type[T]) -> T | None:
+    """Ровно один оператор вида kind; None — не строка, не разбирается или не он."""
+    if not isinstance(text, str):
+        return None
+    try:
+        statements = pglast.parse_sql(text)
+    except ParseError:
+        return None
+    statement = statements[0].stmt if len(statements) == 1 else None
+    return statement if isinstance(statement, kind) else None
 
 
 def _nullify_planner_references(text: str) -> str | None:
@@ -378,15 +453,63 @@ def parse_rule_definition(text: object) -> ExpressionNames | None:
 
     None — не строка, не разбирается или не ровно одно CREATE RULE.
     """
-    if not isinstance(text, str):
+    statement = _single_statement(text, RuleStmt)
+    return None if statement is None else _collect(statement, _RuleNames())
+
+
+def parse_definition_expression(text: object) -> ExpressionNames | None:
+    """Выражение определения (pg_get_expr): CHECK, DEFAULT, генерируемая колонка, домен, политика RLS.
+
+    CHECK домена — с VALUE; политика — USING и WITH CHECK. Разбирается как "SELECT <text>"; подзапросы
+    и отношения законны (политика).
+    """
+    if not isinstance(text, str) or not text.strip():
         return None
-    try:
-        statements = pglast.parse_sql(text)
-    except ParseError:
+    statement = _single_select(f"SELECT {text}")
+    if statement is None or not _only(statement) or len(statement.targetList or ()) != 1:
         return None
-    if len(statements) != 1 or not isinstance(statements[0].stmt, RuleStmt):
+    return _collect_definition(statement)
+
+
+def parse_trigger_definition(text: object) -> ExpressionNames | None:
+    """Триггер (pg_get_triggerdef): функция триггера и имена условия WHEN; аргументы — строковые константы."""
+    statement = _single_statement(text, CreateTrigStmt)
+    if statement is None:
         return None
-    return _collect(statements[0].stmt, _RuleNames())
+    function = _qualified(statement.funcname or ())
+    names = ExpressionNames() if statement.whenClause is None else _collect_definition(statement.whenClause)
+    if function is None or names is None:
+        return None
+    return replace(names, functions=(function, *names.functions))
+
+
+def parse_index_definition(text: object) -> ExpressionNames | None:
+    """Индекс (pg_get_indexdef): выражения ключей, предикат WHERE и класс операторов со схемой.
+
+    Выражения и опорные функции класса вычисляются при записи. Класс без схемы виден в search_path (pg_catalog
+    или allowed_schema); со схемой он проверяется как оператор (схема — allowed_schema или pg_catalog).
+    """
+    statement = _single_statement(text, IndexStmt)
+    if statement is None:
+        return None
+    elements = statement.indexParams or ()
+    if not all(isinstance(element, IndexElem) for element in elements):
+        return None
+    roots = tuple(element.expr for element in elements if element.expr is not None)
+    if statement.whereClause is not None:
+        roots = (*roots, statement.whereClause)
+    names = _collect_definition(roots) if roots else ExpressionNames()
+    if names is None:
+        return None
+    opclasses: list[QualifiedName] = []
+    for element in elements:
+        if element.opclass:
+            opclass = _qualified(element.opclass)
+            if opclass is None:
+                return None
+            if opclass[0] is not None:
+                opclasses.append(opclass)
+    return replace(names, operators=(*names.operators, *opclasses))
 
 
 def expression_texts(value: object) -> list[str] | None:

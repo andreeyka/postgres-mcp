@@ -8,7 +8,7 @@ from pglast.visitors import Visitor
 from postgres_fastmcp.postgres.models import RowResult
 from postgres_fastmcp.postgres.security.plan_catalog import (
     ALLOWED_IMPLEMENTATIONS_SQL,
-    RULE_DEPENDENCIES_SQL,
+    DEFINITION_DEPENDENCIES_SQL,
     BuiltinTypeNames,
     allowed_implementations,
     pg_catalog_functions,
@@ -76,7 +76,7 @@ async def _catalog_sql() -> list[str]:
     await pg_catalog_functions(recorder, ["current_setting", "my_fn"])
     await row_types(recorder, "public", ["users", "users_dom"])
     await allowed_implementations(recorder, "public", operators=["===", "="], functions=["app_agg"])
-    return [*recorder.sent, RULE_DEPENDENCIES_SQL]
+    return [*recorder.sent, DEFINITION_DEPENDENCIES_SQL]
 
 
 async def test_catalog_sql_resolves_nothing_through_the_search_path() -> None:
@@ -114,15 +114,15 @@ def test_the_qualification_check_sees_implicit_operators(sql: str) -> None:
     assert _unqualified_names(sql) != []
 
 
-def test_rule_dependencies_sql_skips_materialized_views() -> None:
+def test_definition_sql_skips_materialized_views() -> None:
     """Матвью читает уже скопированные данные: чтение не выполняет "_RETURN", определение проверять незачем."""
-    assert "c.relkind OPERATOR(pg_catalog.<>) 'm'" in RULE_DEPENDENCIES_SQL
+    assert "k.relkind OPERATOR(pg_catalog.<>) 'm'" in DEFINITION_DEPENDENCIES_SQL
 
 
-def test_rule_dependencies_sql_gates_non_select_rules_on_a_dml_lock() -> None:
-    """Правило не ON SELECT (ev_type <> '1') берётся, только если бэкенд держит блокировку DML на отношении."""
-    assert "r.ev_type OPERATOR(pg_catalog.=) '1'" in RULE_DEPENDENCIES_SQL
-    assert "l.mode OPERATOR(pg_catalog.=) ANY (" in RULE_DEPENDENCIES_SQL
+def test_definition_sql_gates_non_select_rules_and_write_targets_on_a_dml_lock() -> None:
+    """Правило не ON SELECT и путь записи — только у отношений с блокировкой DML (RowExclusiveLock и строже)."""
+    assert "r.ev_type OPERATOR(pg_catalog.=) '1'" in DEFINITION_DEPENDENCIES_SQL
+    assert DEFINITION_DEPENDENCIES_SQL.count("k.mode OPERATOR(pg_catalog.=) ANY (") == 2
     for mode in (
         "RowExclusiveLock",
         "ShareUpdateExclusiveLock",
@@ -131,10 +131,33 @@ def test_rule_dependencies_sql_gates_non_select_rules_on_a_dml_lock() -> None:
         "ExclusiveLock",
         "AccessExclusiveLock",
     ):
-        assert f"'{mode}'" in RULE_DEPENDENCIES_SQL
-    # AccessShareLock (SELECT) и RowShareLock (SELECT FOR SHARE/UPDATE) не дают сработать DML-правилу.
-    assert "'AccessShareLock'" not in RULE_DEPENDENCIES_SQL
-    assert "'RowShareLock'" not in RULE_DEPENDENCIES_SQL
+        assert f"'{mode}'" in DEFINITION_DEPENDENCIES_SQL
+    assert "'AccessShareLock'" not in DEFINITION_DEPENDENCIES_SQL
+    assert "'RowShareLock'" not in DEFINITION_DEPENDENCIES_SQL
+
+
+def test_write_targets_include_descendants_and_cascading_references() -> None:
+    """PREPARE блокирует только названную таблицу: секции и таблицы каскадных внешних ключей добавляет рекурсия."""
+    for fragment in ("pg_catalog.pg_inherits", "i.inhparent", "f.confrelid", "f.confdeltype", "f.confupdtype"):
+        assert fragment in DEFINITION_DEPENDENCIES_SQL
+
+
+def test_write_path_objects_and_their_texts() -> None:
+    for fragment in (
+        "NOT g.tgisinternal",
+        "g.tgenabled OPERATOR(pg_catalog.<>) 'D'",
+        "pg_catalog.pg_get_triggerdef(g.oid)",
+        "k.contype OPERATOR(pg_catalog.=) 'c'",
+        "pg_catalog.pg_get_expr(k.conbin, k.conrelid)",
+        "k.contypid",
+        "pg_catalog.pg_get_expr(k.conbin, 0::pg_catalog.oid)",
+        "pg_catalog.pg_get_expr(d.adbin, d.adrelid)",
+        "x.indexprs IS NOT NULL OR x.indpred IS NOT NULL",
+        "pg_catalog.pg_get_indexdef(x.oid)",
+        "c.relrowsecurity",
+        "(p.polqual), (p.polwithcheck)",
+    ):
+        assert fragment in DEFINITION_DEPENDENCIES_SQL
 
 
 async def test_allowed_implementations_look_up_operators_and_aggregates_by_name() -> None:

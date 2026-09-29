@@ -1,5 +1,7 @@
 """Тесты разбора выражений плана EXPLAIN (VERBOSE): формы ruleutils PG 15–17 и имена, которые они называют."""
 
+from collections.abc import Callable
+
 import pglast
 import pytest
 from pglast.ast import Node
@@ -9,10 +11,13 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     EXPRESSION_PARSERS,
     ExpressionNames,
     expression_texts,
+    parse_definition_expression,
     parse_expression,
+    parse_index_definition,
     parse_rule_definition,
     parse_sort_key,
     parse_table_function,
+    parse_trigger_definition,
     parser_operators,
     sequence_name,
 )
@@ -346,3 +351,95 @@ def test_rule_names_include_the_equality_of_join_using() -> None:
     )
     assert names is not None
     assert names.operators == ((None, "="),)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("secret.valid(id)", ExpressionNames(functions=(("secret", "valid"),))),
+        (
+            "((VALUE)::integer > 0)",
+            ExpressionNames(operators=((None, ">"),), types=(("pg_catalog", "int4"),)),
+        ),
+        (
+            "nextval('app_t_id_seq'::regclass)",
+            ExpressionNames(types=((None, "regclass"),), sequences=((None, "app_t_id_seq"),)),
+        ),
+        (
+            "(EXISTS ( SELECT 1\n   FROM secret.t\n  WHERE (t.x = w.id)))",
+            ExpressionNames(operators=((None, "="),), relations=(("secret", "t"),)),
+        ),
+        (
+            "(id IN ( SELECT app_owners.id FROM app_owners))",
+            ExpressionNames(operators=((None, "="),), relations=((None, "app_owners"),)),
+        ),
+        (
+            "(id < ALL ( SELECT app_owners.id FROM app_owners))",
+            ExpressionNames(operators=((None, "<"),), relations=((None, "app_owners"),)),
+        ),
+        (
+            "((WITH x AS (SELECT 1 AS a) SELECT count(*) AS count FROM x) > 0)",
+            ExpressionNames(functions=((None, "count"),), operators=((None, ">"),)),
+        ),
+    ],
+)
+def test_definition_expression_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_expr: CHECK, DEFAULT, генерируемая колонка, CHECK домена (VALUE), USING/WITH CHECK политики.
+
+    x IN (подзапрос) — = без имени в тексте (как у SQL агента и выражений плана).
+    """
+    assert parse_definition_expression(text) == expected
+
+
+@pytest.mark.parametrize("text", [None, 42, "", "1; DROP TABLE x", "a.b.c.f(1)", "(SELECT 1 FROM db.s.t)"])
+def test_unparsable_definition_expression_is_rejected(text: object) -> None:
+    assert parse_definition_expression(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "CREATE TRIGGER w_tr BEFORE INSERT ON public.w FOR EACH ROW WHEN (secret.valid(new.id)) "
+            "EXECUTE FUNCTION secret.audit('a')",
+            ExpressionNames(functions=(("secret", "audit"), ("secret", "valid"))),
+        ),
+        (
+            "CREATE TRIGGER t AFTER UPDATE ON public.app_t FOR EACH STATEMENT EXECUTE FUNCTION app_audit()",
+            ExpressionNames(functions=((None, "app_audit"),)),
+        ),
+    ],
+)
+def test_trigger_definition_names(text: str, expected: ExpressionNames) -> None:
+    """Функция триггера и имена WHEN; аргументы триггера — строковые константы."""
+    assert parse_trigger_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "CREATE INDEX w_expr ON public.w USING btree (lower(g), ((id + 1)), v secret.myops) WHERE secret.valid(id)",
+            ExpressionNames(
+                functions=((None, "lower"), ("secret", "valid")), operators=((None, "+"), ("secret", "myops"))
+            ),
+        ),
+        ("CREATE UNIQUE INDEX i ON public.app_t USING btree (v text_pattern_ops)", ExpressionNames()),
+    ],
+)
+def test_index_definition_names(text: str, expected: ExpressionNames) -> None:
+    """Выражения ключей, предикат и класс операторов со схемой (без схемы он виден в search_path)."""
+    assert parse_index_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("parse", "text"),
+    [
+        (parse_trigger_definition, "SELECT 1"),
+        (parse_trigger_definition, None),
+        (parse_index_definition, "CREATE TRIGGER t AFTER UPDATE ON t EXECUTE FUNCTION f()"),
+        (parse_index_definition, "CREATE INDEX i ON t (x); CREATE INDEX j ON t (y)"),
+    ],
+)
+def test_foreign_statement_text_is_rejected(parse: Callable[[object], ExpressionNames | None], text: object) -> None:
+    assert parse(text) is None

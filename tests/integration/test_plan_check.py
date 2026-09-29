@@ -68,6 +68,18 @@ CREATE OR REPLACE FUNCTION public.app_close_to(a int, b int) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN abs(a - b) <= 1; END';
 DROP OPERATOR IF EXISTS public.<~> (int, int);
 CREATE OPERATOR public.<~> (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_close_to);
+CREATE OR REPLACE FUNCTION secret.audit() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$;
+CREATE TABLE IF NOT EXISTS public.app_audited (id int);
+CREATE OR REPLACE TRIGGER app_audited_audit BEFORE INSERT ON public.app_audited
+    FOR EACH ROW EXECUTE FUNCTION secret.audit();
+CREATE OR REPLACE FUNCTION secret.valid(n int) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN n > 0; END';
+CREATE TABLE IF NOT EXISTS public.app_checked (id int CHECK (secret.valid(id)));
+CREATE TABLE IF NOT EXISTS public.app_generated (id int, flag boolean GENERATED ALWAYS AS (secret.valid(id)) STORED);
+CREATE TABLE IF NOT EXISTS public.app_policy_items (id int);
+ALTER TABLE public.app_policy_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS app_policy_items_check ON public.app_policy_items;
+CREATE POLICY app_policy_items_check ON public.app_policy_items WITH CHECK (secret.valid(id));
 """
 
 
@@ -417,3 +429,28 @@ async def test_operator_generated_by_the_parser_is_checked_by_its_function(
     — = ANY. С константами EXPLAIN выполнил бы secret.tag_boom (IN (подзапрос) — при выполнении): отказ раньше."""
     with pytest.raises(PlanAccessError, match=r"function 'secret\.tag_boom'"):
         await db_tag_operators.sql_driver.execute(sql, readonly=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("table", "function"),
+    [
+        ("app_audited", r"secret\.audit"),
+        ("app_checked", r"secret\.valid"),
+        ("app_generated", r"secret\.valid"),
+        ("app_policy_items", r"secret\.valid"),
+    ],
+)
+async def test_insert_into_a_table_whose_write_path_calls_a_foreign_function_is_rejected(
+    db_plan_check: DbAccess, table: str, function: str
+) -> None:
+    """Триггер, CHECK, генерируемая колонка и WITH CHECK политики в плане не видны: их читает путь записи."""
+    with pytest.raises(PlanAccessError, match=rf"function '{function}'"):
+        await db_plan_check.sql_driver.execute(f"INSERT INTO {table} (id) VALUES (1)", readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_select_from_a_table_with_a_foreign_trigger_passes(db_plan_check: DbAccess) -> None:
+    """SELECT держит AccessShareLock: путь записи не срабатывает и не проверяется."""
+    rows = await db_plan_check.sql_driver.execute("SELECT count(*) AS n FROM app_audited", readonly=True)
+    assert rows[0].cells["n"] >= 0

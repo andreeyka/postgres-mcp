@@ -208,10 +208,11 @@ class PlanUnverifiableError(UserFacingError):
             node_type: Узел без имени читаемого (Foreign Scan, Custom Scan, Function Scan); None — плана нет.
             key: Ключ узла с неразборчивым выражением (Output, Filter, ...); node_type тогда — его узел
                 (None — вложенная группа без Node Type, например Grouping Sets).
-            rules: Не проверить определения представлений и правил, до которых дошёл запрос.
+            rules: Не проверить определения представлений, правил, таблиц (путь записи) или функций, до которых
+                дошёл запрос.
         """
         if rules:
-            reason = "the definitions of views or rules the query reaches cannot be verified"
+            reason = "the definitions of views, rules, tables or functions the query reaches cannot be verified"
         elif key is not None:
             reason = f"an expression in {key} of a {node_type or 'plan'} node cannot be verified"
         elif node_type is None:

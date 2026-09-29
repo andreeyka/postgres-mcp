@@ -51,24 +51,31 @@ _AGGREGATE_SUPPORT_FUNCTIONS = (
     "(a.aggdeserialfn), (a.aggmtransfn), (a.aggminvtransfn), (a.aggmfinalfn)"
 )
 
-# Правила (pg_rewrite) отношений, которые эта транзакция уже заблокировала: представления и правила, до которых
-# дошли разбор и переписывание запросов агента (EXPLAIN берёт AccessShareLock и держит его до конца транзакции;
-# вложенные представления блокирует переписывание). pg_locks показывает и fast-path блокировки (колонка
-# fastpath) — обычный путь AccessShareLock. Блокировки pg_catalog и pg_toast берут и собственные запросы
-# каталога (pg_locks — сам представление), их правила не читаются; отношения без правил строк не дают.
+# Определения, до которых дошёл разбор запросов агента (PREPARE) и планировщик (EXPLAIN): всё, что эта транзакция
+# заблокировала (pg_locks — и fast-path блокировки), кроме pg_catalog и pg_toast (их блокируют и собственные
+# запросы каталога).
 #
-# Материализованные представления (relkind = 'm') пропускаются целиком: их данные уже скопированы, чтение
-# не вычисляет определение (в отличие от обычного представления, чья "_RETURN" всегда выполняется). Правило
-# не ON SELECT (ev_type <> '1', оно есть только у DML-таблиц, у представлений — только SELECT) берётся, только
-# если эта транзакция держит на отношении блокировку строже AccessShareLock/RowShareLock: их берут SELECT и
-# FOR SHARE, а DML — RowExclusiveLock и выше, и только тогда правило вообще может сработать. Правило ON SELECT
-# берётся всегда: чтение представления выполняет его "_RETURN" при любой блокировке.
+# Правила (pg_rewrite). Материализованные представления (relkind = 'm') пропускаются: их данные уже скопированы,
+# чтение не вычисляет определение. Правило не ON SELECT (ev_type <> '1', оно есть только у DML-таблиц) берётся,
+# только если транзакция держит на отношении блокировку DML (RowExclusiveLock и строже): только тогда оно может
+# сработать. Правило ON SELECT берётся всегда: чтение представления выполняет его "_RETURN".
 #
-# Строки (kind): rule — текст правила (definition, pg_get_ruledef: имена вне search_path — со схемой);
-# function — функция или агрегат из pg_depend правила; aggregate_function — опорная функция агрегата
-# (parent_schema — схема агрегата); operator и operator_function — оператор и его функция (oprcode); type — тип
-# и каждый тип, до которого он ведёт через typbasetype/typelem, с отношением строкового типа (relation_*).
-# pg_depend не хранит зависимостей от закреплённых (встроенных) объектов pg_catalog: они видны только в тексте.
+# Путь записи. Цели — отношения с блокировкой DML, их потомки (pg_inherits: PREPARE блокирует только названную
+# секционированную таблицу, а триггеры и ограничения секций срабатывают при маршрутизации) и таблицы, которые
+# ссылаются на цель внешним ключом с каскадом (CASCADE, SET NULL, SET DEFAULT меняют ссылающуюся таблицу), —
+# рекурсивно. Их объекты: включённые пользовательские триггеры, CHECK, умолчания и генерируемые колонки
+# (pg_attrdef), индексы с выражениями или предикатом, CHECK доменов колонок (рекурсивно по базовым доменам
+# и элементам массивов; NOT NULL домена без conbin пропускается), политики RLS — все политики таблицы
+# с включённым RLS (независимо от команды и роли). Атрибуты составных типов колонок не обходятся: рекурсия
+# по pg_attribute поднимает оценку запроса выше jit_above_cost (100000; живьём 107795 против 15812 без неё),
+# и JIT компилировал бы каждый запрос проверки.
+#
+# Строки (kind): rule, trigger, check, domain, default, index, policy — текст определения (definition; имена вне
+# search_path — со схемой); function — функция или агрегат из pg_depend этих объектов; aggregate_function —
+# опорная функция агрегата (parent_schema — схема агрегата); operator и operator_function — оператор и его
+# функция (oprcode); type — тип и каждый тип, до которого он ведёт через typbasetype/typelem, с отношением
+# строкового типа (relation_*). pg_depend не хранит зависимостей от закреплённых (встроенных) объектов
+# pg_catalog: они видны только в тексте.
 _PG_REWRITE = "'pg_catalog.pg_rewrite'::pg_catalog.regclass::pg_catalog.oid"
 _PG_PROC = "'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid"
 _PG_OPERATOR = "'pg_catalog.pg_operator'::pg_catalog.regclass::pg_catalog.oid"
@@ -82,24 +89,88 @@ _DML_LOCK_MODES = (
     "ARRAY['RowExclusiveLock', 'ShareUpdateExclusiveLock', 'ShareLock', 'ShareRowExclusiveLock', "
     "'ExclusiveLock', 'AccessExclusiveLock']::pg_catalog.text[]"
 )
+_PG_TRIGGER = "'pg_catalog.pg_trigger'::pg_catalog.regclass::pg_catalog.oid"
+_PG_CONSTRAINT = "'pg_catalog.pg_constraint'::pg_catalog.regclass::pg_catalog.oid"
+_PG_ATTRDEF = "'pg_catalog.pg_attrdef'::pg_catalog.regclass::pg_catalog.oid"
+_PG_CLASS = "'pg_catalog.pg_class'::pg_catalog.regclass::pg_catalog.oid"
+_PG_POLICY = "'pg_catalog.pg_policy'::pg_catalog.regclass::pg_catalog.oid"
+_NO_NAME = "NULL::pg_catalog.name"
+# Действия внешнего ключа, которые меняют ссылающуюся таблицу: CASCADE, SET NULL, SET DEFAULT.
+_CASCADE_ACTIONS = "ARRAY['c', 'n', 'd']::pg_catalog.\"char\"[]"
+# Живая пользовательская колонка pg_attribute (не системная, не удалённая).
+_LIVE_COLUMN = "a.attnum OPERATOR(pg_catalog.>) 0::pg_catalog.int2 AND NOT a.attisdropped"
+
+
+def _definition_rows(kind: str, text: str, source: str) -> str:
+    """Строки текста определения вида kind: text — выражение текста над source."""
+    return f"SELECT '{kind}', {_NO_NAME}, {_NO_NAME}, {_NO_PARENT}, {_NO_RELATION}, {text} FROM {source} "  # noqa: S608
+
+
 # Подстановки — константы модуля выше, ввода агента в тексте нет.
-RULE_DEPENDENCIES_SQL = (
-    "WITH RECURSIVE rules AS ("  # noqa: S608
-    "SELECT DISTINCT r.oid FROM pg_catalog.pg_locks l "
+DEFINITION_DEPENDENCIES_SQL = (
+    "WITH RECURSIVE locked AS ("  # noqa: S608
+    "SELECT DISTINCT c.oid, c.relkind, l.mode FROM pg_catalog.pg_locks l "
     "JOIN pg_catalog.pg_database db ON db.oid OPERATOR(pg_catalog.=) l.database "
     "JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) l.relation "
     "JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace "
-    "JOIN pg_catalog.pg_rewrite r ON r.ev_class OPERATOR(pg_catalog.=) c.oid "
     "WHERE l.locktype OPERATOR(pg_catalog.=) 'relation' "
     "AND l.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid() "
     "AND db.datname OPERATOR(pg_catalog.=) pg_catalog.current_database() "
-    "AND cn.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'pg_toast']::pg_catalog.name[]) "
-    "AND c.relkind OPERATOR(pg_catalog.<>) 'm' "
-    f"AND (r.ev_type OPERATOR(pg_catalog.=) '1' OR l.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}))"
+    "AND cn.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'pg_toast']::pg_catalog.name[])"
+    "), rules AS ("
+    "SELECT DISTINCT r.oid FROM locked k JOIN pg_catalog.pg_rewrite r ON r.ev_class OPERATOR(pg_catalog.=) k.oid "
+    "WHERE k.relkind OPERATOR(pg_catalog.<>) 'm' "
+    f"AND (r.ev_type OPERATOR(pg_catalog.=) '1' OR k.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}))"
+    "), targets(oid) AS ("
+    f"SELECT k.oid FROM locked k WHERE k.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}) "
+    "UNION "
+    "SELECT n.oid FROM targets t CROSS JOIN LATERAL ("
+    "SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent OPERATOR(pg_catalog.=) t.oid "
+    "UNION ALL "
+    "SELECT f.conrelid FROM pg_catalog.pg_constraint f WHERE f.confrelid OPERATOR(pg_catalog.=) t.oid "
+    "AND f.contype OPERATOR(pg_catalog.=) 'f' "
+    f"AND (f.confdeltype OPERATOR(pg_catalog.=) ANY ({_CASCADE_ACTIONS}) "
+    f"OR f.confupdtype OPERATOR(pg_catalog.=) ANY ({_CASCADE_ACTIONS}))"
+    ") AS n(oid)"
+    "), column_types(oid) AS ("
+    "SELECT a.atttypid FROM targets t "
+    f"JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) t.oid WHERE {_LIVE_COLUMN} "
+    "UNION "
+    "SELECT n.oid FROM column_types y JOIN pg_catalog.pg_type ty ON ty.oid OPERATOR(pg_catalog.=) y.oid "
+    "CROSS JOIN LATERAL (VALUES (ty.typbasetype), (ty.typelem)) AS n(oid) "
+    "WHERE n.oid OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
+    "), triggers AS ("
+    "SELECT g.oid FROM targets t JOIN pg_catalog.pg_trigger g ON g.tgrelid OPERATOR(pg_catalog.=) t.oid "
+    "WHERE NOT g.tgisinternal AND g.tgenabled OPERATOR(pg_catalog.<>) 'D'"
+    "), checks AS ("
+    "SELECT k.oid, k.conbin, k.conrelid FROM targets t "
+    "JOIN pg_catalog.pg_constraint k ON k.conrelid OPERATOR(pg_catalog.=) t.oid "
+    "WHERE k.contype OPERATOR(pg_catalog.=) 'c'"
+    "), domain_checks AS ("
+    "SELECT k.oid, k.conbin FROM column_types y "
+    "JOIN pg_catalog.pg_constraint k ON k.contypid OPERATOR(pg_catalog.=) y.oid WHERE k.conbin IS NOT NULL"
+    "), defaults AS ("
+    "SELECT d.oid, d.adbin, d.adrelid FROM targets t "
+    "JOIN pg_catalog.pg_attrdef d ON d.adrelid OPERATOR(pg_catalog.=) t.oid"
+    "), indexes AS ("
+    "SELECT x.indexrelid AS oid FROM targets t JOIN pg_catalog.pg_index x ON x.indrelid OPERATOR(pg_catalog.=) t.oid "
+    "WHERE x.indexprs IS NOT NULL OR x.indpred IS NOT NULL"
+    "), policies AS ("
+    "SELECT p.oid, p.polrelid, p.polqual, p.polwithcheck FROM targets t "
+    "JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.oid "
+    "JOIN pg_catalog.pg_policy p ON p.polrelid OPERATOR(pg_catalog.=) t.oid WHERE c.relrowsecurity"
+    "), objects(classid, objid) AS ("
+    f"SELECT {_PG_REWRITE}, u.oid FROM rules u UNION ALL "
+    f"SELECT {_PG_TRIGGER}, g.oid FROM triggers g UNION ALL "
+    f"SELECT {_PG_CONSTRAINT}, k.oid FROM checks k UNION ALL "
+    f"SELECT {_PG_CONSTRAINT}, k.oid FROM domain_checks k UNION ALL "
+    f"SELECT {_PG_ATTRDEF}, d.oid FROM defaults d UNION ALL "
+    f"SELECT {_PG_CLASS}, x.oid FROM indexes x UNION ALL "
+    f"SELECT {_PG_POLICY}, p.oid FROM policies p"
     "), dependencies AS ("
-    "SELECT DISTINCT d.refclassid, d.refobjid FROM rules u "
-    f"JOIN pg_catalog.pg_depend d ON d.classid OPERATOR(pg_catalog.=) {_PG_REWRITE} "
-    "AND d.objid OPERATOR(pg_catalog.=) u.oid"
+    "SELECT DISTINCT d.refclassid, d.refobjid FROM objects o "
+    "JOIN pg_catalog.pg_depend d ON d.classid OPERATOR(pg_catalog.=) o.classid "
+    "AND d.objid OPERATOR(pg_catalog.=) o.objid"
     "), types(oid) AS ("
     f"SELECT x.refobjid FROM dependencies x WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_TYPE} "
     "UNION "
@@ -107,10 +178,26 @@ RULE_DEPENDENCIES_SQL = (
     "CROSS JOIN LATERAL (VALUES (t.typbasetype), (t.typelem)) AS v(next) "
     "WHERE v.next OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
     ") "
-    "SELECT 'rule' AS kind, NULL::pg_catalog.name AS schema, NULL::pg_catalog.name AS name, "
-    f"{_NO_PARENT} AS parent_schema, NULL::pg_catalog.name AS relation_schema, "
-    "NULL::pg_catalog.name AS relation_name, pg_catalog.pg_get_ruledef(u.oid) AS definition FROM rules u "
+    f"SELECT 'rule' AS kind, {_NO_NAME} AS schema, {_NO_NAME} AS name, {_NO_PARENT} AS parent_schema, "
+    f"{_NO_NAME} AS relation_schema, {_NO_NAME} AS relation_name, "
+    "pg_catalog.pg_get_ruledef(u.oid) AS definition FROM rules u "
     "UNION ALL "
+    + _definition_rows("trigger", "pg_catalog.pg_get_triggerdef(g.oid)", "triggers g")
+    + "UNION ALL "
+    + _definition_rows("check", "pg_catalog.pg_get_expr(k.conbin, k.conrelid)", "checks k")
+    + "UNION ALL "
+    + _definition_rows("domain", "pg_catalog.pg_get_expr(k.conbin, 0::pg_catalog.oid)", "domain_checks k")
+    + "UNION ALL "
+    + _definition_rows("default", "pg_catalog.pg_get_expr(d.adbin, d.adrelid)", "defaults d")
+    + "UNION ALL "
+    + _definition_rows("index", "pg_catalog.pg_get_indexdef(x.oid)", "indexes x")
+    + "UNION ALL "
+    + _definition_rows(
+        "policy",
+        "pg_catalog.pg_get_expr(e.expr, p.polrelid)",
+        "policies p CROSS JOIN LATERAL (VALUES (p.polqual), (p.polwithcheck)) AS e(expr) WHERE e.expr IS NOT NULL",
+    )
+    + "UNION ALL "  # noqa: S608
     f"SELECT 'function', pn.nspname, p.proname, {_NO_PARENT}, {_NO_RELATION}, {_NO_DEFINITION} "
     "FROM dependencies x JOIN pg_catalog.pg_proc p ON p.oid OPERATOR(pg_catalog.=) x.refobjid "
     "JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) p.pronamespace "
@@ -147,7 +234,7 @@ RULE_DEPENDENCIES_SQL = (
 
 # Реализации операторов и агрегатов allowed_schema по именам. План и SQL агента печатают оператор или агрегат
 # allowed_schema без схемы и без типов аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же
-# вида, что у RULE_DEPENDENCIES_SQL (их проверяет тот же разбор): operator_function — функция оператора (oprcode);
+# вида, что у DEFINITION_DEPENDENCIES_SQL (их проверяет тот же разбор): operator_function — функция оператора (oprcode);
 # aggregate_function — опорная функция агрегата; operator и operator_function — оператор сортировки агрегата
 # (aggsortop: min/max планировщик заменяет индексным сканом с этим оператором) и его функция. parent_schema —
 # схема оператора или агрегата.
