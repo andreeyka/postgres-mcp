@@ -39,12 +39,14 @@ import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
+    CaseExpr,
     DeclareCursorStmt,
     DefElem,
     DeleteStmt,
     ExplainStmt,
     FuncCall,
     InsertStmt,
+    JoinExpr,
     Node,
     ParamRef,
     SelectStmt,
@@ -74,6 +76,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     expression_texts,
     parse_rule_definition,
     parse_target_list,
+    parser_operators,
 )
 from postgres_fastmcp.postgres.security.policies import BASIC_ALLOWED_FUNCTIONS, NAME_LOOKUP_TYPES
 from postgres_fastmcp.postgres.security.schema_guard import is_system_relation_name
@@ -233,13 +236,33 @@ class _StatementNames(Visitor):
         """Имя типа."""
         self._add(self.types, node.names)
 
+    def _add_generated(self, node: Node) -> bool:
+        """Операторы, которые разбор подставляет за узел сам (BETWEEN, CASE x WHEN, USING, IN (подзапрос)).
+
+        Returns:
+            True — у узла такие операторы есть.
+        """
+        generated = parser_operators(node)
+        self.operators.extend((None, name) for name in generated)
+        return bool(generated)
+
     def visit_A_Expr(self, _ancestors: object, node: A_Expr) -> None:  # noqa: N802
-        """Оператор выражения (в том числе IN, = ANY, NULLIF, IS DISTINCT FROM)."""
-        self._add(self.operators, node.name)
+        """Оператор выражения (в том числе IN, = ANY, NULLIF, IS DISTINCT FROM); у BETWEEN — его сравнения."""
+        if not self._add_generated(node):
+            self._add(self.operators, node.name)
 
     def visit_SubLink(self, _ancestors: object, node: SubLink) -> None:  # noqa: N802
-        """Оператор сравнения с подзапросом (x = ANY (SELECT ...))."""
-        self._add(self.operators, node.operName)
+        """Оператор сравнения с подзапросом (x = ANY (SELECT ...)); x IN (SELECT ...) — =."""
+        if not self._add_generated(node):
+            self._add(self.operators, node.operName)
+
+    def visit_CaseExpr(self, _ancestors: object, node: CaseExpr) -> None:  # noqa: N802
+        """Равенство CASE x WHEN."""
+        self._add_generated(node)
+
+    def visit_JoinExpr(self, _ancestors: object, node: JoinExpr) -> None:  # noqa: N802
+        """Равенство колонок JOIN USING и NATURAL JOIN."""
+        self._add_generated(node)
 
     def visit_SortBy(self, _ancestors: object, node: SortBy) -> None:  # noqa: N802
         """Оператор ORDER BY ... USING."""

@@ -1,14 +1,19 @@
 """Тесты разбора выражений плана EXPLAIN (VERBOSE): формы ruleutils PG 15–17 и имена, которые они называют."""
 
+import pglast
 import pytest
+from pglast.ast import Node
+from pglast.visitors import Visitor
 
 from postgres_fastmcp.postgres.security.plan_expressions import (
     EXPRESSION_PARSERS,
     ExpressionNames,
     expression_texts,
     parse_expression,
+    parse_rule_definition,
     parse_sort_key,
     parse_table_function,
+    parser_operators,
     sequence_name,
 )
 
@@ -276,3 +281,68 @@ def test_comment_marks_inside_quotes_are_text() -> None:
 )
 def test_sequence_name_accepts_only_what_regclassout_prints(text: str) -> None:
     assert sequence_name(text) is None
+
+
+class _ParserOperators(Visitor):
+    """parser_operators каждого узла дерева подряд."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.found: list[str] = []
+
+    def visit(self, _ancestors: object, node: Node) -> None:
+        self.found.extend(parser_operators(node))
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        ("SELECT 1 BETWEEN 0 AND 2", [">=", "<="]),
+        ("SELECT 1 BETWEEN SYMMETRIC 0 AND 2", [">=", "<="]),
+        ("SELECT 1 NOT BETWEEN 0 AND 2", ["<", ">"]),
+        ("SELECT 1 NOT BETWEEN SYMMETRIC 0 AND 2", ["<", ">"]),
+        ("SELECT CASE 1 WHEN 2 THEN 3 END", ["="]),
+        ("SELECT * FROM a JOIN b USING (c)", ["="]),
+        ("SELECT * FROM a LEFT JOIN b USING (c, d)", ["="]),
+        ("SELECT * FROM a NATURAL JOIN b", ["="]),
+        ("SELECT 1 IN (SELECT 1)", ["="]),
+        ("SELECT 1 NOT IN (SELECT 1)", ["="]),
+        # Оператор в имени узла или явный: разбор ничего не подставляет.
+        ("SELECT 1 = ANY (SELECT 1)", []),
+        ("SELECT 1 < ALL (SELECT 1)", []),
+        ("SELECT 1 IN (1, 2)", []),
+        ("SELECT NULLIF(1, 2)", []),
+        ("SELECT 1 IS DISTINCT FROM 2", []),
+        ("SELECT (1, 2) < (3, 4)", []),
+        ("SELECT CASE WHEN true THEN 1 END", []),
+        ("SELECT * FROM a JOIN b ON true", []),
+        ("SELECT EXISTS (SELECT 1)", []),
+        ("SELECT (SELECT 1)", []),
+        ("SELECT ARRAY(SELECT 1)", []),
+    ],
+)
+def test_parser_operators(sql: str, expected: list[str]) -> None:
+    collector = _ParserOperators()
+    collector(pglast.parse_sql(sql)[0].stmt)
+    assert collector.found == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "operators"),
+    [
+        ("CASE a WHEN 1 THEN 2 ELSE 3 END", ((None, "="),)),
+        ("(a BETWEEN 1 AND 2)", ((None, ">="), (None, "<="))),
+    ],
+)
+def test_expression_names_include_parser_operators(text: str, operators: tuple[tuple[None, str], ...]) -> None:
+    names = parse_expression(text)
+    assert names is not None
+    assert names.operators == operators
+
+
+def test_rule_names_include_the_equality_of_join_using() -> None:
+    names = parse_rule_definition(
+        'CREATE RULE "_RETURN" AS ON SELECT TO public.v DO INSTEAD SELECT a.c FROM (a JOIN b USING (c));'
+    )
+    assert names is not None
+    assert names.operators == ((None, "="),)

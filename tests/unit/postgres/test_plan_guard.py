@@ -1267,3 +1267,52 @@ async def test_types_of_non_planned_statements_are_checked_but_their_names_are_n
     await _guard(explain).check("PREPARE p AS SELECT app_agg(id) FROM app_t WHERE id <~> 1")
 
     assert explain.implementation_queries == []
+
+
+_TAG_BOOM = [{"kind": "operator_function", "schema": "secret", "name": "tag_boom", "parent_schema": "public"}]
+
+
+@pytest.mark.parametrize(
+    ("sql", "operators"),
+    [
+        ("SELECT id BETWEEN 1 AND 2 FROM app_t", ["'>='", "'<='"]),
+        ("SELECT id BETWEEN SYMMETRIC 1 AND 2 FROM app_t", ["'>='", "'<='"]),
+        ("SELECT id NOT BETWEEN 1 AND 2 FROM app_t", ["'<'", "'>'"]),
+        ("SELECT id NOT BETWEEN SYMMETRIC 1 AND 2 FROM app_t", ["'<'", "'>'"]),
+        ("SELECT CASE id WHEN 1 THEN 2 END FROM app_t", ["'='"]),
+        ("SELECT * FROM app_t AS a JOIN app_t AS b USING (id)", ["'='"]),
+        ("SELECT * FROM app_t AS a FULL JOIN app_t AS b USING (id)", ["'='"]),
+        ("SELECT * FROM app_t AS a NATURAL JOIN app_t AS b", ["'='"]),
+        ("SELECT id IN (SELECT id FROM app_t) FROM app_t", ["'='"]),
+        ("SELECT id NOT IN (SELECT id FROM app_t) FROM app_t", ["'='"]),
+        ("SELECT (id, id) IN (SELECT id, id FROM app_t) FROM app_t", ["'='"]),
+    ],
+)
+async def test_operator_generated_by_the_parser_is_rejected_before_prepare(sql: str, operators: list[str]) -> None:
+    """Имени оператора в тексте нет — его подставляет разбор Postgres; с константами EXPLAIN выполнил бы его функцию."""
+    explain = _Explain(implementations=_TAG_BOOM)
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.tag_boom'"):
+        await _guard(explain).check(sql)
+
+    [query] = explain.implementation_queries
+    assert all(operator in query for operator in operators)
+    assert "BETWEEN" not in query
+    assert explain.prepared == []
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CASE WHEN true THEN 1 END FROM app_t",
+        "SELECT * FROM app_t AS a JOIN app_t AS b ON true",
+        "SELECT EXISTS (SELECT id FROM app_t) FROM app_t",
+        "SELECT (SELECT id FROM app_t LIMIT 1) FROM app_t",
+    ],
+)
+async def test_constructs_without_an_operator_do_not_look_up_implementations(sql: str) -> None:
+    explain = _Explain(implementations=_TAG_BOOM)
+
+    await _guard(explain).check(sql)
+
+    assert explain.implementation_queries == []

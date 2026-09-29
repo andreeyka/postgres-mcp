@@ -12,6 +12,8 @@ from postgres_fastmcp.shared.enums import AccessMode
 from postgres_fastmcp.shared.errors import PlanAccessError
 
 
+# public.sum(text) поверх secret.agg_step — намеренно: агрегаты и операторы проверяются по имени, все перегрузки
+# сразу, так что в базе этих тестов любой sum(...) под plan_check отклоняется, не только sum(text).
 _SETUP = """
 CREATE SCHEMA IF NOT EXISTS secret;
 CREATE TABLE IF NOT EXISTS secret.accounts (id int, token text);
@@ -84,6 +86,37 @@ async def db_plan_check(
         yield service.view(EffectiveAccess(AccessMode.BASIC, write_mode=True))
     finally:
         await service.close()
+
+
+# Операторы public над app_tag, реализованные secret.tag_boom. Имена =, <, >, <=, >= проверяются по имени, все
+# перегрузки сразу: пока они есть, под plan_check отклоняется любое сравнение, поэтому они живут только в своих тестах.
+_TAG_OPERATORS = """
+DO $$BEGIN CREATE TYPE public.app_tag AS ENUM ('a', 'b'); EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+CREATE OR REPLACE FUNCTION secret.tag_boom(x public.app_tag, y public.app_tag) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.tag_boom was executed'; END$$;
+CREATE OPERATOR public.= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.< (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.> (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.<= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.>= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+"""
+_DROP_TAG_OPERATORS = """
+DROP OPERATOR IF EXISTS public.= (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.< (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.> (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.<= (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.>= (public.app_tag, public.app_tag);
+"""
+
+
+@pytest.fixture
+async def db_tag_operators(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть операторы сравнения app_tag над secret.tag_boom."""
+    await db_full.sql_driver.execute(_DROP_TAG_OPERATORS + _TAG_OPERATORS, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_TAG_OPERATORS, readonly=False)
 
 
 @pytest.mark.asyncio
@@ -351,3 +384,26 @@ async def test_public_aggregate_over_a_foreign_function_is_rejected(db_plan_chec
 async def test_public_operator_over_a_public_function_passes(db_plan_check: DbAccess) -> None:
     rows = await db_plan_check.sql_driver.execute("SELECT (id <~> 2) AS near FROM app_plan_items", readonly=True)
     assert rows[0].cells["near"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'a'::app_tag BETWEEN 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT 'a'::app_tag NOT BETWEEN 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT 'a'::app_tag BETWEEN SYMMETRIC 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT CASE 'a'::app_tag WHEN 'b'::app_tag THEN 1 END AS r",
+        "SELECT * FROM (SELECT 'a'::app_tag AS c) AS x JOIN (SELECT 'b'::app_tag AS c) AS y USING (c)",
+        "SELECT * FROM (SELECT 'a'::app_tag AS c) AS x NATURAL JOIN (SELECT 'b'::app_tag AS c) AS y",
+        "SELECT 'a'::app_tag IN (SELECT 'b'::app_tag) AS r",
+        "SELECT 'a'::app_tag NOT IN (SELECT 'b'::app_tag) AS r",
+    ],
+)
+async def test_operator_generated_by_the_parser_is_checked_by_its_function(
+    db_tag_operators: DbAccess, sql: str
+) -> None:
+    """Имени оператора в тексте нет: BETWEEN — сравнения, CASE x WHEN, USING и NATURAL — равенство, IN (подзапрос)
+    — = ANY. С константами EXPLAIN выполнил бы secret.tag_boom (IN (подзапрос) — при выполнении): отказ раньше."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.tag_boom'"):
+        await db_tag_operators.sql_driver.execute(sql, readonly=True)
