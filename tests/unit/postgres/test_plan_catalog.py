@@ -223,7 +223,28 @@ def test_allowed_implementations_return_argument_defaults_of_any_language() -> N
     ):
         assert fragment in ALLOWED_IMPLEMENTATIONS_SQL
     defaults = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("'argument_defaults'") :]
-    assert "lanname" not in defaults
+    assert "lanname" not in defaults[: defaults.index("UNION ALL")]
+
+
+def test_allowed_implementations_return_non_sql_functions_except_aggregates_and_extension_members() -> None:
+    """Функции public не на sql: язык — в definition; агрегаты (prolang internal) и члены расширений не в счёт."""
+    rows = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("'non_sql_function'") :]
+    rows = rows[: rows.index("UNION ALL")]
+    for fragment in (
+        "l.lanname::pg_catalog.text",
+        "l.lanname OPERATOR(pg_catalog.<>) 'sql'",
+        "p.prokind OPERATOR(pg_catalog.<>) 'a'",
+        "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid "
+        "AND e.objid OPERATOR(pg_catalog.=) p.oid",
+    ):
+        assert fragment in rows
+
+
+def test_allowed_implementations_return_planner_support_functions() -> None:
+    """Опорная функция планировщика (prosupport) — строка type_function; у членов расширений — нет."""
+    assert "p.prokind, p.prosupport" in ALLOWED_IMPLEMENTATIONS_SQL
+    support = ALLOWED_IMPLEMENTATIONS_SQL[ALLOWED_IMPLEMENTATIONS_SQL.index("p.prosupport::pg_catalog.oid") :]
+    assert "e.objid OPERATOR(pg_catalog.=) p.oid" in support[: support.index("UNION ALL")]
 
 
 class _Sources(Visitor):
@@ -337,8 +358,10 @@ def test_type_machinery_trusts_extensions_by_the_owning_object(sql: str) -> None
         "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) k.oid",
     ):
         assert f"e.classid OPERATOR(pg_catalog.=) {owner}" in sql
+    # Строки функций не на sql (запрос реализаций) доверяют члену расширения по самой функции — это не машинерия.
+    machinery = sql[sql.index("type_seed_set(oids)") : sql.rindex("k.conbin IS NOT NULL)")]
     for member in ("'pg_catalog.pg_proc'", "'pg_catalog.pg_operator'"):
-        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in sql
+        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in machinery
 
 
 @_BOTH_QUERIES

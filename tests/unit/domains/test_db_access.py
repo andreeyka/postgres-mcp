@@ -178,6 +178,14 @@ def test_plan_check_reaches_only_basic_executors(access: EffectiveAccess, *, che
     assert (driver._plan_check_schema is not None) is checked
 
 
+@pytest.mark.parametrize("allowed", [False, True])
+def test_non_sql_function_setting_reaches_the_basic_executor(*, allowed: bool) -> None:
+    service = _service(plan_check=True, plan_check_allow_non_sql_functions=allowed)
+    driver = service.view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).sql_driver
+    assert isinstance(driver, SafeSqlExecutor)
+    assert driver._config.plan_check_allow_non_sql_functions is allowed
+
+
 def test_plan_check_is_off_by_default() -> None:
     driver = _service().view(EffectiveAccess(AccessMode.BASIC, write_mode=False)).sql_driver
     assert isinstance(driver, SafeSqlExecutor)

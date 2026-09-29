@@ -1966,3 +1966,75 @@ async def test_public_type_function_is_checked_by_its_body() -> None:
 
     with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
         await _guard(explain).check(_SELECT)
+
+
+def _non_sql(name: str, language: str = "plpgsql") -> dict[str, Any]:
+    """Строка функции public не на языке sql из ALLOWED_IMPLEMENTATIONS_SQL (definition — язык)."""
+    return {"kind": "non_sql_function", "schema": "public", "name": name, "definition": language}
+
+
+@pytest.mark.parametrize(
+    ("rules", "name"),
+    [
+        pytest.param(_VIEW_CALLS, "app_count", id="view-or-trigger-function"),
+        pytest.param([{"kind": "type_function", "schema": "public", "name": "app_count"}], "app_count", id="machinery"),
+        pytest.param(
+            [{"kind": "trigger", "definition": _TRIGGER.format(when="", function="app_count")}],
+            "app_count",
+            id="trigger",
+        ),
+    ],
+)
+async def test_non_sql_public_function_is_rejected_before_explain(rules: list[dict[str, Any]], name: str) -> None:
+    """Функция public на PL/pgSQL, до которой доходит запрос (представление, триггер, машинерия типа): тело не
+    проверить — отказ до EXPLAIN, с языком и тем, как это исправить."""
+    explain = _Explain(rules=rules, implementations={name: [_non_sql(name)]})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", f"public.{name}")
+    message = str(exc_info.value)
+    assert "LANGUAGE plpgsql" in message
+    assert "rewrite it in LANGUAGE sql" in message
+    assert "plan_check_allow_non_sql_functions=true" in message
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_non_sql_function_in_the_agent_sql_is_rejected_before_prepare() -> None:
+    """Оператор public в SQL агента реализован функцией на internal (обёртка встроенной функции)."""
+    explain = _Explain(
+        implementations={
+            "<~>": [{"kind": "operator_function", "schema": "public", "name": "app_near", "parent_schema": "public"}],
+            "app_near": [_non_sql("app_near", "internal")],
+        }
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_near'.*LANGUAGE internal"):
+        await _guard(explain).check("SELECT id <~> 1 FROM app_t")
+
+    assert explain.prepared == []
+
+
+async def test_other_rows_of_a_non_sql_function_are_checked_first() -> None:
+    """Умолчание аргумента функции на PL/pgSQL вызывает secret: отказ называет secret, а не язык — в любом порядке
+    строк ответа."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [_non_sql("app_count"), _defaults("app_count", "secret.api_key()")]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.api_key'"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_non_sql_functions_pass_when_allowed() -> None:
+    """allow_non_sql_functions=True — прежнее поведение: тело не проверяется, остальные строки — как раньше."""
+    explain = _Explain(
+        rules=_VIEW_CALLS,
+        implementations={"app_count": [_non_sql("app_count"), _defaults("app_count", "1")]},
+    )
+
+    await PlanGuard(explain, allowed_schema="public", table_prefix=None, allow_non_sql_functions=True).check(_SELECT)
+
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == [_EXPLAIN + _SELECT]

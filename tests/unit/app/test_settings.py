@@ -428,3 +428,10 @@ def test_plan_check_is_off_by_default_and_read_from_env(monkeypatch: pytest.Monk
     monkeypatch.setenv("MCP_DATABASE_NAME", "d")
     monkeypatch.setenv("MCP_DATABASE_PLAN_CHECK", "true")
     assert DatabaseSettings().plan_check is True
+
+
+def test_non_sql_functions_are_rejected_by_default_and_allowed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert DatabaseConfig(**_CONNECTION).plan_check_allow_non_sql_functions is False
+    monkeypatch.setenv("MCP_DATABASE_NAME", "d")
+    monkeypatch.setenv("MCP_DATABASE_PLAN_CHECK_ALLOW_NON_SQL_FUNCTIONS", "true")
+    assert DatabaseSettings().plan_check_allow_non_sql_functions is True

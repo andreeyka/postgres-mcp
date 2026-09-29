@@ -523,6 +523,28 @@ DEFINITION_DEPENDENCIES_SQL = (
     "FROM machinery m"
 )
 
+# Функции allowed_schema не на языке sql (plpgsql, plpython, c, internal и любой другой): их тело не проверить —
+# PL/pgSQL выполняет динамический SQL (EXECUTE), C-функция — любой код, функция LANGUAGE internal — любую встроенную
+# функцию под своим именем (AS 'show_config_by_name' — это current_setting). Строка non_sql_function, definition — имя
+# языка; решает PlanGuard (allow_non_sql_functions). Не в счёт агрегаты (prokind 'a': prolang у них internal, их
+# опорные функции — строки aggregate_function) и члены расширений (pg_depend, deptype 'e'): код расширения доверен,
+# как машинерия его типов. Проверяется каждая перегрузка с именем, как у тел и умолчаний.
+#
+# type_function — опорная функция планировщика (prosupport, CREATE FUNCTION ... SUPPORT): её вызывает планировщик
+# для каждого вызова функции (SupportRequestSimplify, оценки строк и селективности); правило — как у машинерии типов.
+# У функции — члена расширения не проверяется (доверие по владельцу).
+_NON_SQL_FUNCTION_ROWS = (
+    "SELECT 'non_sql_function', {schema}::pg_catalog.name, p.proname, NULL, l.lanname::pg_catalog.text, NULL, NULL "  # noqa: S608
+    "FROM functions p JOIN pg_catalog.pg_language l ON l.oid OPERATOR(pg_catalog.=) p.prolang "
+    "WHERE l.lanname OPERATOR(pg_catalog.<>) 'sql' AND p.prokind OPERATOR(pg_catalog.<>) 'a' "
+    f"AND {_not_extension_member(_PG_PROC, 'p.oid')} "
+    "UNION ALL "
+    "SELECT 'type_function', fn.nspname, f.proname, NULL, NULL, NULL, NULL FROM functions p "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) p.prosupport::pg_catalog.oid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
+    f"WHERE {_not_extension_member(_PG_PROC, 'p.oid')}"
+)
+
 # Реализации операторов и функций allowed_schema по именам. План и SQL агента печатают их без схемы и без типов
 # аргументов, поэтому берутся все перегрузки с этим именем. Строки — того же вида, что у DEFINITION_DEPENDENCIES_SQL
 # (их проверяет тот же разбор): operator_function — функция оператора (oprcode); aggregate_function — опорная
@@ -535,7 +557,8 @@ DEFINITION_DEPENDENCIES_SQL = (
 # селективности (oprrest, oprjoin) этих операторов: их вызывает планировщик. Плюс строки машинерии типов
 # (_type_machinery) от семян seeds: типы ({types}: из SQL агента и из текстов определений — тел, умолчаний, CHECK
 # доменов), колонки и строковые типы отношений ({relations}) SQL агента, типы аргументов и результатов найденных
-# функций и операторов, типы состояния агрегатов.
+# функций и операторов, типы состояния агрегатов. Плюс _NON_SQL_FUNCTION_ROWS: функции не на sql и опорные функции
+# планировщика.
 ALLOWED_IMPLEMENTATIONS_SQL = (
     "WITH RECURSIVE operators AS ("  # noqa: S608
     "SELECT o.oprcode, o.oprrest, o.oprjoin, o.oprleft, o.oprright, o.oprresult FROM pg_catalog.pg_operator o "
@@ -543,7 +566,7 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND o.oprname OPERATOR(pg_catalog.=) ANY ({operators})"
     "), functions AS ("
     "SELECT p.oid, p.proname, p.prolang, p.prosrc, p.prosqlbody IS NOT NULL AS atomic, p.proconfig, "
-    "p.proargdefaults, p.prorettype, p.proargtypes, p.proallargtypes "
+    "p.proargdefaults, p.prorettype, p.proargtypes, p.proallargtypes, p.prokind, p.prosupport "
     "FROM pg_catalog.pg_proc p "
     "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
     "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND p.proname OPERATOR(pg_catalog.=) ANY ({functions})"
@@ -601,7 +624,7 @@ ALLOWED_IMPLEMENTATIONS_SQL = (
     "CROSS JOIN LATERAL (VALUES (o.oprrest), (o.oprjoin)) AS s(fn) "
     "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) s.fn::pg_catalog.oid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
-    "UNION ALL "
+    "UNION ALL " + _NON_SQL_FUNCTION_ROWS + " UNION ALL "
     "SELECT DISTINCT m.kind, m.schema, m.name, m.parent_schema, m.definition, NULL::pg_catalog.text[], m.origin "
     "FROM machinery m"
 )

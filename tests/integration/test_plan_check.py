@@ -126,6 +126,27 @@ async def db_plan_check(
         await service.close()
 
 
+@pytest.fixture
+async def db_plan_check_non_sql(
+    test_postgres_connection_string: tuple[str, str], db_plan_check: DbAccess
+) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check с plan_check_allow_non_sql_functions=true: функции public не на sql проходят непроверенными."""
+    connection_string, _ = test_postgres_connection_string
+    config = DatabaseConfig.from_uri(
+        connection_string,
+        access_mode=AccessMode.BASIC,
+        write_mode=True,
+        table_prefix="app_",
+        plan_check=True,
+        plan_check_allow_non_sql_functions=True,
+    )
+    service = DbAccessService(config)
+    try:
+        yield service.view(EffectiveAccess(AccessMode.BASIC, write_mode=True))
+    finally:
+        await service.close()
+
+
 # Операторы public над app_tag, реализованные secret.tag_boom. Имена =, <, >, <=, >= проверяются по имени, все
 # перегрузки сразу: пока они есть, под plan_check отклоняется любое сравнение, поэтому они живут только в своих тестах.
 _TAG_OPERATORS = """
@@ -264,9 +285,10 @@ async def test_view_calling_a_builtin_outside_basic_is_rejected_with_plan_check(
 
 
 @pytest.mark.asyncio
-async def test_views_with_allowed_expressions_return_data(db_plan_check: DbAccess) -> None:
-    lower_rows = await db_plan_check.sql_driver.execute("SELECT l FROM app_expr_lower_view", readonly=True)
-    public_rows = await db_plan_check.sql_driver.execute("SELECT d FROM app_expr_public_fn_view", readonly=True)
+async def test_views_with_allowed_expressions_return_data(db_plan_check_non_sql: DbAccess) -> None:
+    """app_double — PL/pgSQL: проходит только с plan_check_allow_non_sql_functions=true."""
+    lower_rows = await db_plan_check_non_sql.sql_driver.execute("SELECT l FROM app_expr_lower_view", readonly=True)
+    public_rows = await db_plan_check_non_sql.sql_driver.execute("SELECT d FROM app_expr_public_fn_view", readonly=True)
     assert "1" in [row.cells["l"] for row in lower_rows]
     assert 2 in [row.cells["d"] for row in public_rows]
 
@@ -429,8 +451,11 @@ async def test_public_aggregate_over_a_foreign_function_is_rejected(db_plan_chec
 
 
 @pytest.mark.asyncio
-async def test_public_operator_over_a_public_function_passes(db_plan_check: DbAccess) -> None:
-    rows = await db_plan_check.sql_driver.execute("SELECT (id <~> 2) AS near FROM app_plan_items", readonly=True)
+async def test_public_operator_over_a_public_function_passes(db_plan_check_non_sql: DbAccess) -> None:
+    """app_close_to — PL/pgSQL: проходит только с plan_check_allow_non_sql_functions=true."""
+    rows = await db_plan_check_non_sql.sql_driver.execute(
+        "SELECT (id <~> 2) AS near FROM app_plan_items", readonly=True
+    )
     assert rows[0].cells["near"] is True
 
 
@@ -947,12 +972,13 @@ def _typed_chain(depth: int) -> str:
 
 
 @pytest.fixture
-async def db_typed_chains(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
-    """db_plan_check, пока в public есть цепочки SQL-функций глубины 3, 5 и 6 с типом app_ic_okt в самом глубоком теле."""
+async def db_typed_chains(db_plan_check_non_sql: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check_non_sql, пока в public есть цепочки SQL-функций глубины 3, 5 и 6 с типом app_ic_okt в самом
+    глубоком теле. Ввод-вывод app_ic_okt — LANGUAGE internal: без plan_check_allow_non_sql_functions тип отклонялся бы."""
     setup = _TYPED_CHAIN_TYPE + "\n".join(_typed_chain(depth) for depth in (3, 5, 6))
     await db_full.sql_driver.execute(_DROP_TYPED_CHAINS + setup, readonly=False)
     try:
-        yield db_plan_check
+        yield db_plan_check_non_sql
     finally:
         await db_full.sql_driver.execute(_DROP_TYPED_CHAINS, readonly=False)
 
@@ -963,6 +989,15 @@ async def test_type_in_the_deepest_body_does_not_cost_depth(db_typed_chains: DbA
     """Семя типа и тела функций его класса операторов идут кругами, которые глубину определений не тратят."""
     rows = await db_typed_chains.sql_driver.execute(f"SELECT v FROM app_ic_chain{depth}_view", readonly=True)
     assert [row.cells["v"] for row in rows] == [2]
+
+
+@pytest.mark.asyncio
+async def test_type_with_non_sql_io_functions_is_rejected_by_default(
+    db_typed_chains: DbAccess, db_plan_check: DbAccess
+) -> None:
+    """По умолчанию ввод-вывод app_ic_okt (обёртки LANGUAGE internal в public) — функции не на sql: отказ."""
+    with pytest.raises(PlanAccessError, match=r"function 'public\.app_ic_okt_(in|out)'.*LANGUAGE internal"):
+        await db_plan_check.sql_driver.execute("SELECT v FROM app_ic_chain3_view", readonly=True)
 
 
 @pytest.mark.asyncio
@@ -1023,3 +1058,125 @@ async def test_dba_cast_over_an_extension_function_is_checked(db_extension_type:
 
     with pytest.raises(PlanAccessError, match=r"function 'ic_ext\.citext'"):
         await db_extension_type.sql_driver.execute("SELECT id, c FROM app_ic_cit_t ORDER BY c", readonly=True)
+
+
+# Функции public не на языке sql (PL/pgSQL, internal): тело не проверить, по умолчанию — отказ. Бросающие функции
+# доказывают «отклонено до выполнения» (EXPLAIN свернул бы IMMUTABLE-вызов, INSERT выполнил бы триггер), чтение
+# secret.accounts — «отклонено, хотя без проверки запрос отдал бы секрет». Агрегат (prolang internal) и функция
+# расширения (moddatetime, C) не в счёт.
+_DROP_NON_SQL = """
+DROP VIEW IF EXISTS public.app_ns_boom_view, public.app_ns_leak_view, public.app_ns_setting_view,
+    public.app_ns_supported_view, public.app_ns_agg_view;
+DROP TABLE IF EXISTS public.app_ns_notes, public.app_ns_trg, public.app_ns_stamped;
+DROP OPERATOR IF EXISTS public.#!# (int, int);
+DROP AGGREGATE IF EXISTS public.app_ns_agg(text);
+DROP TYPE IF EXISTS public.app_ns_e CASCADE;
+DROP FUNCTION IF EXISTS public.app_ns_boom(), public.app_ns_leak(), public.app_ns_fill_note(), public.app_ns_trg_boom(),
+    public.app_ns_setting(text), public.app_ns_opf(int, int), public.app_ns_supported(int), public.app_ns_cat(text, text),
+    secret.ns_support(internal);
+DROP EXTENSION IF EXISTS moddatetime;
+"""
+_NON_SQL = """
+CREATE FUNCTION public.app_ns_boom() RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'public.app_ns_boom was executed'; END$$;
+CREATE VIEW public.app_ns_boom_view AS SELECT public.app_ns_boom() AS b;
+CREATE FUNCTION public.app_ns_leak() RETURNS text
+    LANGUAGE plpgsql STABLE AS $$BEGIN RETURN (SELECT token FROM secret.accounts LIMIT 1); END$$;
+CREATE VIEW public.app_ns_leak_view AS SELECT public.app_ns_leak() AS t;
+CREATE TABLE public.app_ns_notes (id int, note text);
+CREATE FUNCTION public.app_ns_fill_note() RETURNS trigger LANGUAGE plpgsql
+    AS $$BEGIN NEW.note := (SELECT token FROM secret.accounts LIMIT 1); RETURN NEW; END$$;
+CREATE TRIGGER app_ns_notes_fill BEFORE INSERT ON public.app_ns_notes
+    FOR EACH ROW EXECUTE FUNCTION public.app_ns_fill_note();
+CREATE TABLE public.app_ns_trg (id int);
+CREATE FUNCTION public.app_ns_trg_boom() RETURNS trigger
+    LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'public.app_ns_trg_boom was executed'; END$$;
+CREATE TRIGGER app_ns_trg_boom BEFORE INSERT ON public.app_ns_trg
+    FOR EACH ROW EXECUTE FUNCTION public.app_ns_trg_boom();
+CREATE FUNCTION public.app_ns_setting(text) RETURNS text LANGUAGE internal STABLE STRICT AS 'show_config_by_name';
+CREATE VIEW public.app_ns_setting_view AS SELECT public.app_ns_setting('data_directory') AS s;
+CREATE FUNCTION public.app_ns_opf(a int, b int) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'public.app_ns_opf was executed'; END$$;
+CREATE OPERATOR public.#!# (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_ns_opf);
+CREATE TYPE public.app_ns_e AS ENUM ('a');
+CREATE FUNCTION public.app_ns_to_e(n int) RETURNS public.app_ns_e
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'public.app_ns_to_e was executed'; END$$;
+CREATE CAST (int AS public.app_ns_e) WITH FUNCTION public.app_ns_to_e(int);
+CREATE FUNCTION secret.ns_support(internal) RETURNS internal LANGUAGE internal AS 'textlike_support';
+CREATE FUNCTION public.app_ns_supported(a int) RETURNS int
+    LANGUAGE sql IMMUTABLE SUPPORT secret.ns_support AS 'SELECT a';
+CREATE VIEW public.app_ns_supported_view AS SELECT public.app_ns_supported(id) AS v FROM public.app_plan_items;
+CREATE FUNCTION public.app_ns_cat(s text, v text) RETURNS text LANGUAGE sql IMMUTABLE AS $$SELECT coalesce(s, '') || v$$;
+CREATE AGGREGATE public.app_ns_agg(text) (SFUNC = public.app_ns_cat, STYPE = text);
+CREATE VIEW public.app_ns_agg_view AS SELECT public.app_ns_agg(id::text) AS c FROM public.app_plan_items;
+CREATE EXTENSION moddatetime;
+CREATE TABLE public.app_ns_stamped (id int, updated_at timestamp);
+CREATE TRIGGER app_ns_stamped_mod BEFORE UPDATE ON public.app_ns_stamped
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+INSERT INTO public.app_ns_stamped VALUES (1, NULL);
+"""
+
+
+@pytest.fixture
+async def db_non_sql(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть функции не на sql: бросающие, читающие secret.accounts, обёртка internal."""
+    await db_full.sql_driver.execute(_DROP_NON_SQL + _NON_SQL, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_NON_SQL, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sql", "function", "language"),
+    [
+        pytest.param("SELECT b FROM app_ns_boom_view", "app_ns_boom", "plpgsql", id="folded-in-a-view"),
+        pytest.param("INSERT INTO app_ns_trg (id) VALUES (1)", "app_ns_trg_boom", "plpgsql", id="trigger-function"),
+        pytest.param("SELECT 1 #!# 2 AS b", "app_ns_opf", "plpgsql", id="operator-function"),
+        pytest.param("SELECT 1::app_ns_e AS e", "app_ns_to_e", "plpgsql", id="cast-function"),
+        pytest.param("SELECT t FROM app_ns_leak_view", "app_ns_leak", "plpgsql", id="secret-read-in-a-view"),
+        pytest.param(
+            "INSERT INTO app_ns_notes (id) VALUES (1) RETURNING note",
+            "app_ns_fill_note",
+            "plpgsql",
+            id="secret-read-in-a-trigger",
+        ),
+        pytest.param("SELECT s FROM app_ns_setting_view", "app_ns_setting", "internal", id="internal-builtin-wrapper"),
+    ],
+)
+async def test_non_sql_public_function_is_rejected_before_it_runs(
+    db_non_sql: DbAccess, sql: str, function: str, language: str
+) -> None:
+    """Функция public не на sql, до которой доходит запрос (представление, триггер цели DML, оператор, приведение):
+    без проверки EXPLAIN или выполнение вызвали бы её — бросающая дала бы своё исключение, читающая secret.accounts
+    отдала бы секрет, обёртка internal над show_config_by_name — настройку сервера в обход списка basic."""
+    with pytest.raises(PlanAccessError, match=rf"function 'public\.{function}'.*LANGUAGE {language}"):
+        await db_non_sql.sql_driver.execute(sql, readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_planner_support_function_of_a_public_function_is_checked(db_non_sql: DbAccess) -> None:
+    """SUPPORT secret.ns_support у SQL-функции public: планировщик вызвал бы её для каждого вызова функции."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.ns_support'"):
+        await db_non_sql.sql_driver.execute("SELECT v FROM app_ns_supported_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_aggregates_and_extension_trigger_functions_pass(db_non_sql: DbAccess) -> None:
+    """Агрегат public (prolang internal) проверяется по опорным функциям; moddatetime — функция расширения (C)."""
+    aggregated = await db_non_sql.sql_driver.execute("SELECT c FROM app_ns_agg_view", readonly=True)
+    updated = await db_non_sql.sql_driver.execute(
+        "UPDATE app_ns_stamped SET id = 2 WHERE id = 1 RETURNING updated_at", readonly=False
+    )
+    assert aggregated[0].cells["c"]
+    assert updated[0].cells["updated_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_non_sql_functions_run_unchecked_when_allowed(
+    db_non_sql: DbAccess, db_plan_check_non_sql: DbAccess
+) -> None:
+    """plan_check_allow_non_sql_functions=true — прежнее поведение и его цена: тело PL/pgSQL читает secret.accounts."""
+    rows = await db_plan_check_non_sql.sql_driver.execute("SELECT t FROM app_ns_leak_view", readonly=True)
+    assert rows[0].cells["t"] == "top-secret"

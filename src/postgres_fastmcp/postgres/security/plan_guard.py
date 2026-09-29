@@ -19,6 +19,9 @@ allowed_schema любого языка (планировщик подставл�
 и типы, названные в любом проверяемом тексте (тело SQL-функции, умолчание аргумента, CHECK домена): приведение
 (1)::app_e печатается без имени функции. Каждое семя спрашивается за проверку один раз. Семена и всё, что из них
 выросло (функции машинерии, их тела), глубину определений не тратят; все круги ограничены _MAX_CATALOG_ROUNDS.
+Функция allowed_schema не на языке sql (PL/pgSQL, PL/Python, C, internal; не агрегат и не член расширения), до которой
+доходит оператор по любому из путей выше, — отказ (allow_non_sql_functions=False): её тело не проверить. Решение —
+в том же разборе строк реализаций, что тела и умолчания, после остальных строк ответа.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
@@ -162,6 +165,8 @@ _MAX_CATALOG_ROUNDS = 4 * _MAX_DEFINITION_DEPTH
 _FUNCTION_TEXT_KINDS = frozenset({"sql_body", "sql_atomic_body", "argument_defaults"})
 # origin строки машинерии типа (plan_catalog._TYPE_ORIGIN); другой непустой origin — текст двоичного приведения.
 _TYPE_ORIGIN = "type"
+# Вид строки реализаций: функция allowed_schema не на языке sql (plan_catalog._NON_SQL_FUNCTION_ROWS).
+_NON_SQL_FUNCTION_KIND = "non_sql_function"
 
 
 def _option_enabled(arg: Node | None) -> bool:
@@ -449,6 +454,7 @@ class PlanGuard:
         allowed_schema: str,
         table_prefix: str | None,
         builtin_types: BuiltinTypeNames | None = None,
+        allow_non_sql_functions: bool = False,
     ) -> None:
         """Инициализация с исполнителем транзакции и правилами basic.
 
@@ -458,12 +464,15 @@ class PlanGuard:
             allowed_schema: Единственная схема отношений плана (public).
             table_prefix: Если задан, имена отношений плана должны начинаться с него (без учёта регистра).
             builtin_types: Кэш имён типов pg_catalog; None — свой на эту проверку.
+            allow_non_sql_functions: Пропускать функции allowed_schema не на языке sql (их тела выполняются
+                непроверенными); False — отказ.
         """
         self._run = run
         self._allowed_schema = allowed_schema
         self._table_prefix = table_prefix.lower() if table_prefix else None
         self._prefix_for_hint = table_prefix or None
         self._builtin_types = builtin_types or BuiltinTypeNames()
+        self._allow_non_sql_functions = allow_non_sql_functions
         self._prepared_tag = secrets.token_hex(8)
         self._prepared_count = 0
         # Строки правил, уже проверенные в этой проверке: второе чтение после EXPLAIN их не повторяет.
@@ -936,6 +945,13 @@ class PlanGuard:
         и такое имя — встроенный тип, его машинерию не проверяют (так ::text в выражении плана не стоит запроса).
         Реализации — из current (глубина) и free (машинерия): тело функции, найденной только машинерией, остаётся
         несчитаемым.
+
+        Функция не на языке sql (строка non_sql_function) отклоняется после остальных строк ответа: отказ по функции
+        чужой схемы в умолчании или машинерии той же функции точнее и не зависит от порядка строк.
+
+        Raises:
+            PlanAccessError: Строка нарушает правила basic или функция не на sql при allow_non_sql_functions=False.
+            PlanUnverifiableError: Ответа нет или строку не проверить.
         """
         types = await self._type_seeds(free.footprint_types)
         relations = [name for name in free.footprint_relations if (RELATION_KIND, name) not in self._seeded]
@@ -961,8 +977,21 @@ class PlanGuard:
         )
         if rows is None:
             raise PlanUnverifiableError(rules=True)
+        non_sql: list[dict[str, Any]] = []
         for row in rows:
-            self._check_rule_row(row.cells, pending, free_functions)
+            if row.cells.get("kind") == _NON_SQL_FUNCTION_KIND:
+                non_sql.append(row.cells)
+            else:
+                self._check_rule_row(row.cells, pending, free_functions)
+        if non_sql and not self._allow_non_sql_functions:
+            cells = non_sql[0]
+            raise PlanAccessError(
+                FUNCTION_KIND,
+                f"{cells.get('schema')}.{cells.get('name')}",
+                allowed_schema=self._allowed_schema,
+                table_prefix=self._prefix_for_hint,
+                language=str(cells.get("definition")),
+            )
 
     async def _type_seeds(self, types: dict[tuple[str | None, str], None]) -> list[str]:
         """Новые семена-типы для to_regtype: без уже спрошенных и без имён без схемы из кэша типов pg_catalog."""

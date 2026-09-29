@@ -383,6 +383,25 @@ class TestSafeSqlExecutorPlanCheck:
 
         delegate.execute.assert_not_awaited()
 
+    @pytest.mark.parametrize("allowed", [False, True])
+    async def test_non_sql_function_setting_reaches_the_plan_guard(self, *, allowed: bool) -> None:
+        delegate = _precheck_delegate(_plan_rows("public", "app_t"))
+        config = SafeSqlConfig(
+            query_tag="t",
+            timeout=5,
+            allowed_schema="public",
+            read_only=False,
+            plan_check=True,
+            plan_check_allow_non_sql_functions=allowed,
+        )
+        validator = QueryValidator(read_only=False, allowed_schema="public")
+
+        with patch("postgres_fastmcp.postgres.security.driver.PlanGuard") as guard:
+            guard.return_value.check = AsyncMock()
+            await _make_executor(delegate, validator=validator, config=config).execute("SELECT * FROM app_t")
+
+        assert guard.call_args.kwargs["allow_non_sql_functions"] is allowed
+
     async def test_plan_check_off_keeps_the_prefixed_single_call(self) -> None:
         delegate = MagicMock()
         delegate.execute = AsyncMock(return_value=[])

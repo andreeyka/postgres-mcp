@@ -165,6 +165,14 @@ class DatabaseConfig(BaseModel):
             "или табличные функции чужих схем. Лишний запрос к БД на каждый оператор. Для full игнорируется."
         ),
     )
+    plan_check_allow_non_sql_functions: bool = Field(
+        default=False,
+        description=(
+            "Только вместе с plan_check: пропускать функции public не на языке sql (PL/pgSQL, PL/Python, C, internal; "
+            "кроме функций расширений), до которых доходит запрос. Их тела plan_check не проверяет, поэтому по "
+            "умолчанию (False) такой запрос отклоняется; True — прежнее поведение: тела выполняются непроверенными."
+        ),
+    )
     query_tag: str | None = Field(
         default=None,
         description=(

@@ -55,6 +55,8 @@ class SafeSqlConfig:
         read_only: Если True, только операторы чтения; если False, разрешен DML.
         table_prefix: Если задан вместе с allowed_schema, только таблицы с этим префиксом.
         plan_check: Проверять план запроса перед выполнением (PlanGuard); действует только вместе с allowed_schema.
+        plan_check_allow_non_sql_functions: С plan_check пропускать функции allowed_schema не на языке sql
+            (PL/pgSQL, C, internal): их тела выполняются непроверенными. False — отказ.
         client_timeout_grace: Запас в секундах для клиентской страховки поверх statement_timeout.
             Обычно срабатывает Postgres; клиентский таймаут ловит зависшее соединение.
     """
@@ -65,6 +67,7 @@ class SafeSqlConfig:
     read_only: bool = True
     table_prefix: str | None = None
     plan_check: bool = False
+    plan_check_allow_non_sql_functions: bool = False
     client_timeout_grace: float = CLIENT_TIMEOUT_GRACE_SECONDS
 
 
@@ -183,6 +186,7 @@ class SafeSqlExecutor:
         tag = self._config.query_tag
         table_prefix = self._config.table_prefix
         builtin_types = self._builtin_types
+        allow_non_sql_functions = self._config.plan_check_allow_non_sql_functions
 
         async def precheck(runner: StatementRunner) -> None:
             if settings:
@@ -194,7 +198,11 @@ class SafeSqlExecutor:
                 return await runner(f"/* {tag} */ {sql}")
 
             guard = PlanGuard(
-                run, allowed_schema=allowed_schema, table_prefix=table_prefix, builtin_types=builtin_types
+                run,
+                allowed_schema=allowed_schema,
+                table_prefix=table_prefix,
+                builtin_types=builtin_types,
+                allow_non_sql_functions=allow_non_sql_functions,
             )
             await guard.check(query)
 

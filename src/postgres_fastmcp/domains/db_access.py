@@ -35,6 +35,7 @@ class DatabaseConfigPort(Protocol):
     safe_sql_timeout: int
     table_prefix: str | None
     plan_check: bool
+    plan_check_allow_non_sql_functions: bool
     query_tag: str | None
 
     @property
@@ -180,6 +181,7 @@ class DbAccessService:
                 query_tag=self._config.query_tag or DEFAULT_QUERY_TAG,
                 table_prefix=self._config.table_prefix if basic else None,
                 plan_check=basic and self._config.plan_check,
+                plan_check_allow_non_sql_functions=self._config.plan_check_allow_non_sql_functions,
             )
             validator = QueryValidator(
                 allowed_schema=safe_config.allowed_schema,
@@ -189,7 +191,8 @@ class DbAccessService:
             )
             logger.debug(
                 "Using SafeSqlExecutor (access_mode=%s, write_mode=%s, allowed_schema=%s, "
-                "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s, plan_check=%s)",
+                "read_only=%s, allow_explain_analyze=%s, timeout=%ss, table_prefix=%s, plan_check=%s, "
+                "plan_check_allow_non_sql_functions=%s)",
                 access.access_mode,
                 access.write_mode,
                 safe_config.allowed_schema,
@@ -198,6 +201,7 @@ class DbAccessService:
                 safe_config.timeout,
                 safe_config.table_prefix,
                 safe_config.plan_check,
+                safe_config.plan_check_allow_non_sql_functions,
             )
             executor = SafeSqlExecutor(
                 delegate=base, validator=validator, config=safe_config, builtin_types=self._builtin_types
