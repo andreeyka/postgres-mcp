@@ -454,3 +454,88 @@ async def test_select_from_a_table_with_a_foreign_trigger_passes(db_plan_check: 
     """SELECT держит AccessShareLock: путь записи не срабатывает и не проверяется."""
     rows = await db_plan_check.sql_driver.execute("SELECT count(*) AS n FROM app_audited", readonly=True)
     assert rows[0].cells["n"] >= 0
+
+
+# Определения на secret.boom_int(): IMMUTABLE без аргументов — планировщик сворачивает вызов, то есть выполняет
+# его при EXPLAIN. Объекты создаются, пока функция возвращает 0 (CREATE INDEX и PARTITION OF сворачивают выражения
+# сами), потом она заменяется на RAISE; после теста — обратно и всё удаляется: CHECK, индекс и политика
+# отклоняли бы любое чтение этих таблиц.
+_BOOM_INT_RETURNS = """
+CREATE OR REPLACE FUNCTION secret.boom_int() RETURNS int LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RETURN 0; END$$;
+"""
+_BOOM_INT_RAISES = """
+CREATE OR REPLACE FUNCTION secret.boom_int() RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.boom_int was executed'; END$$;
+"""
+_DROP_BOOM_DEFINITIONS = """
+DROP TABLE IF EXISTS public.app_boom_dom_t, public.app_boom_def_t, public.app_boom_pk, public.app_boom_child,
+    public.app_boom_parent, public.app_boom_pp, public.app_boom_rls, public.app_boom_ip, public.app_boom_xi,
+    public.app_boom_st CASCADE;
+DROP DOMAIN IF EXISTS public.app_boom_text;
+DROP FUNCTION IF EXISTS public.app_pass_row();
+"""
+_BOOM_DEFINITIONS = """
+CREATE DOMAIN public.app_boom_text AS text DEFAULT (secret.boom_int())::text;
+CREATE TABLE public.app_boom_dom_t (id int, s public.app_boom_text);
+CREATE TABLE public.app_boom_def_t (id int, s int DEFAULT secret.boom_int());
+CREATE TABLE public.app_boom_pk (id int) PARTITION BY RANGE ((id + secret.boom_int()));
+CREATE TABLE public.app_boom_pk1 PARTITION OF public.app_boom_pk FOR VALUES FROM (MINVALUE) TO (MAXVALUE);
+CREATE TABLE public.app_boom_parent (id int PRIMARY KEY);
+CREATE TABLE public.app_boom_child (
+    pid int REFERENCES public.app_boom_parent ON DELETE SET NULL, CHECK (pid > secret.boom_int())
+);
+INSERT INTO public.app_boom_parent VALUES (1);
+INSERT INTO public.app_boom_child VALUES (1);
+CREATE FUNCTION public.app_pass_row() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$;
+CREATE TABLE public.app_boom_pp (id int) PARTITION BY RANGE (id);
+CREATE TABLE public.app_boom_pp1 PARTITION OF public.app_boom_pp FOR VALUES FROM (MINVALUE) TO (MAXVALUE);
+CREATE TRIGGER app_boom_pp1_when BEFORE INSERT ON public.app_boom_pp1
+    FOR EACH ROW WHEN (NEW.id > secret.boom_int()) EXECUTE FUNCTION public.app_pass_row();
+CREATE TABLE public.app_boom_rls (id int);
+ALTER TABLE public.app_boom_rls ENABLE ROW LEVEL SECURITY;
+CREATE POLICY app_boom_rls_read ON public.app_boom_rls FOR SELECT USING (id > secret.boom_int());
+CREATE TABLE public.app_boom_ip (id int);
+CREATE TABLE public.app_boom_ic (CHECK (id > secret.boom_int())) INHERITS (public.app_boom_ip);
+CREATE TABLE public.app_boom_xi (id int);
+CREATE INDEX app_boom_xi_expr ON public.app_boom_xi ((id + secret.boom_int()));
+CREATE TABLE public.app_boom_st (id int, v int);
+CREATE STATISTICS public.app_boom_st_expr ON (id + secret.boom_int()), v FROM public.app_boom_st;
+"""
+
+
+@pytest.fixture
+async def db_boom_definitions(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть таблицы, чьи определения вызывают бросающую secret.boom_int()."""
+    await db_full.sql_driver.execute(
+        _BOOM_INT_RETURNS + _DROP_BOOM_DEFINITIONS + _BOOM_DEFINITIONS + _BOOM_INT_RAISES, readonly=False
+    )
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_BOOM_INT_RETURNS + _DROP_BOOM_DEFINITIONS, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        pytest.param("INSERT INTO app_boom_dom_t (id) VALUES (1)", id="domain-default"),
+        pytest.param("INSERT INTO app_boom_def_t (id) VALUES (1)", id="column-default"),
+        pytest.param("INSERT INTO app_boom_pk (id) VALUES (1)", id="partition-key-insert"),
+        pytest.param("SELECT * FROM app_boom_pk WHERE id = 1", id="partition-key-select"),
+        pytest.param("DELETE FROM app_boom_parent WHERE id = 1", id="cascade-child-check"),
+        pytest.param("INSERT INTO app_boom_pp (id) VALUES (1)", id="partition-trigger"),
+        pytest.param("SELECT * FROM app_boom_rls WHERE id = 1", id="policy-select"),
+        pytest.param("SELECT * FROM app_boom_ip WHERE id = 1", id="inheritance-child-check-select"),
+        pytest.param("SELECT * FROM app_boom_xi WHERE id = 1", id="expression-index-select"),
+        pytest.param("SELECT * FROM app_boom_st WHERE id = 1", id="statistics-select"),
+    ],
+)
+async def test_definition_calling_a_foreign_function_is_rejected_before_it_runs(
+    db_boom_definitions: DbAccess, sql: str
+) -> None:
+    """Умолчание домена и колонки, ключ секционирования, CHECK каскадной таблицы, триггер секции, политика, CHECK
+    наследника, индекс и статистика: EXPLAIN (или выполнение) вызвал бы secret.boom_int() и получил бы его
+    исключение. Отказ по функции приходит раньше — определения читаются после PREPARE, до EXPLAIN."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.boom_int'"):
+        await db_boom_definitions.sql_driver.execute(sql, readonly=False)

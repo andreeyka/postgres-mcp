@@ -1341,6 +1341,33 @@ async def test_retry_text_that_does_not_parse_is_unverifiable_without_sending_it
     assert explain.rule_queries == []
 
 
+@pytest.mark.parametrize(
+    ("row", "name"),
+    [
+        ({"kind": "check", "definition": "(id > secret.boomi())"}, "secret.boomi"),
+        (
+            {"kind": "index", "definition": "CREATE INDEX i ON public.app_t USING btree (((id + secret.boomi())))"},
+            "secret.boomi",
+        ),
+        ({"kind": "partition", "definition": "RANGE (((id + secret.boomi())))"}, "secret.boomi"),
+        ({"kind": "partition", "definition": "HASH (id secret.hash_ops)"}, "secret.hash_ops"),
+        ({"kind": "statistics", "definition": "(id + secret.boomi())"}, "secret.boomi"),
+        ({"kind": "policy", "definition": "(id > secret.boomi())"}, "secret.boomi"),
+    ],
+)
+async def test_read_path_definition_outside_basic_rejects_a_select_before_explain(
+    row: dict[str, Any], name: str
+) -> None:
+    """CHECK, индекс, ключ секционирования, статистика и политика сворачиваются и при планировании SELECT."""
+    explain = _Explain(rules=[row])
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check("SELECT * FROM app_t WHERE id = 1")
+
+    assert exc_info.value.qualified_name == name
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
 _INSERT = "INSERT INTO app_t (id) VALUES (1)"
 _TRIGGER = "CREATE TRIGGER t BEFORE INSERT ON public.app_t FOR EACH ROW {when}EXECUTE FUNCTION {function}()"
 
@@ -1428,6 +1455,8 @@ async def test_write_path_definition_outside_basic_is_rejected_before_explain(
             "definition": "((VALUE)::text = ANY ((ARRAY['a'::character varying, 'b'::character varying])::text[]))",
         },
         {"kind": "policy", "definition": "(owner = CURRENT_USER)"},
+        {"kind": "partition", "definition": "LIST (lower(v))"},
+        {"kind": "statistics", "definition": "(id + 1)"},
     ],
 )
 async def test_allowed_write_path_definitions_pass(row: dict[str, Any]) -> None:
@@ -1445,6 +1474,9 @@ async def test_allowed_write_path_definitions_pass(row: dict[str, Any]) -> None:
         {"kind": "index", "definition": None},
         {"kind": "check", "definition": "(id > 0"},
         {"kind": "policy", "definition": "(id IN ( SELECT 1 FROM db.s.t))"},
+        {"kind": "partition", "definition": "RANGE (id) WITH (fillfactor = 1)"},
+        {"kind": "partition", "definition": None},
+        {"kind": "statistics", "definition": "(id + "},
     ],
 )
 async def test_unparsable_write_path_definition_is_rejected(row: dict[str, Any]) -> None:

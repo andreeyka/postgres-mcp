@@ -18,6 +18,7 @@ from pglast.ast import (
     A_Expr,
     CaseExpr,
     CommonTableExpr,
+    CreateStmt,
     CreateTrigStmt,
     FuncCall,
     IndexElem,
@@ -25,6 +26,7 @@ from pglast.ast import (
     JoinExpr,
     JsonTable,
     Node,
+    PartitionElem,
     RangeTableFunc,
     RangeVar,
     RuleStmt,
@@ -483,33 +485,61 @@ def parse_trigger_definition(text: object) -> ExpressionNames | None:
     return replace(names, functions=(function, *names.functions))
 
 
-def parse_index_definition(text: object) -> ExpressionNames | None:
-    """Индекс (pg_get_indexdef): выражения ключей, предикат WHERE и класс операторов со схемой.
+def _key_names(
+    elements: tuple[Node, ...], element_type: type[IndexElem | PartitionElem], where: Node | None = None
+) -> ExpressionNames | None:
+    """Ключи индекса или секционирования: выражения, предикат where и класс операторов со схемой.
 
-    Выражения и опорные функции класса вычисляются при записи. Класс без схемы виден в search_path (pg_catalog
-    или allowed_schema); со схемой он проверяется как оператор (схема — allowed_schema или pg_catalog).
+    Класс без схемы виден в search_path (pg_catalog или allowed_schema); со схемой он проверяется как оператор
+    (схема — allowed_schema или pg_catalog). Collation пропускается. None — элемент не того вида или неразборчиво.
     """
-    statement = _single_statement(text, IndexStmt)
-    if statement is None:
+    keys = [element for element in elements if isinstance(element, element_type)]
+    if len(keys) != len(elements):
         return None
-    elements = statement.indexParams or ()
-    if not all(isinstance(element, IndexElem) for element in elements):
-        return None
-    roots = tuple(element.expr for element in elements if element.expr is not None)
-    if statement.whereClause is not None:
-        roots = (*roots, statement.whereClause)
+    roots = tuple(key.expr for key in keys if key.expr is not None)
+    if where is not None:
+        roots = (*roots, where)
     names = _collect_definition(roots) if roots else ExpressionNames()
     if names is None:
         return None
     opclasses: list[QualifiedName] = []
-    for element in elements:
-        if element.opclass:
-            opclass = _qualified(element.opclass)
+    for key in keys:
+        if key.opclass:
+            opclass = _qualified(key.opclass)
             if opclass is None:
                 return None
             if opclass[0] is not None:
                 opclasses.append(opclass)
     return replace(names, operators=(*names.operators, *opclasses))
+
+
+def parse_index_definition(text: object) -> ExpressionNames | None:
+    """Индекс (pg_get_indexdef): выражения ключей, предикат WHERE и класс операторов со схемой.
+
+    Выражения и предикат вычисляются при записи, а планировщик сворачивает их и при чтении (сопоставление
+    индексов с условиями запроса).
+    """
+    statement = _single_statement(text, IndexStmt)
+    if statement is None:
+        return None
+    return _key_names(tuple(statement.indexParams or ()), IndexElem, statement.whereClause)
+
+
+def parse_partition_key_definition(text: object) -> ExpressionNames | None:
+    """Ключ секционирования (pg_get_partkeydef: RANGE (...), LIST (...), HASH (...)): выражения и класс операторов.
+
+    Кэш отношения сворачивает выражения ключа при любом обращении к секционированной таблице, в том числе
+    при планировании SELECT. Текст разбирается как "CREATE TABLE t () PARTITION BY <text>".
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    statement = _single_statement(f"CREATE TABLE t () PARTITION BY {text}", CreateStmt)
+    if statement is None or statement.partspec is None:
+        return None
+    extra = (statement.tableElts, statement.inhRelations, statement.constraints, statement.options)
+    if any(extra) or statement.ofTypename or statement.tablespacename or statement.accessMethod:
+        return None
+    return _key_names(tuple(statement.partspec.partParams or ()), PartitionElem)
 
 
 def expression_texts(value: object) -> list[str] | None:

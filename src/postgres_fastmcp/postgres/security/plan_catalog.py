@@ -60,21 +60,32 @@ _AGGREGATE_SUPPORT_FUNCTIONS = (
 # только если транзакция держит на отношении блокировку DML (RowExclusiveLock и строже): только тогда оно может
 # сработать. Правило ON SELECT берётся всегда: чтение представления выполняет его "_RETURN".
 #
+# Определения отношений. Планировщик сворачивает IMMUTABLE-вызовы с константами (выполняет их при EXPLAIN)
+# и для простого SELECT: CHECK потомков наследования (исключение по ограничениям), выражения и предикаты индексов
+# (сопоставление с условиями), ключи секционирования (их строит кэш отношения), выражения расширенной статистики
+# (pg_statistic_ext.stxexprs), политики RLS. Поэтому CHECK, индексы, ключи секционирования и статистика читаются
+# у каждого заблокированного отношения, каждой цели DML (ниже) и всех их потомков (pg_inherits, рекурсивно:
+# потомков SELECT блокирует только планировщик, после PREPARE их ещё нет в pg_locks), а политики — все политики
+# (независимо от команды и роли) каждого заблокированного отношения и цели DML с включённым RLS. У ключа
+# секционирования зависимости pg_depend записаны на саму таблицу с objsubid = 0 (с номером колонки там типы
+# колонок — их не берём).
+#
 # Путь записи. Цели — отношения с блокировкой DML, их потомки (pg_inherits: PREPARE блокирует только названную
 # секционированную таблицу, а триггеры и ограничения секций срабатывают при маршрутизации) и таблицы, которые
 # ссылаются на цель внешним ключом с каскадом (CASCADE, SET NULL, SET DEFAULT меняют ссылающуюся таблицу), —
-# рекурсивно. Их объекты: включённые пользовательские триггеры, CHECK, умолчания и генерируемые колонки
-# (pg_attrdef), индексы с выражениями или предикатом, CHECK доменов колонок (рекурсивно по базовым доменам
-# и элементам массивов; NOT NULL домена без conbin пропускается), политики RLS — все политики таблицы
-# с включённым RLS (независимо от команды и роли). Атрибуты составных типов колонок не обходятся: рекурсия
-# по pg_attribute поднимает оценку запроса выше jit_above_cost (100000; живьём 107795 против 15812 без неё),
-# и JIT компилировал бы каждый запрос проверки.
+# рекурсивно. Их объекты: включённые пользовательские триггеры, умолчания и генерируемые колонки (pg_attrdef),
+# CHECK и умолчания (typdefaultbin: переписчик подставляет его, если у колонки умолчания нет) доменов колонок
+# (рекурсивно по базовым доменам и элементам массивов; NOT NULL домена без conbin пропускается). Для SELECT
+# они не вычисляются (проверено на PG 17: умолчания и CHECK доменов колонок при чтении не сворачиваются).
+# Атрибуты составных типов колонок не обходятся: рекурсия по pg_attribute поднимает оценку запроса выше
+# jit_above_cost (100000; живьём 107795 против 15812 без неё — замер до развёртывания множеств через unnest,
+# см. _oid_set), и JIT компилировал бы каждый запрос проверки.
 #
-# Строки (kind): rule, trigger, check, domain, default, index, policy — текст определения (definition; имена вне
-# search_path — со схемой); function — функция или агрегат из pg_depend этих объектов; aggregate_function —
-# опорная функция агрегата (parent_schema — схема агрегата); operator и operator_function — оператор и его
-# функция (oprcode); type — тип и каждый тип, до которого он ведёт через typbasetype/typelem, с отношением
-# строкового типа (relation_*). pg_depend не хранит зависимостей от закреплённых (встроенных) объектов
+# Строки (kind): rule, trigger, check, domain, default, index, partition, statistics, policy — текст определения
+# (definition; имена вне search_path — со схемой); function — функция или агрегат из pg_depend этих объектов;
+# aggregate_function — опорная функция агрегата (parent_schema — схема агрегата); operator и operator_function —
+# оператор и его функция (oprcode); type — тип и каждый тип, до которого он ведёт через typbasetype/typelem, с
+# отношением строкового типа (relation_*). pg_depend не хранит зависимостей от закреплённых (встроенных) объектов
 # pg_catalog: они видны только в тексте.
 _PG_REWRITE = "'pg_catalog.pg_rewrite'::pg_catalog.regclass::pg_catalog.oid"
 _PG_PROC = "'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid"
@@ -94,11 +105,29 @@ _PG_CONSTRAINT = "'pg_catalog.pg_constraint'::pg_catalog.regclass::pg_catalog.oi
 _PG_ATTRDEF = "'pg_catalog.pg_attrdef'::pg_catalog.regclass::pg_catalog.oid"
 _PG_CLASS = "'pg_catalog.pg_class'::pg_catalog.regclass::pg_catalog.oid"
 _PG_POLICY = "'pg_catalog.pg_policy'::pg_catalog.regclass::pg_catalog.oid"
+_PG_STATISTIC_EXT = "'pg_catalog.pg_statistic_ext'::pg_catalog.regclass::pg_catalog.oid"
+# Зависимости объекта с любым objsubid (у колонок таблицы objsubid — номер колонки: их типы не нужны).
+_ANY_SUBID = "NULL::pg_catalog.int4"
 _NO_NAME = "NULL::pg_catalog.name"
 # Действия внешнего ключа, которые меняют ссылающуюся таблицу: CASCADE, SET NULL, SET DEFAULT.
 _CASCADE_ACTIONS = "ARRAY['c', 'n', 'd']::pg_catalog.\"char\"[]"
 # Живая пользовательская колонка pg_attribute (не системная, не удалённая).
 _LIVE_COLUMN = "a.attnum OPERATOR(pg_catalog.>) 0::pg_catalog.int2 AND NOT a.attisdropped"
+
+
+def _oid_set(name: str, alias: str) -> str:
+    """Строки множества oid из массива CTE name (oids) под псевдонимом alias.
+
+    Рекурсивный CTE планировщик оценивает с запасом (рабочая таблица — в десять раз больше начальной), и через
+    соединения с каталогом оценка росла бы до миллионов строк (выше jit_above_cost). Массив, развёрнутый
+    unnest, оценивается в десять строк.
+    """
+    return f"{name} {alias}_set CROSS JOIN pg_catalog.unnest({alias}_set.oids) AS {alias}(oid)"
+
+
+_TARGETS = _oid_set("target_set", "t")
+_RELATIONS = _oid_set("relation_set", "t")
+_COLUMN_TYPES = _oid_set("type_set", "y")
 
 
 def _definition_rows(kind: str, text: str, source: str) -> str:
@@ -122,55 +151,82 @@ DEFINITION_DEPENDENCIES_SQL = (
     "WHERE k.relkind OPERATOR(pg_catalog.<>) 'm' "
     f"AND (r.ev_type OPERATOR(pg_catalog.=) '1' OR k.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}))"
     "), targets(oid) AS ("
-    f"SELECT k.oid FROM locked k WHERE k.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}) "
+    "SELECT k.oid FROM pg_catalog.unnest(ARRAY("
+    f"SELECT k.oid FROM locked k WHERE k.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES})"
+    ")) AS k(oid) "
     "UNION "
-    "SELECT n.oid FROM targets t CROSS JOIN LATERAL ("
-    "SELECT i.inhrelid FROM pg_catalog.pg_inherits i WHERE i.inhparent OPERATOR(pg_catalog.=) t.oid "
+    "SELECT n.oid FROM targets t JOIN ("
+    "SELECT i.inhparent, i.inhrelid FROM pg_catalog.pg_inherits i "
     "UNION ALL "
-    "SELECT f.conrelid FROM pg_catalog.pg_constraint f WHERE f.confrelid OPERATOR(pg_catalog.=) t.oid "
-    "AND f.contype OPERATOR(pg_catalog.=) 'f' "
+    "SELECT f.confrelid, f.conrelid FROM pg_catalog.pg_constraint f WHERE f.contype OPERATOR(pg_catalog.=) 'f' "
     f"AND (f.confdeltype OPERATOR(pg_catalog.=) ANY ({_CASCADE_ACTIONS}) "
     f"OR f.confupdtype OPERATOR(pg_catalog.=) ANY ({_CASCADE_ACTIONS}))"
-    ") AS n(oid)"
+    ") AS n(parent, oid) ON n.parent OPERATOR(pg_catalog.=) t.oid"
+    "), target_set(oids) AS ("
+    "SELECT ARRAY(SELECT t.oid FROM targets t)"
+    "), relations(oid) AS ("
+    f"SELECT k.oid FROM locked k UNION SELECT t.oid FROM {_TARGETS} "
+    "UNION "
+    "SELECT i.inhrelid FROM relations r "
+    "JOIN pg_catalog.pg_inherits i ON i.inhparent OPERATOR(pg_catalog.=) r.oid"
+    "), relation_set(oids) AS ("
+    "SELECT ARRAY(SELECT r.oid FROM relations r)"
     "), column_types(oid) AS ("
-    "SELECT a.atttypid FROM targets t "
+    f"SELECT a.atttypid FROM {_TARGETS} "
     f"JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) t.oid WHERE {_LIVE_COLUMN} "
     "UNION "
     "SELECT n.oid FROM column_types y JOIN pg_catalog.pg_type ty ON ty.oid OPERATOR(pg_catalog.=) y.oid "
     "CROSS JOIN LATERAL (VALUES (ty.typbasetype), (ty.typelem)) AS n(oid) "
     "WHERE n.oid OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
+    "), type_set(oids) AS ("
+    "SELECT ARRAY(SELECT y.oid FROM column_types y)"
     "), triggers AS ("
-    "SELECT g.oid FROM targets t JOIN pg_catalog.pg_trigger g ON g.tgrelid OPERATOR(pg_catalog.=) t.oid "
+    f"SELECT g.oid FROM {_TARGETS} JOIN pg_catalog.pg_trigger g ON g.tgrelid OPERATOR(pg_catalog.=) t.oid "
     "WHERE NOT g.tgisinternal AND g.tgenabled OPERATOR(pg_catalog.<>) 'D'"
     "), checks AS ("
-    "SELECT k.oid, k.conbin, k.conrelid FROM targets t "
+    f"SELECT k.oid, k.conbin, k.conrelid FROM {_RELATIONS} "
     "JOIN pg_catalog.pg_constraint k ON k.conrelid OPERATOR(pg_catalog.=) t.oid "
     "WHERE k.contype OPERATOR(pg_catalog.=) 'c'"
     "), domain_checks AS ("
-    "SELECT k.oid, k.conbin FROM column_types y "
+    f"SELECT k.oid, k.conbin FROM {_COLUMN_TYPES} "
     "JOIN pg_catalog.pg_constraint k ON k.contypid OPERATOR(pg_catalog.=) y.oid WHERE k.conbin IS NOT NULL"
+    "), domain_defaults AS ("
+    f"SELECT ty.oid, ty.typdefaultbin FROM {_COLUMN_TYPES} "
+    "JOIN pg_catalog.pg_type ty ON ty.oid OPERATOR(pg_catalog.=) y.oid WHERE ty.typdefaultbin IS NOT NULL"
     "), defaults AS ("
-    "SELECT d.oid, d.adbin, d.adrelid FROM targets t "
+    f"SELECT d.oid, d.adbin, d.adrelid FROM {_TARGETS} "
     "JOIN pg_catalog.pg_attrdef d ON d.adrelid OPERATOR(pg_catalog.=) t.oid"
     "), indexes AS ("
-    "SELECT x.indexrelid AS oid FROM targets t JOIN pg_catalog.pg_index x ON x.indrelid OPERATOR(pg_catalog.=) t.oid "
+    f"SELECT x.indexrelid AS oid FROM {_RELATIONS} "
+    "JOIN pg_catalog.pg_index x ON x.indrelid OPERATOR(pg_catalog.=) t.oid "
     "WHERE x.indexprs IS NOT NULL OR x.indpred IS NOT NULL"
+    "), partition_keys AS ("
+    f"SELECT c.oid FROM {_RELATIONS} JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.oid "
+    "WHERE c.relkind OPERATOR(pg_catalog.=) 'p'"
+    "), stats AS ("
+    f"SELECT s.oid FROM {_RELATIONS} "
+    "JOIN pg_catalog.pg_statistic_ext s ON s.stxrelid OPERATOR(pg_catalog.=) t.oid WHERE s.stxexprs IS NOT NULL"
     "), policies AS ("
-    "SELECT p.oid, p.polrelid, p.polqual, p.polwithcheck FROM targets t "
+    "SELECT p.oid, p.polrelid, p.polqual, p.polwithcheck "
+    f"FROM (SELECT k.oid FROM locked k UNION SELECT t.oid FROM {_TARGETS}) AS t(oid) "
     "JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.oid "
     "JOIN pg_catalog.pg_policy p ON p.polrelid OPERATOR(pg_catalog.=) t.oid WHERE c.relrowsecurity"
-    "), objects(classid, objid) AS ("
-    f"SELECT {_PG_REWRITE}, u.oid FROM rules u UNION ALL "
-    f"SELECT {_PG_TRIGGER}, g.oid FROM triggers g UNION ALL "
-    f"SELECT {_PG_CONSTRAINT}, k.oid FROM checks k UNION ALL "
-    f"SELECT {_PG_CONSTRAINT}, k.oid FROM domain_checks k UNION ALL "
-    f"SELECT {_PG_ATTRDEF}, d.oid FROM defaults d UNION ALL "
-    f"SELECT {_PG_CLASS}, x.oid FROM indexes x UNION ALL "
-    f"SELECT {_PG_POLICY}, p.oid FROM policies p"
+    "), objects(classid, objid, objsubid) AS ("
+    f"SELECT {_PG_REWRITE}, u.oid, {_ANY_SUBID} FROM rules u UNION ALL "
+    f"SELECT {_PG_TRIGGER}, g.oid, {_ANY_SUBID} FROM triggers g UNION ALL "
+    f"SELECT {_PG_CONSTRAINT}, k.oid, {_ANY_SUBID} FROM checks k UNION ALL "
+    f"SELECT {_PG_CONSTRAINT}, k.oid, {_ANY_SUBID} FROM domain_checks k UNION ALL "
+    f"SELECT {_PG_TYPE}, ty.oid, {_ANY_SUBID} FROM domain_defaults ty UNION ALL "
+    f"SELECT {_PG_ATTRDEF}, d.oid, {_ANY_SUBID} FROM defaults d UNION ALL "
+    f"SELECT {_PG_CLASS}, x.oid, {_ANY_SUBID} FROM indexes x UNION ALL "
+    f"SELECT {_PG_CLASS}, c.oid, 0::pg_catalog.int4 FROM partition_keys c UNION ALL "
+    f"SELECT {_PG_STATISTIC_EXT}, s.oid, {_ANY_SUBID} FROM stats s UNION ALL "
+    f"SELECT {_PG_POLICY}, p.oid, {_ANY_SUBID} FROM policies p"
     "), dependencies AS ("
     "SELECT DISTINCT d.refclassid, d.refobjid FROM objects o "
     "JOIN pg_catalog.pg_depend d ON d.classid OPERATOR(pg_catalog.=) o.classid "
-    "AND d.objid OPERATOR(pg_catalog.=) o.objid"
+    "AND d.objid OPERATOR(pg_catalog.=) o.objid "
+    "AND (o.objsubid IS NULL OR d.objsubid OPERATOR(pg_catalog.=) o.objsubid)"
     "), types(oid) AS ("
     f"SELECT x.refobjid FROM dependencies x WHERE x.refclassid OPERATOR(pg_catalog.=) {_PG_TYPE} "
     "UNION "
@@ -190,7 +246,18 @@ DEFINITION_DEPENDENCIES_SQL = (
     + "UNION ALL "
     + _definition_rows("default", "pg_catalog.pg_get_expr(d.adbin, d.adrelid)", "defaults d")
     + "UNION ALL "
+    + _definition_rows("default", "pg_catalog.pg_get_expr(ty.typdefaultbin, 0::pg_catalog.oid)", "domain_defaults ty")
+    + "UNION ALL "
     + _definition_rows("index", "pg_catalog.pg_get_indexdef(x.oid)", "indexes x")
+    + "UNION ALL "
+    + _definition_rows("partition", "pg_catalog.pg_get_partkeydef(c.oid)", "partition_keys c")
+    + "UNION ALL "
+    + _definition_rows(
+        "statistics",
+        "e.expr",
+        "stats s CROSS JOIN LATERAL "
+        "pg_catalog.unnest(pg_catalog.pg_get_statisticsobjdef_expressions(s.oid)) AS e(expr)",
+    )
     + "UNION ALL "
     + _definition_rows(
         "policy",

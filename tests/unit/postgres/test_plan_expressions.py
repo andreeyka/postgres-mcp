@@ -14,6 +14,7 @@ from postgres_fastmcp.postgres.security.plan_expressions import (
     parse_definition_expression,
     parse_expression,
     parse_index_definition,
+    parse_partition_key_definition,
     parse_rule_definition,
     parse_sort_key,
     parse_table_function,
@@ -443,3 +444,39 @@ def test_index_definition_names(text: str, expected: ExpressionNames) -> None:
 )
 def test_foreign_statement_text_is_rejected(parse: Callable[[object], ExpressionNames | None], text: object) -> None:
     assert parse(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "RANGE (((id + secret.boomi())))",
+            ExpressionNames(functions=(("secret", "boomi"),), operators=((None, "+"),)),
+        ),
+        ("LIST (id)", ExpressionNames()),
+        (
+            'HASH (id, lower(v) COLLATE "C" secret.ops, w text_pattern_ops)',
+            ExpressionNames(functions=((None, "lower"),), operators=(("secret", "ops"),)),
+        ),
+    ],
+)
+def test_partition_key_definition_names(text: str, expected: ExpressionNames) -> None:
+    """pg_get_partkeydef: выражения ключей и класс операторов со схемой (collation пропускается)."""
+    assert parse_partition_key_definition(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        None,
+        "",
+        "RANGE (id); DROP TABLE x",
+        "RANGE (id)) ; CREATE TABLE y (a int",
+        "RANGE (id) WITH (fillfactor = 1)",
+        "RANGE (id) TABLESPACE t",
+        "RANGE (id) USING heap",
+        "RANGE (a.b.c.f(id))",
+    ],
+)
+def test_unparsable_partition_key_definition_is_rejected(text: object) -> None:
+    assert parse_partition_key_definition(text) is None

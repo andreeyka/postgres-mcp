@@ -196,3 +196,61 @@ def test_allowed_implementations_cover_support_functions_and_the_sort_operator()
         "oprcode",
     ):
         assert column in ALLOWED_IMPLEMENTATIONS_SQL
+
+
+class _Sources(Visitor):
+    """Имена отношений и CTE (RangeVar) в тексте: откуда CTE берёт строки."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.names: set[str] = set()
+
+    def visit_RangeVar(self, _ancestors: object, node: RangeVar) -> None:  # noqa: N802
+        self.names.add(node.relname if node.schemaname is None else f"{node.schemaname}.{node.relname}")
+
+
+def _cte_sources(name: str) -> set[str]:
+    """Отношения и CTE, которые читает CTE name в DEFINITION_DEPENDENCIES_SQL."""
+    [statement] = pglast.parse_sql(DEFINITION_DEPENDENCIES_SQL)
+    [cte] = [cte for cte in statement.stmt.withClause.ctes if cte.ctename == name]
+    visitor = _Sources()
+    visitor(cte.ctequery)
+    return visitor.names
+
+
+@pytest.mark.parametrize("cte", ["checks", "indexes", "partition_keys", "stats"])
+def test_definitions_folded_on_select_are_read_for_every_locked_relation_and_its_descendants(cte: str) -> None:
+    """CHECK потомков, индексы, ключи секционирования и статистику планировщик сворачивает и для SELECT."""
+    assert "relation_set" in _cte_sources(cte)
+    assert {"locked", "target_set", "pg_catalog.pg_inherits"} <= _cte_sources("relations")
+
+
+def test_policies_are_read_for_every_locked_relation_and_write_target() -> None:
+    """Политику RLS переписчик подставляет и в SELECT: не только цели DML."""
+    assert {"locked", "target_set", "pg_catalog.pg_policy"} <= _cte_sources("policies")
+
+
+@pytest.mark.parametrize("cte", ["triggers", "defaults", "column_types"])
+def test_write_time_definitions_stay_on_write_targets(cte: str) -> None:
+    """Триггеры, умолчания и домены колонок при чтении не вычисляются."""
+    sources = _cte_sources(cte)
+    assert "target_set" in sources
+    assert "relation_set" not in sources
+    assert "locked" not in sources
+
+
+def test_domain_defaults_partition_keys_and_statistics_and_their_texts() -> None:
+    for fragment in (
+        "ty.typdefaultbin IS NOT NULL",
+        "pg_catalog.pg_get_expr(ty.typdefaultbin, 0::pg_catalog.oid)",
+        "'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid, ty.oid, NULL::pg_catalog.int4 FROM domain_defaults",
+        "c.relkind OPERATOR(pg_catalog.=) 'p'",
+        "pg_catalog.pg_get_partkeydef(c.oid)",
+        "c.oid, 0::pg_catalog.int4 FROM partition_keys",
+        "(o.objsubid IS NULL OR d.objsubid OPERATOR(pg_catalog.=) o.objsubid)",
+        "s.stxexprs IS NOT NULL",
+        "pg_catalog.pg_get_statisticsobjdef_expressions(s.oid)",
+    ):
+        assert fragment in DEFINITION_DEPENDENCIES_SQL
+    assert {"column_types"} <= _cte_sources("type_set")
+    assert "type_set" in _cte_sources("domain_defaults")
