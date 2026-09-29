@@ -15,7 +15,9 @@ pglast (plan_expressions) и проверяются по тем же прави�
 allowed_schema любого языка (планировщик подставляет их в вызов и сворачивает) проверяются как текст определения.
 Машинерия типов (plan_catalog._type_machinery) — функции ввода-вывода, приведения, классы операторов, CHECK доменов,
 которые Postgres вызывает сам, без имени в тексте, — проверяется для типов, до которых доходит оператор (и вложенных
-в них): те же строки, что у определений, плюс вид type_function (встроенная — любая функция pg_catalog).
+в них): те же строки, что у определений, плюс вид type_function (встроенная — любая функция pg_catalog). Семена —
+и типы, названные в любом проверяемом тексте (тело SQL-функции, умолчание аргумента, CHECK домена): приведение
+(1)::app_e печатается без имени функции. Каждое семя спрашивается за проверку один раз — круги кончаются.
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
@@ -393,9 +395,10 @@ class _CatalogNames:
     implementations: dict[tuple[str, str], None] = field(default_factory=dict)
     # (схема, имя) отношений из текстов определений: их представления блокирует PREPARE.
     relations: dict[tuple[str, str], None] = field(default_factory=dict)
-    # Семена машинерии типов из SQL агента: имена типов (для to_regtype) и отношений, чьи колонки — семена
-    # (для to_regclass); текст — идентификаторы в кавычках, разрешаются по search_path, как их разрешит PREPARE.
-    footprint_types: dict[str, None] = field(default_factory=dict)
+    # Семена машинерии типов: имена типов (схема или None, имя; для to_regtype) из SQL агента и текстов определений
+    # и отношений SQL агента, чьи колонки и строковый тип — семена (для to_regclass; текст — идентификаторы
+    # в кавычках). Имена разрешаются по search_path, как их разрешит PREPARE.
+    footprint_types: dict[tuple[str | None, str], None] = field(default_factory=dict)
     footprint_relations: dict[str, None] = field(default_factory=dict)
 
     def _all(self) -> tuple[dict[Any, None], ...]:
@@ -459,6 +462,9 @@ class PlanGuard:
         self._looked_up: set[tuple[str, str]] = set()
         # Отношения текстов определений, уже заблокированные PREPARE в этой проверке.
         self._locked_relations: set[tuple[str, str]] = set()
+        # Семена машинерии типов (имена для to_regtype и to_regclass), уже отданные каталогу в этой проверке:
+        # тип, названный в теле функции своей же машинерии, не спрашивается снова — круги кончаются.
+        self._seeded: set[tuple[str, str]] = set()
 
     async def check(self, query: str) -> None:
         """Проверить определения, до которых доходит запрос, затем план каждого планируемого оператора.
@@ -678,9 +684,9 @@ class PlanGuard:
         а не функции, которые вызывает, а IMMUTABLE-вызов с константами планировщик выполнил бы при EXPLAIN.
         Функция allowed_schema на языке sql — по телу: встраивание при EXPLAIN выполнило бы и его свёртки.
 
-        Машинерия типов (plan_catalog._type_machinery): имена типов и колонки отношений SQL агента — семена
-        того же запроса реализаций. Функцию ввода типа ('x'::тип, INSERT литерала в колонку типа) и подтипа
-        диапазона вместе с CHECK домена выполняет уже PREPARE.
+        Машинерия типов (plan_catalog._type_machinery): имена типов, колонки и строковые типы отношений SQL
+        агента — семена того же запроса реализаций. Функцию ввода типа ('x'::тип, INSERT литерала в колонку
+        типа) и подтипа диапазона вместе с CHECK домена выполняет уже PREPARE.
         """
         pending = _CatalogNames()
         collector = _StatementNames()
@@ -688,8 +694,6 @@ class PlanGuard:
             collector(statement)
         for schema, name in collector.types:
             self._check_type(schema, name, pending)
-            if schema != _BUILTIN_FUNCTION_SCHEMA:
-                pending.footprint_types[_quoted_name(schema, name)] = None
         for schema, name in collector.relations:
             pending.footprint_relations[_quoted_name(schema, name)] = None
         reached = _StatementNames()
@@ -834,6 +838,12 @@ class PlanGuard:
         """
         if schema == _BUILTIN_FUNCTION_SCHEMA:
             return
+        # Семя машинерии: приведение (1)::app_e печатается без имени функции, а его IMMUTABLE-функцию EXPLAIN
+        # свернул бы. Так — для SQL агента и для каждого текста определения (тело функции, умолчание аргумента,
+        # CHECK домена); тип вне allowed_schema отклоняется ниже, и спрашивать каталог уже не придётся. Уже
+        # спрошенное семя не откладывается: иначе оно одно давало бы лишний круг (и тратило глубину).
+        if (TYPE_KIND, _quoted_name(schema, name)) not in self._seeded:
+            pending.footprint_types[schema, name] = None
         if schema is not None and schema != self._allowed_schema:
             raise PlanAccessError(
                 TYPE_KIND,
@@ -872,19 +882,28 @@ class PlanGuard:
     async def _check_implementations(self, current: _CatalogNames, pending: _CatalogNames) -> None:
         """Функции операторов и агрегатов allowed_schema, тела её SQL-функций и машинерия типов — по правилам basic.
 
-        Семена машинерии — типы и отношения SQL агента (current.footprint_*) и типы найденных функций и операторов.
+        Семена машинерии — типы SQL агента и текстов определений, отношения SQL агента (current.footprint_*) и типы
+        найденных функций и операторов; семя, уже отданное каталогу в этой проверке, не повторяется.
         """
-        if not (current.implementations or current.footprint_types or current.footprint_relations):
+        types = [
+            name
+            for name in (_quoted_name(schema, name) for schema, name in current.footprint_types)
+            if (TYPE_KIND, name) not in self._seeded
+        ]
+        relations = [name for name in current.footprint_relations if (RELATION_KIND, name) not in self._seeded]
+        if not (current.implementations or types or relations):
             return
         keys = list(current.implementations)
         self._looked_up.update(keys)
+        self._seeded.update((TYPE_KIND, name) for name in types)
+        self._seeded.update((RELATION_KIND, name) for name in relations)
         rows = await allowed_implementations(
             self._run,
             self._allowed_schema,
             operators=[name for kind, name in keys if kind == _OPERATOR_KIND],
             functions=[name for kind, name in keys if kind == FUNCTION_KIND],
-            types=list(current.footprint_types),
-            relations=list(current.footprint_relations),
+            types=types,
+            relations=relations,
         )
         if rows is None:
             raise PlanUnverifiableError(rules=True)

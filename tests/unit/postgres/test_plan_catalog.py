@@ -326,11 +326,37 @@ def test_type_closure_follows_what_calls_nested_machinery(sql: str) -> None:
 
 
 @_BOTH_QUERIES
-def test_type_machinery_skips_extension_members(sql: str) -> None:
-    """Функции и операторы расширений (deptype 'e') — машинерия, которую поставил скрипт расширения."""
+def test_type_machinery_trusts_extensions_by_the_owning_object(sql: str) -> None:
+    """Машинерию, которую поставил скрипт расширения (deptype 'e'), определяет владелец: тип, семейство операторов,
+    строка pg_cast. Членство самой функции или оператора не в счёт: приведение DBA над функцией расширения
+    проверяется по обычным правилам."""
     assert "e.deptype OPERATOR(pg_catalog.=) 'e'" in sql
-    assert "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid" in sql
-    assert "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_operator'::pg_catalog.regclass::pg_catalog.oid" in sql
+    for owner in (
+        "'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) m.oid",
+        "'pg_catalog.pg_opfamily'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) y.oid",
+        "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) k.oid",
+    ):
+        assert f"e.classid OPERATOR(pg_catalog.=) {owner}" in sql
+    for member in ("'pg_catalog.pg_proc'", "'pg_catalog.pg_operator'"):
+        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in sql
+
+
+@_BOTH_QUERIES
+def test_type_closure_follows_implicit_binary_coercible_casts(sql: str) -> None:
+    """Класс операторов по умолчанию берётся и у типа, к которому значение неявно двоично приводится; такие
+    приведения от типов pg_catalog — семена любого запроса."""
+    assert (
+        "SELECT k.casttarget FROM pg_catalog.pg_cast k WHERE k.castsource OPERATOR(pg_catalog.=) t.oid "
+        "AND k.castmethod OPERATOR(pg_catalog.=) 'b' AND k.castcontext OPERATOR(pg_catalog.=) 'i'"
+    ) in sql
+    assert "ks.typnamespace OPERATOR(pg_catalog.=) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid" in sql
+    assert "kt.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid" in sql
+
+
+@_BOTH_QUERIES
+def test_type_machinery_is_seeded_by_row_types_of_relations(sql: str) -> None:
+    """Ссылка на всю строку (r::int, abs(r)) вызывает приведение строкового типа отношения (pg_class.reltype)."""
+    assert "SELECT c.reltype FROM" in sql
 
 
 async def test_allowed_implementations_seed_types_and_relation_columns() -> None:
@@ -357,7 +383,7 @@ async def test_allowed_implementations_default_to_no_seeds() -> None:
     await allowed_implementations(recorder, "public", operators=["="], functions=[])
 
     [sql] = recorder.sent
-    assert sql.count("ARRAY[]::pg_catalog.text[]") == 2
+    assert sql.count("ARRAY[]::pg_catalog.text[]") == 3
 
 
 def test_definition_machinery_is_seeded_by_locked_relations_and_dependency_types() -> None:

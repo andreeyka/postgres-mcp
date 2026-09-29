@@ -1781,6 +1781,58 @@ async def test_type_machinery_of_the_statement_is_checked_before_prepare(sql: st
     assert explain.prepared == []
 
 
+_SECRET_CAST = {"kind": "function", "schema": "secret", "name": "int_to_e"}
+
+
+@pytest.mark.parametrize(
+    ("rules", "implementations"),
+    [
+        pytest.param(
+            [{"kind": "domain", "definition": "((VALUE > 0) AND ((1)::app_e IS NOT NULL))"}], {}, id="domain-check"
+        ),
+        pytest.param(_VIEW_CALLS, {"app_count": [_body("app_count", "SELECT 1::app_e")]}, id="sql-body"),
+        pytest.param(
+            _VIEW_CALLS,
+            {"app_count": [_body("app_count", "BEGIN ATOMIC\n SELECT (1)::public.app_e AS e;\nEND", atomic=True)]},
+            id="atomic-body",
+        ),
+        pytest.param(
+            _VIEW_CALLS,
+            {"app_count": [_defaults("app_count", "CASE WHEN (1)::app_e IS NULL THEN 1 ELSE 2 END")]},
+            id="argument-defaults",
+        ),
+    ],
+)
+async def test_types_named_in_definition_texts_seed_the_type_machinery(
+    rules: list[dict[str, Any]], implementations: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Приведение (1)::app_e печатается без имени функции: тип из текста определения (CHECK домена, тело SQL-функции,
+    умолчание аргумента) — семя машинерии, его функция приведения проверяется до EXPLAIN."""
+    explain = _Explain(
+        rules=rules,
+        implementations={**implementations, '"app_e"': [_SECRET_CAST], '"public"."app_e"': [_SECRET_CAST]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.int_to_e'"):
+        await _guard(explain).check(_SELECT)
+
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_type_named_in_its_own_machinery_is_seeded_once() -> None:
+    """Функция сравнения типа, чьё тело называет тот же тип: семя не спрашивается снова, круги кончаются."""
+    explain = _Explain(
+        implementations={
+            '"app_t"': [{"kind": "type_function", "schema": "public", "name": "app_t_cmp"}],
+            "app_t_cmp": [_body("app_t_cmp", "SELECT CASE WHEN $1::app_t IS NULL THEN 0 ELSE 1 END")],
+        }
+    )
+
+    await _guard(explain).check("SELECT '5'::app_t")
+
+    assert sum("'\"app_t\"'" in sql for sql in explain.implementation_queries) == 1
+
+
 async def test_builtin_type_names_are_not_seeds() -> None:
     explain = _Explain()
 
