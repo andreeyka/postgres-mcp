@@ -43,12 +43,13 @@ class _Explain:
         *,
         as_text: bool = False,
         pg_catalog_functions: frozenset[str] = frozenset(),
-        row_types: frozenset[str] = frozenset(),
+        row_types: frozenset[str] | dict[str, tuple[str, str]] = frozenset(),
     ) -> None:
         self._plans = plans or {}
         self._as_text = as_text
         self._pg_catalog_functions = pg_catalog_functions
-        self._row_types = row_types
+        # Строковый тип -> (схема, имя) его отношения; множество — типы таблиц public с тем же именем.
+        self._row_types = row_types if isinstance(row_types, dict) else {name: ("public", name) for name in row_types}
         self.sent: list[str] = []
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
@@ -56,7 +57,11 @@ class _Explain:
         if "pg_catalog.pg_proc" in sql:
             return self._catalog(sql, self._pg_catalog_functions)
         if "typrelid" in sql:
-            return self._catalog(sql, self._row_types)
+            return [
+                RowResult(cells={"name": name, "relation_schema": schema, "relation_name": relation})
+                for name, (schema, relation) in sorted(self._row_types.items())
+                if f"'{name}'" in sql
+            ]
         if "pg_catalog.pg_type" in sql:
             return [RowResult(cells={"name": name}) for name in sorted(_BUILTIN_TYPES)]
         document: Any = [{"Plan": self._plans.get(sql, _RESULT)}]
@@ -566,6 +571,30 @@ async def test_row_type_of_a_table_without_the_prefix_is_rejected(call: str) -> 
         await _guard(explain, table_prefix="app_").check(_SELECT)
 
     assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", "public.users")
+
+
+@pytest.mark.parametrize(
+    ("relation", "name"),
+    [(("public", "users"), "public.users"), (("secret", "t"), "secret.t")],
+)
+async def test_domain_over_a_forbidden_row_type_is_rejected_as_its_relation(
+    relation: tuple[str, str], name: str
+) -> None:
+    """Домен (typrelid = 0) над строковым типом таблицы — оракул её структуры, как сам тип."""
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["NULL::users_dom"])}, row_types={"users_dom": relation})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain, table_prefix="app_").check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == ("relation", name)
+
+
+async def test_domain_over_a_prefixed_row_type_passes() -> None:
+    explain = _Explain(
+        {_EXPLAIN + _SELECT: _with(Output=["NULL::orders_dom"])}, row_types={"orders_dom": ("public", "app_orders")}
+    )
+
+    await _guard(explain, table_prefix="app_").check(_SELECT)
 
 
 async def test_row_types_are_not_checked_without_a_prefix() -> None:

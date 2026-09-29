@@ -394,10 +394,5 @@ class PlanGuard:
             return
         found = await row_types(self._run, self._allowed_schema, list(candidates))
         for name in candidates:
-            if name in found:
-                raise PlanAccessError(
-                    RELATION_KIND,
-                    f"{self._allowed_schema}.{name}",
-                    allowed_schema=self._allowed_schema,
-                    table_prefix=self._prefix_for_hint,
-                )
+            for relation_schema, relation_name in found.get(name, ()):
+                self._check_relation(relation_schema, relation_name)

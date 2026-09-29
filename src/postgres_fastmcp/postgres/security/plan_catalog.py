@@ -1,8 +1,10 @@
 """Запросы каталога для проверки выражений плана: SQL сервера в транзакции оператора агента.
 
 Идут через исполнитель транзакции PlanGuard (search_path = allowed_schema, SET LOCAL уже выставлен), без
-валидатора агента: это SQL сервера. Имена встраиваются как Literal. Все отношения — с pg_catalog.;
-операторы (=, <>, IN) без схемы резолвятся в pg_catalog: он неявно первый в search_path.
+валидатора агента: это SQL сервера. Имена встраиваются как Literal. Каждое отношение, функция и тип — с
+pg_catalog., каждый оператор — OPERATOR(pg_catalog.…): pg_catalog неявно первый в search_path, но
+неквалифицированный оператор с разными типами аргументов (oid <> integer) public может перехватить
+точным совпадением типов. IN, NULLIF и IS DISTINCT FROM ищут = так же — вместо них ANY с OPERATOR.
 """
 
 from collections.abc import Collection
@@ -15,17 +17,31 @@ from postgres_fastmcp.postgres.ports import StatementRunner
 
 _BUILTIN_TYPES_SQL = (
     "SELECT t.typname AS name FROM pg_catalog.pg_type t "
-    "JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'pg_catalog'"
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) 'pg_catalog'"
 )
 _PG_CATALOG_FUNCTIONS_SQL = (
     "SELECT DISTINCT p.proname AS name FROM pg_catalog.pg_proc p "
-    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
-    "WHERE n.nspname = 'pg_catalog' AND p.proname IN ({names})"
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) p.pronamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) 'pg_catalog' AND p.proname OPERATOR(pg_catalog.=) ANY ({names})"
 )
+# Строковый тип отношения — сам (typrelid), через домен (typbasetype; у домена typrelid = 0, домен над
+# доменом ссылается на ближайший) или через массив (typelem): '{"(1,2)"}'::users_dom раскрывает таблицу так же.
 _ROW_TYPES_SQL = (
-    "SELECT t.typname AS name FROM pg_catalog.pg_type t "
-    "JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace "
-    "WHERE n.nspname = {schema} AND t.typrelid <> 0 AND t.typname IN ({names})"
+    "WITH RECURSIVE reached(name, oid) AS ("
+    "SELECT t.typname, t.oid FROM pg_catalog.pg_type t "
+    "JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace "
+    "WHERE n.nspname OPERATOR(pg_catalog.=) {schema} AND t.typname OPERATOR(pg_catalog.=) ANY ({names}) "
+    "UNION "
+    "SELECT r.name, u.next FROM reached r "
+    "JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) r.oid "
+    "CROSS JOIN LATERAL (VALUES (t.typbasetype), (t.typelem)) AS u(next) "
+    "WHERE u.next OPERATOR(pg_catalog.<>) 0::pg_catalog.oid"
+    ") "
+    "SELECT r.name, cn.nspname AS relation_schema, c.relname AS relation_name FROM reached r "
+    "JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) r.oid "
+    "JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.typrelid "
+    "JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) c.relnamespace"
 )
 
 
@@ -34,9 +50,9 @@ def _names(rows: list[RowResult] | None) -> frozenset[str]:
     return frozenset(str(row.cells["name"]) for row in rows or ())
 
 
-def _literals(names: Collection[str]) -> Composable:
-    """Список Literal через запятую для IN (...)."""
-    return SQL(", ").join(Literal(name) for name in names)
+def _name_array(names: Collection[str]) -> Composable:
+    """ARRAY[...]::pg_catalog.name[] из Literal для OPERATOR(pg_catalog.=) ANY (...)."""
+    return SQL("ARRAY[{}]::pg_catalog.name[]").format(SQL(", ").join(Literal(name) for name in names))
 
 
 class BuiltinTypeNames:
@@ -63,11 +79,18 @@ class BuiltinTypeNames:
 
 async def pg_catalog_functions(run: StatementRunner, names: Collection[str]) -> frozenset[str]:
     """Какие из имён — функции pg_catalog (одним запросом)."""
-    sql = SQL(_PG_CATALOG_FUNCTIONS_SQL).format(names=_literals(names)).as_string()
+    sql = SQL(_PG_CATALOG_FUNCTIONS_SQL).format(names=_name_array(names)).as_string()
     return _names(await run(sql))
 
 
-async def row_types(run: StatementRunner, schema: str, names: Collection[str]) -> frozenset[str]:
-    """Какие из имён — строковые типы отношений схемы schema (таблицы, представления, составные типы)."""
-    sql = SQL(_ROW_TYPES_SQL).format(schema=Literal(schema), names=_literals(names)).as_string()
-    return _names(await run(sql))
+async def row_types(run: StatementRunner, schema: str, names: Collection[str]) -> dict[str, list[tuple[str, str]]]:
+    """Какие из имён типов схемы schema ведут к строковому типу отношения — и к какому (схема, имя).
+
+    Отношение — таблица, представление или составной тип; путь — сам тип, домен над ним или массив.
+    """
+    sql = SQL(_ROW_TYPES_SQL).format(schema=Literal(schema), names=_name_array(names)).as_string()
+    found: dict[str, list[tuple[str, str]]] = {}
+    for row in await run(sql) or ():
+        relation = (str(row.cells["relation_schema"]), str(row.cells["relation_name"]))
+        found.setdefault(str(row.cells["name"]), []).append(relation)
+    return found

@@ -38,6 +38,8 @@ CREATE OR REPLACE FUNCTION public.app_double(n int) RETURNS int
     LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN n * 2; END';
 CREATE OR REPLACE VIEW public.app_expr_public_fn_view AS SELECT app_double(id) AS d FROM public.app_plan_items;
 CREATE TABLE IF NOT EXISTS public.other_users (id int, secret_note text);
+DROP DOMAIN IF EXISTS public.other_users_dom;
+CREATE DOMAIN public.other_users_dom AS public.other_users;
 CREATE TABLE IF NOT EXISTS public.app_serial_items (id serial PRIMARY KEY, v text);
 CREATE TABLE IF NOT EXISTS public.app_identity_items (id int GENERATED ALWAYS AS IDENTITY, v text);
 """
@@ -180,6 +182,15 @@ async def test_row_type_of_a_table_without_the_prefix_is_rejected(db_plan_check:
     with pytest.raises(PlanAccessError, match=r"relation 'public\.other_users'"):
         await db_plan_check.sql_driver.execute(
             "SELECT * FROM json_populate_record(NULL::other_users, '{}')", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_domain_over_a_row_type_without_the_prefix_is_rejected(db_plan_check: DbAccess) -> None:
+    """У домена typrelid = 0: строковый тип other_users виден только через typbasetype."""
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.other_users'"):
+        await db_plan_check.sql_driver.execute(
+            "SELECT * FROM json_populate_record(NULL::other_users_dom, '{}')", readonly=True
         )
 
 
