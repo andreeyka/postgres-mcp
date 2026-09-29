@@ -75,7 +75,9 @@ async def _catalog_sql() -> list[str]:
     await BuiltinTypeNames().load(recorder)
     await pg_catalog_functions(recorder, ["current_setting", "my_fn"])
     await row_types(recorder, "public", ["users", "users_dom"])
-    await allowed_implementations(recorder, "public", operators=["===", "="], functions=["app_agg"])
+    await allowed_implementations(
+        recorder, "public", operators=["===", "="], functions=["app_agg"], types=['"app_t"'], relations=['"app_x"']
+    )
     return [*recorder.sent, DEFINITION_DEPENDENCIES_SQL]
 
 
@@ -280,3 +282,84 @@ def test_domain_defaults_partition_keys_and_statistics_and_their_texts() -> None
         assert fragment in DEFINITION_DEPENDENCIES_SQL
     assert {"column_types"} <= _cte_sources("type_set")
     assert "type_set" in _cte_sources("domain_defaults")
+
+
+_BOTH_QUERIES = pytest.mark.parametrize(
+    "sql", [ALLOWED_IMPLEMENTATIONS_SQL, DEFINITION_DEPENDENCIES_SQL], ids=["implementations", "definitions"]
+)
+
+
+@_BOTH_QUERIES
+def test_type_machinery_covers_io_casts_operator_classes_domains_and_ranges(sql: str) -> None:
+    """Всё, что Postgres вызывает для значения типа без имени функции в тексте (plan_catalog._type_machinery)."""
+    for fragment in (
+        "(t.typinput), (t.typoutput), (t.typreceive), (t.typsend), (t.typmodin), (t.typmodout), (t.typanalyze), "
+        "(t.typsubscript)",
+        "(r.rngcanonical), (r.rngsubdiff)",
+        "r.rngsubopc",
+        "pg_catalog.pg_amproc",
+        "pg_catalog.pg_amop",
+        "(o.oprrest), (o.oprjoin)",
+        "k.castsource",
+        "k.casttarget",
+        "k.castfunc",
+        "k.contypid",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
+def test_type_closure_follows_what_calls_nested_machinery(sql: str) -> None:
+    """Домен -> база, массив -> элемент, составной -> атрибуты, диапазон -> подтип, мультидиапазон -> диапазон.
+
+    Типы и семейства операторов pg_catalog не раскрываются: встроенная машинерия.
+    """
+    for fragment in (
+        "SELECT t.typbasetype UNION ALL SELECT t.typelem",
+        "a.attrelid OPERATOR(pg_catalog.=) t.typrelid",
+        "r.rngsubtype",
+        "r.rngmultitypid OPERATOR(pg_catalog.=) t.oid",
+        "t.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid",
+        "f.opfnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
+def test_type_machinery_skips_extension_members(sql: str) -> None:
+    """Функции и операторы расширений (deptype 'e') — машинерия, которую поставил скрипт расширения."""
+    assert "e.deptype OPERATOR(pg_catalog.=) 'e'" in sql
+    assert "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_proc'::pg_catalog.regclass::pg_catalog.oid" in sql
+    assert "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_operator'::pg_catalog.regclass::pg_catalog.oid" in sql
+
+
+async def test_allowed_implementations_seed_types_and_relation_columns() -> None:
+    """Имена SQL агента разрешаются по search_path, как их разрешит PREPARE; к ним — типы найденных функций."""
+    recorder = _Recorder()
+
+    await allowed_implementations(
+        recorder, "public", operators=[], functions=[], types=['"app_t"'], relations=['"public"."app_x"']
+    )
+
+    [sql] = recorder.sent
+    assert "pg_catalog.to_regtype(n.name)" in sql
+    assert "pg_catalog.to_regclass(n.name)" in sql
+    assert """ARRAY['"app_t"']::pg_catalog.text[]""" in sql
+    assert """ARRAY['"public"."app_x"']::pg_catalog.text[]""" in sql
+    for column in ("p.prorettype", "p.proargtypes", "p.proallargtypes", "o.oprleft", "o.oprright", "o.oprresult"):
+        assert column in sql
+    assert "a.aggtranstype" in sql
+
+
+async def test_allowed_implementations_default_to_no_seeds() -> None:
+    recorder = _Recorder()
+
+    await allowed_implementations(recorder, "public", operators=["="], functions=[])
+
+    [sql] = recorder.sent
+    assert sql.count("ARRAY[]::pg_catalog.text[]") == 2
+
+
+def test_definition_machinery_is_seeded_by_locked_relations_and_dependency_types() -> None:
+    """Колонки заблокированных отношений, целей DML и их потомков, типы из pg_depend определений."""
+    assert {"relation_set", "types", "pg_catalog.pg_attribute"} <= _cte_sources("type_seed_set")

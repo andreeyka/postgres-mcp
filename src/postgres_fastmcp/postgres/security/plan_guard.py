@@ -13,19 +13,24 @@ pglast (plan_expressions) и проверяются по тем же прави�
 вызовы в теле — следующим кругом, не глубже _MAX_DEFINITION_DEPTH. Тело, меняющее данные, SET search_path
 вне allowed_schema и SET standard_conforming_strings не on — отказ: их не проверить. Умолчания аргументов функции
 allowed_schema любого языка (планировщик подставляет их в вызов и сворачивает) проверяются как текст определения.
+Машинерия типов (plan_catalog._type_machinery) — функции ввода-вывода, приведения, классы операторов, CHECK доменов,
+которые Postgres вызывает сам, без имени в тексте, — проверяется для типов, до которых доходит оператор (и вложенных
+в них): те же строки, что у определений, плюс вид type_function (встроенная — любая функция pg_catalog).
 
 Порядок. До всего, что разбирает SQL агента на сервере, проверяются его типы (ошибка разбора раскрыла бы структуру
 таблицы без префикса). Туда же — реализации операторов и агрегатов allowed_schema, которые называет SQL агента
-(функция оператора и опорные функции агрегата; вызов с константами планировщик выполнил бы). Затем каждый
+(функция оператора и опорные функции агрегата; вызов с константами планировщик выполнил бы), и машинерия его типов и
+типов колонок его отношений (ввод константы и приведение литерала к типу колонки выполняет уже PREPARE). Затем каждый
 планируемый оператор готовится и тут же снимается (PREPARE; DEALLOCATE одной командой): разбор и переписывание
 берут блокировки представлений и таблиц до конца транзакции, но план не строится и функции не выполняются.
 После этого читаются определения заблокированного: правила представлений; то, что планировщик сворачивает и при
 чтении, — у заблокированных отношений и их потомков (CHECK, выражения и предикаты индексов, ключи секционирования,
 выражения расширенной статистики, политики RLS); путь записи целей DML (триггеры, умолчания колонок и доменов,
 генерируемые колонки, CHECK доменов) — их тексты и зависимости (pg_depend), чего план не показывает (свёртка
-констант, LIMIT, функции операторов и агрегатов public, всё время записи). Отношения из текстов (подзапрос политики)
-и тел SQL-функций проверяются как отношения плана и тоже готовятся (PREPARE SELECT FROM …): их представления и
-определения (индексы таблицы встраиваемой функции) читает следующее чтение определений. Только потом EXPLAIN:
+констант, LIMIT, функции операторов и агрегатов public, всё время записи); машинерия типов колонок заблокированного
+и типов из зависимостей. Отношения из текстов (подзапрос политики) и тел SQL-функций проверяются как отношения
+плана и тоже готовятся (PREPARE SELECT FROM …): их представления и определения (индексы таблицы встраиваемой
+функции) читает следующее чтение определений. Только потом EXPLAIN:
 планировщик сворачивает IMMUTABLE-вызовы, то есть выполняет их, и отклонённое представление до него не доходит.
 Оператор с GENERIC_PLAN, тип параметра которого PREPARE не выводит ($1 IS NULL), готовится ещё раз с NULL
 вместо каждого $N (блокировки те же — отношения называет текст); не вышло и так — отказ до EXPLAIN.
@@ -58,6 +63,7 @@ from pglast.ast import (
     JoinExpr,
     Node,
     ParamRef,
+    RangeVar,
     SelectStmt,
     SortBy,
     String,
@@ -253,7 +259,9 @@ class _StatementNames(Visitor):
     """Имена SQL агента: (схема или None, имя); у имени с базой данных — две последние части.
 
     Типы проверяются до разбора на сервере (оракул ошибок разбора). Операторы и функции — кандидаты
-    в операторы и агрегаты allowed_schema: их реализация проверяется до PREPARE и EXPLAIN.
+    в операторы и агрегаты allowed_schema: их реализация проверяется до PREPARE и EXPLAIN. Типы и отношения
+    (их колонки) — семена машинерии типов: ввод константы и неявное приведение литерала к типу колонки
+    выполняются уже при PREPARE.
     """
 
     def __init__(self) -> None:
@@ -262,6 +270,7 @@ class _StatementNames(Visitor):
         self.types: list[tuple[str | None, str]] = []
         self.operators: list[tuple[str | None, str]] = []
         self.functions: list[tuple[str | None, str]] = []
+        self.relations: list[tuple[str | None, str]] = []
 
     @staticmethod
     def _add(found: list[tuple[str | None, str]], parts: tuple[Node, ...] | None) -> None:
@@ -275,6 +284,11 @@ class _StatementNames(Visitor):
     def visit_TypeName(self, _ancestors: object, node: TypeName) -> None:  # noqa: N802
         """Имя типа."""
         self._add(self.types, node.names)
+
+    def visit_RangeVar(self, _ancestors: object, node: RangeVar) -> None:  # noqa: N802
+        """Отношение (или имя CTE: каталог его не найдёт или найдёт одноимённую таблицу — лишнее семя)."""
+        if node.relname:
+            self.relations.append((node.schemaname, node.relname))
 
     def _add_generated(self, node: Node) -> bool:
         """Операторы, которые разбор подставляет за узел сам (BETWEEN, CASE x WHEN, USING, IN (подзапрос)).
@@ -329,6 +343,11 @@ def _call_name(call: FuncCall) -> tuple[str | None, str]:
             raise PlanUnverifiableError(_FUNCTION_SCAN_TYPE)
 
 
+def _quoted_name(schema: str | None, name: str) -> str:
+    """Имя в кавычках ("схема"."имя" или "имя") для to_regtype/to_regclass: разбор по search_path, как у PREPARE."""
+    return Identifier(name).as_string() if schema is None else Identifier(schema, name).as_string()
+
+
 def _function_call_names(call: object, *, skip_outermost: bool) -> list[tuple[str | None, str]]:
     """Имена функций (схема или None, имя) из Function Call узла Function Scan (EXPLAIN VERBOSE).
 
@@ -374,25 +393,33 @@ class _CatalogNames:
     implementations: dict[tuple[str, str], None] = field(default_factory=dict)
     # (схема, имя) отношений из текстов определений: их представления блокирует PREPARE.
     relations: dict[tuple[str, str], None] = field(default_factory=dict)
+    # Семена машинерии типов из SQL агента: имена типов (для to_regtype) и отношений, чьи колонки — семена
+    # (для to_regclass); текст — идентификаторы в кавычках, разрешаются по search_path, как их разрешит PREPARE.
+    footprint_types: dict[str, None] = field(default_factory=dict)
+    footprint_relations: dict[str, None] = field(default_factory=dict)
+
+    def _all(self) -> tuple[dict[Any, None], ...]:
+        """Все множества в порядке полей."""
+        return (
+            self.functions,
+            self.unqualified_types,
+            self.schema_types,
+            self.implementations,
+            self.relations,
+            self.footprint_types,
+            self.footprint_relations,
+        )
 
     def take(self) -> Self:
         """Забрать накопленное: self пустеет, имена следующего круга копятся в нём заново."""
-        taken = type(self)(
-            dict(self.functions),
-            dict(self.unqualified_types),
-            dict(self.schema_types),
-            dict(self.implementations),
-            dict(self.relations),
-        )
-        for names in (self.functions, self.unqualified_types, self.schema_types, self.implementations, self.relations):
+        taken = type(self)(*(dict(names) for names in self._all()))
+        for names in self._all():
             names.clear()
         return taken
 
     def empty(self) -> bool:
         """Спрашивать каталог больше нечего."""
-        return not (
-            self.functions or self.unqualified_types or self.schema_types or self.implementations or self.relations
-        )
+        return not any(self._all())
 
 
 class PlanGuard:
@@ -572,6 +599,13 @@ class PlanGuard:
         elif kind == "function":
             self._check_function(schema, name)
             self._note_implementation(FUNCTION_KIND, schema, name, pending)
+        elif kind == "type_function":
+            # Машинерия типа (ввод-вывод, опорная функция класса операторов, оценка селективности, canonical/subdiff
+            # диапазона): встроенная — любая функция pg_catalog, её сигнатуру (cstring, internal) задаёт Postgres;
+            # иначе — функция allowed_schema (с проверкой тела и умолчаний), чужая схема — отказ.
+            if schema != _BUILTIN_FUNCTION_SCHEMA:
+                self._check_function(schema, name)
+                self._note_implementation(FUNCTION_KIND, schema, name, pending)
         elif kind in ("operator_function", "aggregate_function"):
             # Встроенные операторы и агрегаты (pg_catalog) реализованы функциями вне списка basic (int4eq,
             # int4_sum) — проверяются сами; функции проверяются у операторов и агрегатов других схем.
@@ -643,6 +677,10 @@ class PlanGuard:
         Операторы и функции планируемых операторов (targets): оператор или агрегат allowed_schema называет себя,
         а не функции, которые вызывает, а IMMUTABLE-вызов с константами планировщик выполнил бы при EXPLAIN.
         Функция allowed_schema на языке sql — по телу: встраивание при EXPLAIN выполнило бы и его свёртки.
+
+        Машинерия типов (plan_catalog._type_machinery): имена типов и колонки отношений SQL агента — семена
+        того же запроса реализаций. Функцию ввода типа ('x'::тип, INSERT литерала в колонку типа) и подтипа
+        диапазона вместе с CHECK домена выполняет уже PREPARE.
         """
         pending = _CatalogNames()
         collector = _StatementNames()
@@ -650,6 +688,10 @@ class PlanGuard:
             collector(statement)
         for schema, name in collector.types:
             self._check_type(schema, name, pending)
+            if schema != _BUILTIN_FUNCTION_SCHEMA:
+                pending.footprint_types[_quoted_name(schema, name)] = None
+        for schema, name in collector.relations:
+            pending.footprint_relations[_quoted_name(schema, name)] = None
         reached = _StatementNames()
         for target in targets:
             reached(target)
@@ -817,7 +859,7 @@ class PlanGuard:
         """
         for _ in range(_MAX_DEFINITION_DEPTH):
             current = pending.take()
-            await self._check_implementations(current.implementations, pending)
+            await self._check_implementations(current, pending)
             await self._check_builtin_functions(current.functions)
             await self._check_row_types(current.unqualified_types, current.schema_types)
             if current.relations:
@@ -827,19 +869,22 @@ class PlanGuard:
                 return
         raise PlanUnverifiableError(rules=True)
 
-    async def _check_implementations(
-        self, implementations: dict[tuple[str, str], None], pending: _CatalogNames
-    ) -> None:
-        """Функции операторов и агрегатов allowed_schema с этими именами и тела её SQL-функций — по правилам basic."""
-        if not implementations:
+    async def _check_implementations(self, current: _CatalogNames, pending: _CatalogNames) -> None:
+        """Функции операторов и агрегатов allowed_schema, тела её SQL-функций и машинерия типов — по правилам basic.
+
+        Семена машинерии — типы и отношения SQL агента (current.footprint_*) и типы найденных функций и операторов.
+        """
+        if not (current.implementations or current.footprint_types or current.footprint_relations):
             return
-        keys = list(implementations)
+        keys = list(current.implementations)
         self._looked_up.update(keys)
         rows = await allowed_implementations(
             self._run,
             self._allowed_schema,
             operators=[name for kind, name in keys if kind == _OPERATOR_KIND],
             functions=[name for kind, name in keys if kind == FUNCTION_KIND],
+            types=list(current.footprint_types),
+            relations=list(current.footprint_relations),
         )
         if rows is None:
             raise PlanUnverifiableError(rules=True)
