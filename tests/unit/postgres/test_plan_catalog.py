@@ -109,3 +109,26 @@ async def test_row_types_map_each_type_to_its_relation() -> None:
 @pytest.mark.parametrize("sql", ["SELECT 1 WHERE a <> 0", "SELECT 1 WHERE a IN ('x')", "SELECT NULLIF(a, 0)"])
 def test_the_qualification_check_sees_implicit_operators(sql: str) -> None:
     assert _unqualified_names(sql) != []
+
+
+def test_rule_dependencies_sql_skips_materialized_views() -> None:
+    """Матвью читает уже скопированные данные: чтение не выполняет "_RETURN", определение проверять незачем."""
+    assert "c.relkind OPERATOR(pg_catalog.<>) 'm'" in RULE_DEPENDENCIES_SQL
+
+
+def test_rule_dependencies_sql_gates_non_select_rules_on_a_dml_lock() -> None:
+    """Правило не ON SELECT (ev_type <> '1') берётся, только если бэкенд держит блокировку DML на отношении."""
+    assert "r.ev_type OPERATOR(pg_catalog.=) '1'" in RULE_DEPENDENCIES_SQL
+    assert "l.mode OPERATOR(pg_catalog.=) ANY (" in RULE_DEPENDENCIES_SQL
+    for mode in (
+        "RowExclusiveLock",
+        "ShareUpdateExclusiveLock",
+        "ShareLock",
+        "ShareRowExclusiveLock",
+        "ExclusiveLock",
+        "AccessExclusiveLock",
+    ):
+        assert f"'{mode}'" in RULE_DEPENDENCIES_SQL
+    # AccessShareLock (SELECT) и RowShareLock (SELECT FOR SHARE/UPDATE) не дают сработать DML-правилу.
+    assert "'AccessShareLock'" not in RULE_DEPENDENCIES_SQL
+    assert "'RowShareLock'" not in RULE_DEPENDENCIES_SQL

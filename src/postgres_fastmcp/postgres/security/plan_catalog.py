@@ -50,6 +50,13 @@ _ROW_TYPES_SQL = (
 # fastpath) — обычный путь AccessShareLock. Блокировки pg_catalog и pg_toast берут и собственные запросы
 # каталога (pg_locks — сам представление), их правила не читаются; отношения без правил строк не дают.
 #
+# Материализованные представления (relkind = 'm') пропускаются целиком: их данные уже скопированы, чтение
+# не вычисляет определение (в отличие от обычного представления, чья "_RETURN" всегда выполняется). Правило
+# не ON SELECT (ev_type <> '1', оно есть только у DML-таблиц, у представлений — только SELECT) берётся, только
+# если эта транзакция держит на отношении блокировку строже AccessShareLock/RowShareLock: их берут SELECT и
+# FOR SHARE, а DML — RowExclusiveLock и выше, и только тогда правило вообще может сработать. Правило ON SELECT
+# берётся всегда: чтение представления выполняет его "_RETURN" при любой блокировке.
+#
 # Строки (kind): rule — текст правила (definition, pg_get_ruledef: имена вне search_path — со схемой);
 # function — функция или агрегат из pg_depend правила; aggregate_function — опорная функция агрегата
 # (parent_schema — схема агрегата); operator и operator_function — оператор и его функция (oprcode); type — тип
@@ -62,6 +69,12 @@ _PG_TYPE = "'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid"
 _NO_PARENT = "NULL::pg_catalog.name"
 _NO_RELATION = "NULL::pg_catalog.name, NULL::pg_catalog.name"
 _NO_DEFINITION = "NULL::pg_catalog.text"
+# Режимы блокировки DML (RowExclusiveLock и выше): их берут операторы, меняющие отношение, а не только
+# читающие его (AccessShareLock — SELECT, RowShareLock — SELECT FOR SHARE/UPDATE его не берут).
+_DML_LOCK_MODES = (
+    "ARRAY['RowExclusiveLock', 'ShareUpdateExclusiveLock', 'ShareLock', 'ShareRowExclusiveLock', "
+    "'ExclusiveLock', 'AccessExclusiveLock']::pg_catalog.text[]"
+)
 # Подстановки — константы модуля выше, ввода агента в тексте нет.
 RULE_DEPENDENCIES_SQL = (
     "WITH RECURSIVE rules AS ("  # noqa: S608
@@ -73,7 +86,9 @@ RULE_DEPENDENCIES_SQL = (
     "WHERE l.locktype OPERATOR(pg_catalog.=) 'relation' "
     "AND l.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid() "
     "AND db.datname OPERATOR(pg_catalog.=) pg_catalog.current_database() "
-    "AND cn.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'pg_toast']::pg_catalog.name[])"
+    "AND cn.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'pg_toast']::pg_catalog.name[]) "
+    "AND c.relkind OPERATOR(pg_catalog.<>) 'm' "
+    f"AND (r.ev_type OPERATOR(pg_catalog.=) '1' OR l.mode OPERATOR(pg_catalog.=) ANY ({_DML_LOCK_MODES}))"
     "), dependencies AS ("
     "SELECT DISTINCT d.refclassid, d.refobjid FROM rules u "
     f"JOIN pg_catalog.pg_depend d ON d.classid OPERATOR(pg_catalog.=) {_PG_REWRITE} "

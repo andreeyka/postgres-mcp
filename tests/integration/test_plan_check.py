@@ -53,6 +53,9 @@ DROP DOMAIN IF EXISTS public.other_users_dom;
 CREATE DOMAIN public.other_users_dom AS public.other_users;
 CREATE TABLE IF NOT EXISTS public.app_serial_items (id serial PRIMARY KEY, v text);
 CREATE TABLE IF NOT EXISTS public.app_identity_items (id int GENERATED ALWAYS AS IDENTITY, v text);
+CREATE TABLE IF NOT EXISTS public.app_rule_items (id int);
+CREATE OR REPLACE RULE app_rule_items_log AS ON INSERT TO public.app_rule_items DO ALSO SELECT secret.api_key();
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.app_matview_setting AS SELECT current_setting('port') AS port;
 """
 
 
@@ -272,3 +275,24 @@ async def test_view_dependencies_hidden_from_the_plan_are_rejected(
 async def test_view_with_allowed_dependencies_returns_rows(db_plan_check: DbAccess) -> None:
     rows = await db_plan_check.sql_driver.execute("SELECT l FROM app_plan_people_lower_view", readonly=True)
     assert [row.cells["l"] for row in rows] == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_select_from_a_table_with_a_non_firing_rule_passes(db_plan_check: DbAccess) -> None:
+    """SELECT держит только AccessShareLock: правило ON INSERT (ev_type <> '1') не может сработать и не проверяется."""
+    rows = await db_plan_check.sql_driver.execute("SELECT count(*) AS n FROM app_rule_items", readonly=True)
+    assert rows[0].cells["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_insert_that_can_fire_a_rule_outside_basic_is_rejected(db_plan_check: DbAccess) -> None:
+    """INSERT держит RowExclusiveLock: правило DO ALSO может сработать, его secret.api_key() проверяется."""
+    with pytest.raises(PlanAccessError, match=r"secret\.api_key"):
+        await db_plan_check.sql_driver.execute("INSERT INTO app_rule_items (id) VALUES (1)", readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_select_from_a_matview_with_a_rejected_definition_passes(db_plan_check: DbAccess) -> None:
+    """Relkind = 'm': чтение матвью не выполняет "_RETURN", current_setting('port') в определении не проверяется."""
+    rows = await db_plan_check.sql_driver.execute("SELECT port FROM app_matview_setting", readonly=True)
+    assert rows[0].cells["port"] is not None
