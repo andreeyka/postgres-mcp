@@ -56,6 +56,7 @@ from pglast.ast import (
     TypeName,
     UpdateStmt,
 )
+from pglast.parser import ParseError
 from pglast.stream import RawStream
 from pglast.visitors import Visitor
 from psycopg import Error as PostgresError
@@ -203,10 +204,20 @@ class _NullParameters(Visitor):
         return A_Const(isnull=True)
 
 
-def _with_null_parameters(text: str) -> str:
-    """Текст оператора, где каждый $N заменён на NULL; разбирается заново, чтобы не трогать дерево EXPLAIN."""
+def _with_null_parameters(text: str) -> str | None:
+    """Текст оператора, где каждый $N заменён на NULL; разбирается заново, чтобы не трогать дерево EXPLAIN.
+
+    None — полученный текст не разбирается: RawStream печатает индекс и поле NULL без скобок (($1)[1] —
+    NULL[1], ($1).f — NULL.f). Такой текст нельзя отправлять: синтаксическую ошибку Postgres выдаёт на всю
+    строку команд, SAVEPOINT в ней не выполняется, и откатывать было бы нечего.
+    """
     [raw] = pglast.parse_sql(text)
-    return RawStream()(_NullParameters()(raw.stmt))
+    substituted = RawStream()(_NullParameters()(raw.stmt))
+    try:
+        pglast.parse_sql(substituted)
+    except ParseError:
+        return None
+    return substituted
 
 
 class _StatementNames(Visitor):
@@ -411,8 +422,8 @@ class PlanGuard:
         не принимает невыводимый ($1 IS NULL, pg_typeof($1)) — 42P18. Такой оператор готовится в точке сохранения;
         при 42P18 она откатывается, и оператор готовится ещё раз (тоже в точке сохранения) с NULL вместо каждого
         $N: отношения и представления называет текст, так что блокировки те же, а у NULL тип выводится
-        (unknown). Не вышло и так — отказ: EXPLAIN оператора, представления которого не проверены, выполнил бы
-        их IMMUTABLE-вызовы.
+        (unknown). Не вышло и так (или текст с NULL не разбирается) — отказ: EXPLAIN оператора, представления
+        которого не проверены, выполнил бы их IMMUTABLE-вызовы.
 
         Raises:
             PlanUnverifiableError: Оператор с GENERIC_PLAN не готовится ни с $N, ни с NULL.
@@ -426,8 +437,11 @@ class PlanGuard:
             await self._run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}; RELEASE SAVEPOINT {_SAVEPOINT}")
         else:
             return
+        substituted = _with_null_parameters(text)
+        if substituted is None:
+            raise PlanUnverifiableError(rules=True)
         try:
-            await self._run(self._savepoint_command(_with_null_parameters(text)))
+            await self._run(self._savepoint_command(substituted))
         except PostgresError:
             await self._run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}; RELEASE SAVEPOINT {_SAVEPOINT}")
             raise PlanUnverifiableError(rules=True) from None

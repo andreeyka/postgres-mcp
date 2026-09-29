@@ -1316,3 +1316,26 @@ async def test_constructs_without_an_operator_do_not_look_up_implementations(sql
     await _guard(explain).check(sql)
 
     assert explain.implementation_queries == []
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL, $2 = ARRAY[1], ($2)[1]",
+        "EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL, $2 = ROW(1), ($2).f1",
+    ],
+)
+async def test_retry_text_that_does_not_parse_is_unverifiable_without_sending_it(sql: str) -> None:
+    """RawStream печатает ($2)[1] с NULL как NULL[1] — синтаксическая ошибка на всю строку команд, SAVEPOINT
+    не выполнился бы; такой текст не отправляется, отказ закрыто."""
+    error = IndeterminateDatatype("could not determine data type of parameter $1")
+    explain = _Explain(prepare_errors={"$1 IS NULL": error})
+
+    with pytest.raises(PlanUnverifiableError):
+        await _guard(explain).check(sql)
+
+    first, rollback = explain.prepared
+    assert "$1 IS NULL" in first
+    assert rollback == "ROLLBACK TO SAVEPOINT _pgmcp_check; RELEASE SAVEPOINT _pgmcp_check"
+    assert explain.sent == []
+    assert explain.rule_queries == []

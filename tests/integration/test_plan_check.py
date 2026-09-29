@@ -9,7 +9,7 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import PlanAccessError
+from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
 
 # public.sum(text) поверх secret.agg_step — намеренно: агрегаты и операторы проверяются по имени, все перегрузки
@@ -358,6 +358,16 @@ async def test_folded_function_of_a_view_is_not_executed_with_an_undeterminable_
     with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
         await db_plan_check.sql_driver.execute(
             "EXPLAIN (GENERIC_PLAN) SELECT * FROM app_boom_view WHERE $1 IS NULL", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_statement_whose_null_retry_does_not_parse_is_unverifiable(db_plan_check: DbAccess) -> None:
+    """$1 IS NULL — 42P18, повтор с NULL печатает ($2)[1] как NULL[1] (синтаксическая ошибка): текст не
+    отправляется, отказ PlanUnverifiableError, а не ошибка точки сохранения."""
+    with pytest.raises(PlanUnverifiableError):
+        await db_plan_check.sql_driver.execute(
+            "EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL, $2 = ARRAY[1], ($2)[1]", readonly=True
         )
 
 
