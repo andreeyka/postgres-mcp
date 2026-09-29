@@ -2,6 +2,7 @@
 """Unit tests for SafeSqlExecutor."""
 
 import asyncio
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -326,11 +327,18 @@ class TestSafeSqlExecutorPlanCheck:
         assert result == [RowResult(cells={"x": 1})]
         delegate.execute.assert_awaited_once()
         assert delegate.execute.await_args.kwargs["readonly"] is False
-        assert delegate.sent[:2] == [_SETTINGS, "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"]
-        # Правила представлений читаются после EXPLAIN (он их заблокировал) и до оператора, с тегом.
+        assert delegate.sent[0] == _SETTINGS
+        prepared = re.fullmatch(
+            r"/\* t \*/ PREPARE (_pgmcp_check_[0-9a-f]{16}_0) AS SELECT \* FROM app_t; DEALLOCATE \1", delegate.sent[1]
+        )
+        assert prepared is not None
+        # Правила представлений читаются после PREPARE (он их заблокировал, план не строился), с тегом, ...
         assert delegate.sent[2].startswith("/* t */ WITH RECURSIVE rules AS")
         assert "pg_catalog.pg_rewrite" in delegate.sent[2]
-        assert delegate.sent[3:] == ["/* t */ SELECT * FROM app_t"]
+        assert delegate.sent[3] == "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
+        # ... и ещё раз после EXPLAIN, до оператора.
+        assert "pg_catalog.pg_rewrite" in delegate.sent[4]
+        assert delegate.sent[5:] == ["/* t */ SELECT * FROM app_t"]
 
     async def test_settings_are_sent_once_for_every_statement_of_the_string(self) -> None:
         delegate = _precheck_delegate(_plan_rows("public", "app_t"))

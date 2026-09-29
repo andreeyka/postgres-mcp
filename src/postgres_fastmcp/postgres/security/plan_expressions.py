@@ -16,7 +16,9 @@ import pglast
 from pglast.ast import (
     A_Const,
     A_Expr,
+    CaseExpr,
     FuncCall,
+    JoinExpr,
     JsonTable,
     Node,
     RangeTableFunc,
@@ -25,10 +27,12 @@ from pglast.ast import (
     SelectStmt,
     SortBy,
     String,
+    SubLink,
     TypeCast,
     TypeName,
 )
-from pglast.enums.parsenodes import SetOperation
+from pglast.enums.parsenodes import A_Expr_Kind, SetOperation
+from pglast.enums.primnodes import SubLinkType
 from pglast.parser import ParseError
 from pglast.visitors import Visitor
 
@@ -89,6 +93,15 @@ _REGCLASS_NAME = re.compile(rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})?")
 _NEXTVAL: frozenset[QualifiedName] = frozenset({(None, "nextval"), ("pg_catalog", "nextval")})
 _REGCLASS: frozenset[QualifiedName] = frozenset({(None, "regclass"), ("pg_catalog", "regclass")})
 
+# Операторы BETWEEN (transformAExprBetween): имя узла — ключевое слово, а сравнивают >= и <= (NOT — < и >);
+# SYMMETRIC — те же операторы в обе стороны.
+_BETWEEN_OPERATORS: dict[A_Expr_Kind, tuple[str, ...]] = {
+    A_Expr_Kind.AEXPR_BETWEEN: (">=", "<="),
+    A_Expr_Kind.AEXPR_BETWEEN_SYM: (">=", "<="),
+    A_Expr_Kind.AEXPR_NOT_BETWEEN: ("<", ">"),
+    A_Expr_Kind.AEXPR_NOT_BETWEEN_SYM: ("<", ">"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ExpressionNames:
@@ -98,6 +111,27 @@ class ExpressionNames:
     operators: tuple[QualifiedName, ...] = ()
     types: tuple[QualifiedName, ...] = ()
     sequences: tuple[QualifiedName, ...] = ()
+
+
+def parser_operators(node: Node) -> tuple[str, ...]:
+    """Операторы, которые разбор Postgres подставляет за узел сам: в тексте их имени нет.
+
+    BETWEEN — сравнения (имя узла — ключевое слово); CASE x WHEN — = (transformCaseExpr); JOIN USING и
+    NATURAL JOIN — = между колонками (transformJoinUsingClause); x IN (подзапрос) — = ANY (transformSubLink,
+    operName пуст; NOT IN — отрицание того же). Имена без схемы: оператор ищется по search_path. IN (список),
+    NULLIF и IS DISTINCT FROM несут = в имени узла сами; сравнение строк — явный оператор.
+    """
+    match node:
+        case A_Expr(kind=kind) if kind in _BETWEEN_OPERATORS:
+            return _BETWEEN_OPERATORS[kind]
+        case CaseExpr(arg=arg) if arg is not None:
+            return ("=",)
+        case JoinExpr(usingClause=using, isNatural=natural) if using or natural:
+            return ("=",)
+        case SubLink(subLinkType=SubLinkType.ANY_SUBLINK, operName=operator) if not operator:
+            return ("=",)
+        case _:
+            return ()
 
 
 def _qualified(parts: Iterable[Node]) -> QualifiedName | None:
@@ -200,8 +234,20 @@ class _Names(Visitor):
         self.verifiable = False
 
     def visit_A_Expr(self, _ancestors: object, node: A_Expr) -> None:  # noqa: N802
-        """Оператор выражения (OPERATOR(schema.op) — со схемой)."""
-        self._add(self.operators, node.name)
+        """Оператор выражения (OPERATOR(schema.op) — со схемой); у BETWEEN — сравнения вместо ключевого слова."""
+        generated = parser_operators(node)
+        if generated:
+            self.operators.extend((None, name) for name in generated)
+        else:
+            self._add(self.operators, node.name)
+
+    def visit_CaseExpr(self, _ancestors: object, node: CaseExpr) -> None:  # noqa: N802
+        """Равенство CASE x WHEN (ruleutils печатает CASE с аргументом так же)."""
+        self.operators.extend((None, name) for name in parser_operators(node))
+
+    def visit_JoinExpr(self, _ancestors: object, node: JoinExpr) -> None:  # noqa: N802
+        """Равенство колонок JOIN USING и NATURAL JOIN (текст правила печатает USING как есть)."""
+        self.operators.extend((None, name) for name in parser_operators(node))
 
     def visit_SortBy(self, _ancestors: object, node: SortBy) -> None:  # noqa: N802
         """Оператор USING ключа сортировки."""

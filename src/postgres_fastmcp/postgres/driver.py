@@ -236,9 +236,9 @@ class SqlExecutor:
 
         precheck выполняется после BEGIN на том же курсоре: его запросы и оператор — одна транзакция
         одного соединения; исключение precheck уходит в общий ROLLBACK, оператор не выполняется.
-        Пометка hypopg смотрит только на оператор: тексты EXPLAIN проверки — deparse того же оператора,
-        поэтому разметка по его тексту покрывает и их; сами функции hypopg VOLATILE, а планировщик
-        VOLATILE-функции не вызывает (EXPLAIN без ANALYZE ничего не выполняет).
+        Пометка hypopg смотрит только на оператор: тексты PREPARE и EXPLAIN проверки — deparse того же оператора,
+        поэтому разметка по его тексту покрывает и их; PREPARE не планирует и ничего не выполняет, а функции hypopg
+        VOLATILE, и планировщик их не вызывает (EXPLAIN без ANALYZE ничего не выполняет).
         """
         self._mark_hypopg_connection(connection, query)
         async with connection.cursor(row_factory=dict_row) as cursor:

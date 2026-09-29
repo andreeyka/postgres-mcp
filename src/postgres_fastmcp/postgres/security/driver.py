@@ -165,9 +165,10 @@ class SafeSqlExecutor:
         """Выполнение с SET LOCAL через делегата; с plan_check — проверка по плану в той же транзакции.
 
         С plan_check делегат получает precheck: на том же соединении, после BEGIN, он один раз ставит
-        SET LOCAL statement_timeout/search_path и строит план каждого оператора (и, если выражения плана этого
-        требуют, спрашивает каталог), затем читает правила представлений, заблокированных этими EXPLAIN; оператор
-        идёт без префикса и наследует настройки транзакции.
+        SET LOCAL statement_timeout/search_path, готовит и сразу снимает каждый оператор (PREPARE; DEALLOCATE —
+        блокировки представлений без планирования), читает их правила, затем строит план каждого оператора
+        (и, если выражения плана этого требуют, спрашивает каталог) и ещё раз читает правила; оператор идёт
+        без префикса и наследует настройки транзакции.
         AccessShareLock, взятый разбором, держится до конца транзакции: определение представления между
         проверкой и выполнением не меняется. Отказ проверки откатывает транзакцию, оператор не выполняется.
 
@@ -188,7 +189,7 @@ class SafeSqlExecutor:
                 await runner(settings)
 
             async def run(sql: str) -> list[RowResult] | None:
-                # EXPLAIN (deparse pglast; standard_conforming_strings = on закрепляет SqlExecutor в BEGIN)
+                # PREPARE и EXPLAIN (deparse pglast; standard_conforming_strings = on закрепляет SqlExecutor в BEGIN)
                 # и запросы каталога PlanGuard — с тегом, в той же транзакции.
                 return await runner(f"/* {tag} */ {sql}")
 

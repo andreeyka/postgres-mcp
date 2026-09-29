@@ -9,9 +9,11 @@ from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config.database import DatabaseConfig
 from postgres_fastmcp.domains.db_access import DbAccess, DbAccessService
 from postgres_fastmcp.shared.enums import AccessMode
-from postgres_fastmcp.shared.errors import PlanAccessError
+from postgres_fastmcp.shared.errors import PlanAccessError, PlanUnverifiableError
 
 
+# public.sum(text) поверх secret.agg_step — намеренно: агрегаты и операторы проверяются по имени, все перегрузки
+# сразу, так что в базе этих тестов любой sum(...) под plan_check отклоняется, не только sum(text).
 _SETUP = """
 CREATE SCHEMA IF NOT EXISTS secret;
 CREATE TABLE IF NOT EXISTS secret.accounts (id int, token text);
@@ -56,6 +58,16 @@ CREATE TABLE IF NOT EXISTS public.app_identity_items (id int GENERATED ALWAYS AS
 CREATE TABLE IF NOT EXISTS public.app_rule_items (id int);
 CREATE OR REPLACE RULE app_rule_items_log AS ON INSERT TO public.app_rule_items DO ALSO SELECT secret.api_key();
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.app_matview_setting AS SELECT current_setting('port') AS port;
+CREATE OR REPLACE FUNCTION secret.boom() RETURNS text
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.boom was executed'; END$$;
+CREATE OR REPLACE VIEW public.app_boom_view AS SELECT secret.boom() AS b;
+CREATE OR REPLACE FUNCTION secret.agg_step(state text, value text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RETURN coalesce(state, '') || value; END$$;
+CREATE OR REPLACE AGGREGATE public.sum(text) (SFUNC = secret.agg_step, STYPE = text);
+CREATE OR REPLACE FUNCTION public.app_close_to(a int, b int) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS 'BEGIN RETURN abs(a - b) <= 1; END';
+DROP OPERATOR IF EXISTS public.<~> (int, int);
+CREATE OPERATOR public.<~> (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_close_to);
 """
 
 
@@ -74,6 +86,37 @@ async def db_plan_check(
         yield service.view(EffectiveAccess(AccessMode.BASIC, write_mode=True))
     finally:
         await service.close()
+
+
+# Операторы public над app_tag, реализованные secret.tag_boom. Имена =, <, >, <=, >= проверяются по имени, все
+# перегрузки сразу: пока они есть, под plan_check отклоняется любое сравнение, поэтому они живут только в своих тестах.
+_TAG_OPERATORS = """
+DO $$BEGIN CREATE TYPE public.app_tag AS ENUM ('a', 'b'); EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+CREATE OR REPLACE FUNCTION secret.tag_boom(x public.app_tag, y public.app_tag) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.tag_boom was executed'; END$$;
+CREATE OPERATOR public.= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.< (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.> (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.<= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+CREATE OPERATOR public.>= (LEFTARG = public.app_tag, RIGHTARG = public.app_tag, FUNCTION = secret.tag_boom);
+"""
+_DROP_TAG_OPERATORS = """
+DROP OPERATOR IF EXISTS public.= (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.< (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.> (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.<= (public.app_tag, public.app_tag);
+DROP OPERATOR IF EXISTS public.>= (public.app_tag, public.app_tag);
+"""
+
+
+@pytest.fixture
+async def db_tag_operators(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть операторы сравнения app_tag над secret.tag_boom."""
+    await db_full.sql_driver.execute(_DROP_TAG_OPERATORS + _TAG_OPERATORS, readonly=False)
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_TAG_OPERATORS, readonly=False)
 
 
 @pytest.mark.asyncio
@@ -134,8 +177,8 @@ async def test_rejected_write_changes_nothing(db_plan_check: DbAccess, db_full: 
 
 @pytest.mark.asyncio
 async def test_information_schema_is_rejected_with_plan_check(db_plan_check: DbAccess) -> None:
-    """Строгий режим: представления information_schema читают pg_catalog."""
-    with pytest.raises(PlanAccessError, match="pg_catalog"):
+    """Строгий режим: определения представлений information_schema проверяются до плана — их типы вне public."""
+    with pytest.raises(PlanAccessError, match=r"type 'information_schema\.sql_identifier'"):
         await db_plan_check.sql_driver.execute("SELECT table_name FROM information_schema.tables", readonly=True)
 
 
@@ -296,3 +339,81 @@ async def test_select_from_a_matview_with_a_rejected_definition_passes(db_plan_c
     """Relkind = 'm': чтение матвью не выполняет "_RETURN", current_setting('port') в определении не проверяется."""
     rows = await db_plan_check.sql_driver.execute("SELECT port FROM app_matview_setting", readonly=True)
     assert rows[0].cells["port"] is not None
+
+
+@pytest.mark.asyncio
+async def test_folded_function_of_a_view_is_not_executed_before_the_rejection(db_plan_check: DbAccess) -> None:
+    """IMMUTABLE secret.boom() с константами планировщик выполнил бы при EXPLAIN (ошибка 'was executed');
+    правила читаются после PREPARE, до планирования: приходит отказ по функции, а не её исключение."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
+        await db_plan_check.sql_driver.execute("SELECT * FROM app_boom_view", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_folded_function_of_a_view_is_not_executed_with_an_undeterminable_parameter(
+    db_plan_check: DbAccess,
+) -> None:
+    """PREPARE не выводит тип $1 в $1 IS NULL (42P18): оператор готовится ещё раз с NULL вместо $1, и правила
+    представления читаются до EXPLAIN (GENERIC_PLAN) — secret.boom() не выполняется."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.boom'"):
+        await db_plan_check.sql_driver.execute(
+            "EXPLAIN (GENERIC_PLAN) SELECT * FROM app_boom_view WHERE $1 IS NULL", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_statement_whose_null_retry_does_not_parse_is_unverifiable(db_plan_check: DbAccess) -> None:
+    """$1 IS NULL — 42P18, повтор с NULL печатает ($2)[1] как NULL[1] (синтаксическая ошибка): текст не
+    отправляется, отказ PlanUnverifiableError, а не ошибка точки сохранения."""
+    with pytest.raises(PlanUnverifiableError):
+        await db_plan_check.sql_driver.execute(
+            "EXPLAIN (GENERIC_PLAN) SELECT $1 IS NULL, $2 = ARRAY[1], ($2)[1]", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_operator_over_a_builtin_outside_basic_is_rejected_in_the_agent_sql(
+    db_plan_check: DbAccess,
+) -> None:
+    """Оператор public.!! (text, boolean) реализован pg_catalog.current_setting: SQL агента видит только имя оператора."""
+    with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
+        await db_plan_check.sql_driver.execute(
+            "SELECT ('max_connections' !! true) AS s FROM app_plan_people", readonly=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_aggregate_over_a_foreign_function_is_rejected(db_plan_check: DbAccess) -> None:
+    """Валидатор basic пускает только функции из списка basic; public.sum(text) — перегрузка разрешённого имени:
+    sum(name) по тексту выглядит встроенным агрегатом, план печатает его без схемы."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.agg_step'"):
+        await db_plan_check.sql_driver.execute("SELECT sum(name) AS c FROM app_plan_people", readonly=True)
+
+
+@pytest.mark.asyncio
+async def test_public_operator_over_a_public_function_passes(db_plan_check: DbAccess) -> None:
+    rows = await db_plan_check.sql_driver.execute("SELECT (id <~> 2) AS near FROM app_plan_items", readonly=True)
+    assert rows[0].cells["near"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'a'::app_tag BETWEEN 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT 'a'::app_tag NOT BETWEEN 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT 'a'::app_tag BETWEEN SYMMETRIC 'a'::app_tag AND 'b'::app_tag AS r",
+        "SELECT CASE 'a'::app_tag WHEN 'b'::app_tag THEN 1 END AS r",
+        "SELECT * FROM (SELECT 'a'::app_tag AS c) AS x JOIN (SELECT 'b'::app_tag AS c) AS y USING (c)",
+        "SELECT * FROM (SELECT 'a'::app_tag AS c) AS x NATURAL JOIN (SELECT 'b'::app_tag AS c) AS y",
+        "SELECT 'a'::app_tag IN (SELECT 'b'::app_tag) AS r",
+        "SELECT 'a'::app_tag NOT IN (SELECT 'b'::app_tag) AS r",
+    ],
+)
+async def test_operator_generated_by_the_parser_is_checked_by_its_function(
+    db_tag_operators: DbAccess, sql: str
+) -> None:
+    """Имени оператора в тексте нет: BETWEEN — сравнения, CASE x WHEN, USING и NATURAL — равенство, IN (подзапрос)
+    — = ANY. С константами EXPLAIN выполнил бы secret.tag_boom (IN (подзапрос) — при выполнении): отказ раньше."""
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.tag_boom'"):
+        await db_tag_operators.sql_driver.execute(sql, readonly=True)
