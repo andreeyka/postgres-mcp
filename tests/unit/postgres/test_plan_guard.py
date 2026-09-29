@@ -42,9 +42,11 @@ def _rule_row(
     relation_name: str | None = None,
     definition: str | None = None,
     config: list[str] | None = None,
+    origin: str | None = None,
 ) -> dict[str, Any]:
     """Строка запроса определений (DEFINITION_DEPENDENCIES_SQL) или реализаций (ALLOWED_IMPLEMENTATIONS_SQL)."""
     return {
+        "origin": origin,
         "kind": kind,
         "schema": schema,
         "name": name,
@@ -135,6 +137,14 @@ def _guard(
     explain: _Explain, table_prefix: str | None = None, builtin_types: BuiltinTypeNames | None = None
 ) -> PlanGuard:
     return PlanGuard(explain, allowed_schema="public", table_prefix=table_prefix, builtin_types=builtin_types)
+
+
+async def _warm_guard(explain: _Explain, table_prefix: str | None = None) -> PlanGuard:
+    """Проверка с уже загруженным кэшем типов pg_catalog (DbAccessService держит один на пул): его запрос не в sent."""
+    builtin_types = BuiltinTypeNames()
+    await builtin_types.load(explain)
+    explain.sent.clear()
+    return _guard(explain, table_prefix, builtin_types)
 
 
 async def test_view_over_a_foreign_schema_is_rejected() -> None:
@@ -289,7 +299,7 @@ class _Rows:
         self._rows = rows
 
     async def __call__(self, sql: str) -> list[RowResult] | None:
-        if "pg_catalog.pg_rewrite" in sql:
+        if "pg_catalog.pg_rewrite" in sql or "pg_catalog.pg_aggregate" in sql:
             return []
         return self._rows
 
@@ -587,7 +597,7 @@ async def test_expression_outside_basic_is_rejected(node: dict[str, Any], kind: 
 async def test_allowed_expressions_pass_without_catalog_queries(expressions: dict[str, Any]) -> None:
     explain = _Explain({_EXPLAIN + _SELECT: _with(**expressions)})
 
-    await _guard(explain).check(_SELECT)
+    await (await _warm_guard(explain)).check(_SELECT)
 
     assert explain.catalog_queries() == []
 
@@ -596,9 +606,10 @@ async def test_unqualified_builtin_outside_basic_is_rejected_by_the_catalog() ->
     """current_setting печатается без схемы (search_path = public); каталог говорит: это pg_catalog."""
     node = _with(Output=["current_setting('app.jwt_secret'::text)", "my_public_fn(app_t.a)"])
     explain = _Explain({_EXPLAIN + _SELECT: node}, pg_catalog_functions=frozenset({"current_setting"}))
+    guard = await _warm_guard(explain)
 
     with pytest.raises(PlanAccessError) as exc_info:
-        await _guard(explain).check(_SELECT)
+        await guard.check(_SELECT)
 
     assert (exc_info.value.kind, exc_info.value.qualified_name) == ("function", "pg_catalog.current_setting")
     [query] = explain.catalog_queries()
@@ -672,7 +683,7 @@ async def test_domain_over_a_prefixed_row_type_passes() -> None:
 async def test_row_types_are_not_checked_without_a_prefix() -> None:
     explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["NULL::users"])}, row_types=frozenset({"users"}))
 
-    await _guard(explain).check(_SELECT)
+    await (await _warm_guard(explain)).check(_SELECT)
 
     assert explain.catalog_queries() == []
 
@@ -808,7 +819,7 @@ async def test_agent_types_need_one_row_type_query_only_when_unresolved() -> Non
 async def test_agent_types_are_not_looked_up_without_a_prefix() -> None:
     explain = _Explain(row_types=frozenset({"users"}))
 
-    await _guard(explain).check("SELECT NULL::users FROM app_t")
+    await (await _warm_guard(explain)).check("SELECT NULL::users FROM app_t")
 
     assert explain.catalog_queries() == []
 
@@ -961,6 +972,8 @@ def _step(sql: str) -> str:
     """Короткое имя шага журнала исполнителя: PREPARE/EXPLAIN с отношением, rules — чтение правил."""
     if "pg_catalog.pg_rewrite" in sql:
         return "rules"
+    if "pg_catalog.pg_aggregate" in sql:
+        return "implementations"
     relation = sql.rsplit(" FROM ", maxsplit=1)[-1].split(";", maxsplit=1)[0]
     return f"{sql.split(' ', maxsplit=1)[0]} {relation}"
 
@@ -972,6 +985,7 @@ async def test_definitions_are_checked_between_prepare_and_explain() -> None:
     await _guard(explain).check("SELECT * FROM app_a; SHOW search_path; SELECT * FROM app_b")
 
     assert [_step(sql) for sql in explain.log] == [
+        "implementations",
         "PREPARE app_a",
         "PREPARE app_b",
         "rules",
@@ -1169,12 +1183,13 @@ async def test_public_operator_in_the_agent_sql_is_rejected_before_prepare() -> 
 )
 async def test_public_operator_in_the_plan_is_checked_by_its_function(expression: str) -> None:
     """Представление: SQL агента оператора не называет, его печатает план (без схемы или с allowed_schema)."""
-    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])}, implementations=_BANG_SETTING)
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])}, implementations={"!!": _BANG_SETTING})
 
     with pytest.raises(PlanAccessError, match=r"function 'pg_catalog\.current_setting'"):
         await _guard(explain).check(_SELECT)
 
-    [query] = explain.implementation_queries
+    [footprint, query] = explain.implementation_queries
+    assert "'!!'" not in footprint
     assert "'!!'" in query
 
 
@@ -1256,25 +1271,32 @@ async def test_plan_only_names_get_a_second_lookup() -> None:
 
     await _guard(explain).check(_SELECT)
 
-    [query] = explain.implementation_queries
+    [footprint, query] = explain.implementation_queries
+    assert "'app_agg'" not in footprint
     assert "'app_agg'" in query
 
 
-async def test_no_lookup_without_names_of_the_allowed_schema() -> None:
+async def test_no_name_lookup_without_names_of_the_allowed_schema() -> None:
+    """Выражения плана без имён allowed_schema не дают второго запроса; первый — семена машинерии типов SQL агента."""
     node = _with(Output=["pg_catalog.lower(app_t.name)", "(app_t.a OPERATOR(pg_catalog.=) 1)"])
     explain = _Explain({_EXPLAIN + _SELECT: node})
 
     await _guard(explain).check(_SELECT)
 
-    assert explain.implementation_queries == []
+    [footprint] = explain.implementation_queries
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
 
 
 async def test_types_of_non_planned_statements_are_checked_but_their_names_are_not_looked_up() -> None:
+    """PREPARE агента разбирает текст при выполнении (ввод констант): его отношения — семена машинерии типов."""
     explain = _Explain()
 
     await _guard(explain).check("PREPARE p AS SELECT app_agg(id) FROM app_t WHERE id <~> 1")
 
-    assert explain.implementation_queries == []
+    [footprint] = explain.implementation_queries
+    assert "'app_agg'" not in footprint
+    assert "'<~>'" not in footprint
+    assert "'\"app_t\"'" in footprint
 
 
 _TAG_BOOM = [{"kind": "operator_function", "schema": "secret", "name": "tag_boom", "parent_schema": "public"}]
@@ -1318,12 +1340,13 @@ async def test_operator_generated_by_the_parser_is_rejected_before_prepare(sql: 
         "SELECT (SELECT id FROM app_t LIMIT 1) FROM app_t",
     ],
 )
-async def test_constructs_without_an_operator_do_not_look_up_implementations(sql: str) -> None:
-    explain = _Explain(implementations=_TAG_BOOM)
+async def test_constructs_without_an_operator_look_up_no_operators(sql: str) -> None:
+    explain = _Explain()
 
     await _guard(explain).check(sql)
 
-    assert explain.implementation_queries == []
+    [footprint] = explain.implementation_queries
+    assert footprint.count("ARRAY[]::pg_catalog.name[]") == 2
 
 
 @pytest.mark.parametrize(
@@ -1628,7 +1651,8 @@ async def test_chain_of_bodies_within_the_depth_passes() -> None:
 
     await _guard(explain).check(_SELECT)
 
-    assert len(explain.implementation_queries) == 4
+    # Семена машинерии типов SQL агента до PREPARE и четыре круга тел.
+    assert len(explain.implementation_queries) == 5
 
 
 async def test_chain_of_bodies_beyond_the_depth_is_unverifiable() -> None:
@@ -1636,6 +1660,77 @@ async def test_chain_of_bodies_beyond_the_depth_is_unverifiable() -> None:
 
     with pytest.raises(PlanUnverifiableError, match="definitions of views"):
         await _guard(explain).check(_SELECT)
+
+
+def _typed_chain_implementations(length: int, types: int = 1) -> dict[str, list[dict[str, Any]]]:
+    """Цепочка тел f0 -> ... -> f<length-1>; последнее называет тип t0, функция сравнения которого (машинерия,
+    public, sql) называет t1, и так types типов; последняя функция сравнения ничего не называет."""
+    bodies = _chain(length)
+    bodies[f"f{length - 1}"] = [_body(f"f{length - 1}", "SELECT '1'::t0")]
+    for index in range(types):
+        bodies[f'"t{index}"'] = [{"kind": "type_function", "schema": "public", "name": f"c{index}", "origin": "type"}]
+        text = f"SELECT '1'::t{index + 1}" if index + 1 < types else "SELECT 1"
+        bodies[f"c{index}"] = [_body(f"c{index}", text)]
+    return bodies
+
+
+@pytest.mark.parametrize("types", [1, 3])
+async def test_type_seeds_and_their_machinery_do_not_cost_depth(types: int) -> None:
+    """Тип в самом глубоком теле цепочки из пяти, функции его машинерии и их тела — круги вне глубины определений."""
+    explain = _Explain(
+        rules=[{"kind": "function", "schema": "public", "name": "f0"}],
+        implementations=_typed_chain_implementations(5, types),
+    )
+
+    await _guard(explain).check(_SELECT)
+
+    assert any("'c0'" in sql for sql in explain.implementation_queries)
+
+
+async def test_endless_machinery_chain_hits_the_round_cap() -> None:
+    """Цепочку машинерии глубина не ограничивает, её ограничивает _MAX_CATALOG_ROUNDS."""
+    explain = _Explain(
+        rules=[{"kind": "function", "schema": "public", "name": "f0"}],
+        implementations=_typed_chain_implementations(1, 40),
+    )
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_type_in_a_body_beyond_the_depth_is_still_unverifiable() -> None:
+    explain = _Explain(
+        rules=[{"kind": "function", "schema": "public", "name": "f0"}],
+        implementations=_typed_chain_implementations(6),
+    )
+
+    with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
+
+
+async def test_unqualified_builtin_type_names_are_not_seeds() -> None:
+    """Имя без схемы из кэша типов pg_catalog (::text в выражении плана) запроса реализаций не стоит."""
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["(app_t.a)::text", "'x'::json"])})
+
+    await (await _warm_guard(explain)).check(_SELECT)
+
+    # Один запрос — семя-отношение app_v SQL агента до PREPARE; после EXPLAIN круга нет.
+    [query] = explain.implementation_queries
+    assert '"text"' not in query
+
+
+async def test_row_of_a_binary_cast_family_names_the_cast() -> None:
+    """Семейство класса неявного двоичного приведения встроенного типа: отказ называет приведение и как его убрать."""
+    row = {"kind": "type_function", "schema": "secret", "name": "vt_cmp", "origin": "json -> public.app_vt"}
+    explain = _Explain(rules=[row])
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.vt_cmp'") as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    message = str(exc_info.value)
+    assert "implicit binary cast json -> public.app_vt" in message
+    assert "sort and hash json values" in message
+    assert "AS ASSIGNMENT" in message
 
 
 async def test_recursive_body_is_looked_up_once() -> None:
@@ -1646,7 +1741,7 @@ async def test_recursive_body_is_looked_up_once() -> None:
 
     await _guard(explain).check(_SELECT)
 
-    assert len(explain.implementation_queries) == 1
+    assert len(explain.implementation_queries) == 2
 
 
 async def test_function_scan_of_the_allowed_schema_is_checked_by_its_body() -> None:
@@ -1741,4 +1836,133 @@ async def test_unparsable_argument_defaults_are_unverifiable() -> None:
     explain = _Explain(rules=_VIEW_CALLS, implementations={"app_count": [_defaults("app_count", "1 FROM secret.t")]})
 
     with pytest.raises(PlanUnverifiableError, match="definitions of views"):
+        await _guard(explain).check(_SELECT)
+
+
+_SECRET_TYPE_INPUT = {"kind": "type_function", "schema": "secret", "name": "t_in"}
+
+
+@pytest.mark.parametrize(
+    ("sql", "seed"),
+    [
+        ("SELECT '5'::app_t", '"app_t"'),
+        ("SELECT '5'::public.app_t", '"public"."app_t"'),
+        ("SELECT '(abc)'::app_pair", '"app_pair"'),
+        ("INSERT INTO app_items (t) VALUES ('abc')", '"app_items"'),
+        ("SELECT * FROM public.app_items", '"public"."app_items"'),
+    ],
+)
+async def test_type_machinery_of_the_statement_is_checked_before_prepare(sql: str, seed: str) -> None:
+    """Ввод константы ('5'::тип) и неявное приведение литерала к типу колонки выполняет уже PREPARE: имена типов и
+    отношений SQL агента — семена машинерии в запросе реализаций до него."""
+    explain = _Explain(implementations={seed: [_SECRET_TYPE_INPUT]})
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.t_in'"):
+        await _guard(explain).check(sql)
+
+    assert explain.prepared == []
+
+
+_SECRET_CAST = {"kind": "function", "schema": "secret", "name": "int_to_e"}
+
+
+@pytest.mark.parametrize(
+    ("rules", "implementations"),
+    [
+        pytest.param(
+            [{"kind": "domain", "definition": "((VALUE > 0) AND ((1)::app_e IS NOT NULL))"}], {}, id="domain-check"
+        ),
+        pytest.param(_VIEW_CALLS, {"app_count": [_body("app_count", "SELECT 1::app_e")]}, id="sql-body"),
+        pytest.param(
+            _VIEW_CALLS,
+            {"app_count": [_body("app_count", "BEGIN ATOMIC\n SELECT (1)::public.app_e AS e;\nEND", atomic=True)]},
+            id="atomic-body",
+        ),
+        pytest.param(
+            _VIEW_CALLS,
+            {"app_count": [_defaults("app_count", "CASE WHEN (1)::app_e IS NULL THEN 1 ELSE 2 END")]},
+            id="argument-defaults",
+        ),
+    ],
+)
+async def test_types_named_in_definition_texts_seed_the_type_machinery(
+    rules: list[dict[str, Any]], implementations: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Приведение (1)::app_e печатается без имени функции: тип из текста определения (CHECK домена, тело SQL-функции,
+    умолчание аргумента) — семя машинерии, его функция приведения проверяется до EXPLAIN."""
+    explain = _Explain(
+        rules=rules,
+        implementations={**implementations, '"app_e"': [_SECRET_CAST], '"public"."app_e"': [_SECRET_CAST]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"function 'secret\.int_to_e'"):
+        await _guard(explain).check(_SELECT)
+
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+async def test_type_named_in_its_own_machinery_is_seeded_once() -> None:
+    """Функция сравнения типа, чьё тело называет тот же тип: семя не спрашивается снова, круги кончаются."""
+    explain = _Explain(
+        implementations={
+            '"app_t"': [{"kind": "type_function", "schema": "public", "name": "app_t_cmp"}],
+            "app_t_cmp": [_body("app_t_cmp", "SELECT CASE WHEN $1::app_t IS NULL THEN 0 ELSE 1 END")],
+        }
+    )
+
+    await _guard(explain).check("SELECT '5'::app_t")
+
+    assert sum("'\"app_t\"'" in sql for sql in explain.implementation_queries) == 1
+
+
+async def test_builtin_type_names_are_not_seeds() -> None:
+    explain = _Explain()
+
+    await _guard(explain).check("SELECT 1::integer, 'x'::pg_catalog.text")
+
+    assert explain.implementation_queries == []
+
+
+@pytest.mark.parametrize(
+    ("row", "error"),
+    [
+        ({"kind": "type_function", "schema": "secret", "name": "ct_cmp"}, r"function 'secret\.ct_cmp'"),
+        ({"kind": "function", "schema": "secret", "name": "int_to_e"}, r"function 'secret\.int_to_e'"),
+        ({"kind": "function", "schema": "pg_catalog", "name": "current_setting"}, r"'pg_catalog\.current_setting'"),
+        (
+            {"kind": "operator_function", "schema": "pg_catalog", "name": "current_setting", "parent_schema": "public"},
+            r"'pg_catalog\.current_setting'",
+        ),
+        ({"kind": "operator", "schema": "secret", "name": "#<"}, r"function 'secret\.#<'"),
+        ({"kind": "domain", "definition": "(VALUE > secret.boom('dom'::text))"}, r"function 'secret\.boom'"),
+    ],
+)
+async def test_type_machinery_rows_follow_the_basic_rules(row: dict[str, Any], error: str) -> None:
+    """Машинерия типов колонок заблокированных отношений и зависимостей правил: опорная функция класса операторов,
+    функция приведения (как функции: pg_catalog — только из списка basic), оператор семейства, CHECK домена.
+    Отказ — до EXPLAIN."""
+    explain = _Explain(rules=[row])
+
+    with pytest.raises(PlanAccessError, match=error):
+        await _guard(explain).check(_SELECT)
+
+    assert [sql for sql in explain.log if sql.startswith("EXPLAIN")] == []
+
+
+@pytest.mark.parametrize("name", ["enum_out", "btint4cmp", "eqsel", "current_setting"])
+async def test_builtin_type_functions_pass(name: str) -> None:
+    """Функция машинерии из pg_catalog — любая: её сигнатуру (cstring, internal, сравнение двух значений типа) задаёт
+    Postgres, и вызывается она только со значением типа."""
+    explain = _Explain(rules=[{"kind": "type_function", "schema": "pg_catalog", "name": name}])
+
+    await _guard(explain).check(_SELECT)
+
+
+async def test_public_type_function_is_checked_by_its_body() -> None:
+    explain = _Explain(
+        rules=[{"kind": "type_function", "schema": "public", "name": "app_ct_cmp"}],
+        implementations={"app_ct_cmp": [_body("app_ct_cmp", "SELECT count(*)::int FROM secret.accounts")]},
+    )
+
+    with pytest.raises(PlanAccessError, match=r"relation 'secret\.accounts'"):
         await _guard(explain).check(_SELECT)

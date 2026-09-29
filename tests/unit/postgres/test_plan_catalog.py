@@ -75,7 +75,9 @@ async def _catalog_sql() -> list[str]:
     await BuiltinTypeNames().load(recorder)
     await pg_catalog_functions(recorder, ["current_setting", "my_fn"])
     await row_types(recorder, "public", ["users", "users_dom"])
-    await allowed_implementations(recorder, "public", operators=["===", "="], functions=["app_agg"])
+    await allowed_implementations(
+        recorder, "public", operators=["===", "="], functions=["app_agg"], types=['"app_t"'], relations=['"app_x"']
+    )
     return [*recorder.sent, DEFINITION_DEPENDENCIES_SQL]
 
 
@@ -280,3 +282,128 @@ def test_domain_defaults_partition_keys_and_statistics_and_their_texts() -> None
         assert fragment in DEFINITION_DEPENDENCIES_SQL
     assert {"column_types"} <= _cte_sources("type_set")
     assert "type_set" in _cte_sources("domain_defaults")
+
+
+_BOTH_QUERIES = pytest.mark.parametrize(
+    "sql", [ALLOWED_IMPLEMENTATIONS_SQL, DEFINITION_DEPENDENCIES_SQL], ids=["implementations", "definitions"]
+)
+
+
+@_BOTH_QUERIES
+def test_type_machinery_covers_io_casts_operator_classes_domains_and_ranges(sql: str) -> None:
+    """Всё, что Postgres вызывает для значения типа без имени функции в тексте (plan_catalog._type_machinery)."""
+    for fragment in (
+        "(t.typinput), (t.typoutput), (t.typreceive), (t.typsend), (t.typmodin), (t.typmodout), (t.typanalyze), "
+        "(t.typsubscript)",
+        "(r.rngcanonical), (r.rngsubdiff)",
+        "r.rngsubopc",
+        "pg_catalog.pg_amproc",
+        "pg_catalog.pg_amop",
+        "(o.oprrest), (o.oprjoin)",
+        "k.castsource",
+        "k.casttarget",
+        "k.castfunc",
+        "k.contypid",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
+def test_type_closure_follows_what_calls_nested_machinery(sql: str) -> None:
+    """Домен -> база, массив -> элемент, составной -> атрибуты, диапазон -> подтип, мультидиапазон -> диапазон.
+
+    Типы и семейства операторов pg_catalog не раскрываются: встроенная машинерия.
+    """
+    for fragment in (
+        "SELECT t.typbasetype UNION ALL SELECT t.typelem",
+        "a.attrelid OPERATOR(pg_catalog.=) t.typrelid",
+        "r.rngsubtype",
+        "r.rngmultitypid OPERATOR(pg_catalog.=) t.oid",
+        "t.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid",
+        "f.opfnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
+def test_type_machinery_trusts_extensions_by_the_owning_object(sql: str) -> None:
+    """Машинерию, которую поставил скрипт расширения (deptype 'e'), определяет владелец: тип, семейство операторов,
+    строка pg_cast. Членство самой функции или оператора не в счёт: приведение DBA над функцией расширения
+    проверяется по обычным правилам."""
+    assert "e.deptype OPERATOR(pg_catalog.=) 'e'" in sql
+    for owner in (
+        "'pg_catalog.pg_type'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) m.oid",
+        "'pg_catalog.pg_opfamily'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) y.oid",
+        "'pg_catalog.pg_cast'::pg_catalog.regclass::pg_catalog.oid AND e.objid OPERATOR(pg_catalog.=) k.oid",
+    ):
+        assert f"e.classid OPERATOR(pg_catalog.=) {owner}" in sql
+    for member in ("'pg_catalog.pg_proc'", "'pg_catalog.pg_operator'"):
+        assert f"e.classid OPERATOR(pg_catalog.=) {member}" not in sql
+
+
+@_BOTH_QUERIES
+def test_type_closure_follows_implicit_binary_coercible_casts(sql: str) -> None:
+    """Класс операторов по умолчанию берётся и у типа, к которому значение неявно двоично приводится; такие
+    приведения от типов pg_catalog — семена любого запроса."""
+    assert (
+        "SELECT k.casttarget FROM pg_catalog.pg_cast k WHERE k.castsource OPERATOR(pg_catalog.=) t.oid "
+        "AND k.castmethod OPERATOR(pg_catalog.=) 'b' AND k.castcontext OPERATOR(pg_catalog.=) 'i'"
+    ) in sql
+    assert "ks.typnamespace OPERATOR(pg_catalog.=) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid" in sql
+    assert "kt.typnamespace OPERATOR(pg_catalog.<>) 'pg_catalog'::pg_catalog.regnamespace::pg_catalog.oid" in sql
+
+
+@_BOTH_QUERIES
+def test_binary_casts_of_builtin_types_reach_only_default_btree_and_hash_families(sql: str) -> None:
+    """От типа pg_catalog — только семейства классов по умолчанию btree и hash типа-цели и только для метода, у
+    которого у источника нет своего класса по умолчанию; тип-цель не становится семенем (ввод-вывод, приведения,
+    CHECK двоичное приведение не вызывает). Строки несут текст приведения (origin)."""
+    type_closure = sql[sql.index("type_closure(oid) AS (") : sql.index("machinery_set(oids) AS (")]
+    assert "ks.typnamespace" not in type_closure
+    for fragment in (
+        "oc.opcintype OPERATOR(pg_catalog.=) k.casttarget AND oc.opcdefault",
+        "am.amname OPERATOR(pg_catalog.=) ANY (ARRAY['btree', 'hash']::pg_catalog.name[])",
+        "NOT EXISTS (SELECT FROM pg_catalog.pg_opclass so WHERE so.opcintype OPERATOR(pg_catalog.=) k.castsource "
+        "AND so.opcmethod OPERATOR(pg_catalog.=) oc.opcmethod AND so.opcdefault)",
+        "pg_catalog.format_type(k.castsource, NULL::pg_catalog.int4), ' -> '",
+        "m.origin",
+    ):
+        assert fragment in sql
+
+
+@_BOTH_QUERIES
+def test_type_machinery_is_seeded_by_row_types_of_relations(sql: str) -> None:
+    """Ссылка на всю строку (r::int, abs(r)) вызывает приведение строкового типа отношения (pg_class.reltype)."""
+    assert "SELECT c.reltype FROM" in sql
+
+
+async def test_allowed_implementations_seed_types_and_relation_columns() -> None:
+    """Имена SQL агента разрешаются по search_path, как их разрешит PREPARE; к ним — типы найденных функций."""
+    recorder = _Recorder()
+
+    await allowed_implementations(
+        recorder, "public", operators=[], functions=[], types=['"app_t"'], relations=['"public"."app_x"']
+    )
+
+    [sql] = recorder.sent
+    assert "pg_catalog.to_regtype(n.name)" in sql
+    assert "pg_catalog.to_regclass(n.name)" in sql
+    assert """ARRAY['"app_t"']::pg_catalog.text[]""" in sql
+    assert """ARRAY['"public"."app_x"']::pg_catalog.text[]""" in sql
+    for column in ("p.prorettype", "p.proargtypes", "p.proallargtypes", "o.oprleft", "o.oprright", "o.oprresult"):
+        assert column in sql
+    assert "a.aggtranstype" in sql
+
+
+async def test_allowed_implementations_default_to_no_seeds() -> None:
+    recorder = _Recorder()
+
+    await allowed_implementations(recorder, "public", operators=["="], functions=[])
+
+    [sql] = recorder.sent
+    assert sql.count("ARRAY[]::pg_catalog.text[]") == 3
+
+
+def test_definition_machinery_is_seeded_by_locked_relations_and_dependency_types() -> None:
+    """Колонки заблокированных отношений, целей DML и их потомков, типы из pg_depend определений."""
+    assert {"relation_set", "types", "pg_catalog.pg_attribute"} <= _cte_sources("type_seed_set")

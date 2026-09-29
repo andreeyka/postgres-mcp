@@ -328,17 +328,19 @@ class TestSafeSqlExecutorPlanCheck:
         delegate.execute.assert_awaited_once()
         assert delegate.execute.await_args.kwargs["readonly"] is False
         assert delegate.sent[0] == _SETTINGS
+        # Машинерия типов колонок app_t — до PREPARE (ввод констант выполняет разбор).
+        assert delegate.sent[1].startswith("/* t */ WITH RECURSIVE operators AS")
         prepared = re.fullmatch(
-            r"/\* t \*/ PREPARE (_pgmcp_check_[0-9a-f]{16}_0) AS SELECT \* FROM app_t; DEALLOCATE \1", delegate.sent[1]
+            r"/\* t \*/ PREPARE (_pgmcp_check_[0-9a-f]{16}_0) AS SELECT \* FROM app_t; DEALLOCATE \1", delegate.sent[2]
         )
         assert prepared is not None
         # Правила представлений читаются после PREPARE (он их заблокировал, план не строился), с тегом, ...
-        assert delegate.sent[2].startswith("/* t */ WITH RECURSIVE locked AS")
-        assert "pg_catalog.pg_rewrite" in delegate.sent[2]
-        assert delegate.sent[3] == "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
+        assert delegate.sent[3].startswith("/* t */ WITH RECURSIVE locked AS")
+        assert "pg_catalog.pg_rewrite" in delegate.sent[3]
+        assert delegate.sent[4] == "/* t */ EXPLAIN (VERBOSE, FORMAT JSON) SELECT * FROM app_t"
         # ... и ещё раз после EXPLAIN, до оператора.
-        assert "pg_catalog.pg_rewrite" in delegate.sent[4]
-        assert delegate.sent[5:] == ["/* t */ SELECT * FROM app_t"]
+        assert "pg_catalog.pg_rewrite" in delegate.sent[5]
+        assert delegate.sent[6:] == ["/* t */ SELECT * FROM app_t"]
 
     async def test_settings_are_sent_once_for_every_statement_of_the_string(self) -> None:
         delegate = _precheck_delegate(_plan_rows("public", "app_t"))
@@ -417,7 +419,7 @@ class TestSafeSqlExecutorPlanCheck:
         await executor.execute("SELECT * FROM app_t")
         await executor.execute("SELECT * FROM app_t")
 
-        catalog = [q for q in delegate.sent if "pg_catalog.pg_rewrite" not in q]
+        catalog = [q for q in delegate.sent if "pg_catalog.pg_rewrite" not in q and "pg_catalog.pg_aggregate" not in q]
         builtin = [q for q in catalog if "pg_catalog.pg_type" in q and "typrelid" not in q]
         row_types = [q for q in catalog if "typrelid" in q]
         assert len(builtin) == 1
