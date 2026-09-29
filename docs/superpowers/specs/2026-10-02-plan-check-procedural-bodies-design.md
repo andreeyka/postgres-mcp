@@ -1,6 +1,6 @@
 # Дизайн: пятая волна `plan_check` — функции `public` не на SQL
 
-Дата: 2026-10-02. Статус: спроектировано, план — `docs/superpowers/plans/2026-10-02-21-plan-check-procedural-bodies.md` (код плана опробован на копии репозитория и живом PostgreSQL 17.10). Продолжение `2026-10-01-plan-check-implicit-calls-design.md` §6 («Тела PL/pgSQL и других процедурных языков») и README «Что `plan_check` не закрывает» (тела триггерных функций, функции PL/pgSQL).
+Дата: 2026-10-02. Статус: реализовано, план — `docs/superpowers/plans/2026-10-02-21-plan-check-procedural-bodies.md` (код плана опробован на копии репозитория и живом PostgreSQL 17.10). Продолжение `2026-10-01-plan-check-implicit-calls-design.md` §6 («Тела PL/pgSQL и других процедурных языков») и README «Что `plan_check` не закрывает» (тела триггерных функций, функции PL/pgSQL).
 
 ## 1. Объём
 
