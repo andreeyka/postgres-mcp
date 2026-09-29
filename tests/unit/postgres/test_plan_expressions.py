@@ -183,3 +183,81 @@ def test_sort_keys_and_table_functions_have_their_own_parsers() -> None:
     assert EXPRESSION_PARSERS["Presorted Key"] is parse_sort_key
     assert EXPRESSION_PARSERS["Table Function Call"] is parse_table_function
     assert EXPRESSION_PARSERS["Output"] is parse_expression
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('"PARTIAL public".f(t.a)', ExpressionNames(functions=(("PARTIAL public", "f"),))),
+        ('NULL::"PARTIAL public".t', ExpressionNames(types=(("PARTIAL public", "t"),))),
+        ('(t.a OPERATOR("PARTIAL public".+) t.b)', ExpressionNames(operators=(("PARTIAL public", "+"),))),
+        ('"(SubPlan 1)".f(t.a)', ExpressionNames(functions=(("(SubPlan 1)", "f"),))),
+        ('"x OVER (?)".f(t.a)', ExpressionNames(functions=(("x OVER (?)", "f"),))),
+        ('"a""PARTIAL b".f(t.a)', ExpressionNames(functions=(('a"PARTIAL b', "f"),))),
+        (
+            """nextval('"PARTIAL public".s'::regclass)""",
+            ExpressionNames(types=((None, "regclass"),), sequences=(("PARTIAL public", "s"),)),
+        ),
+        (
+            """nextval('"PARTIAL app_s"'::regclass)""",
+            ExpressionNames(types=((None, "regclass"),), sequences=((None, "PARTIAL app_s"),)),
+        ),
+    ],
+)
+def test_substitutions_do_not_touch_quoted_names(text: str, expected: ExpressionNames) -> None:
+    """Замены ссылок планировщика не заходят в имена в кавычках и литералы: проверяется настоящее имя."""
+    assert parse_expression(text) == expected
+
+
+def test_literal_with_a_planner_reference_hides_nothing() -> None:
+    names = parse_expression("secret.f('x''(SubPlan 1) secret.g()'::text)")
+
+    assert names == ExpressionNames(functions=(("secret", "f"),), types=((None, "text"),))
+
+
+def test_escape_string_keeps_its_boundaries() -> None:
+    r"""E'...' с \' внутри: граница литерала не сдвигается, замены внутри него не идут."""
+    names = parse_expression(r"""secret.f(E'\' "PARTIAL x".g('::text)""")
+
+    assert names == ExpressionNames(functions=(("secret", "f"),), types=((None, "text"),))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "f('unterminated",
+        'f("unterminated',
+        r"f(E'\')",
+        "a -- FROM secret.t",
+        "a /* FROM secret.t */",
+        "(SELECT x FROM secret.t)",
+        "(t.x IN (SELECT y FROM secret.t))",
+        "EXISTS (SELECT 1)",
+        "ARRAY(SELECT 1)",
+        "$q$ PARTIAL $q$",
+        "f('a\x00b')",
+    ],
+)
+def test_unverifiable_expression_is_none(text: str) -> None:
+    assert parse_expression(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["(SELECT x FROM secret.t)", "t.a -- FROM secret.t", "(t.x IN (SELECT y FROM secret.t)) DESC", "t.a /* */"],
+)
+def test_sort_key_with_a_subquery_or_comment_is_none(text: str) -> None:
+    assert parse_sort_key(text) is None
+
+
+def test_comment_marks_inside_quotes_are_text() -> None:
+    names = parse_expression("""f('-- /*'::text, "a--b".c)""")
+
+    assert names == ExpressionNames(functions=((None, "f"),), types=((None, "text"),))
+
+
+@pytest.mark.parametrize(
+    "text", ["ONLY app_s", "app_s *", "app_s /* x */", "app_s -- x", "public . s", " app_s", "app_s\n"]
+)
+def test_sequence_name_accepts_only_what_regclassout_prints(text: str) -> None:
+    assert sequence_name(text) is None

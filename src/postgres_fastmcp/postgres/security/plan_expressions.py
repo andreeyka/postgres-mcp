@@ -3,8 +3,9 @@
 Выражения плана печатает ruleutils. Ссылки планировщика на подпланы ((SubPlan 1), (hashed SubPlan 1),
 (InitPlan 1).col1, EXISTS(SubPlan 1), (ANY ...), (alternatives: ...)) — не SQL: перед разбором они
 заменяются на NULL, сами подпланы проверяются как узлы плана. Параметры $N pglast разбирает как есть.
-В шаблонах замен нет кавычек, поэтому замена не сдвигает границы строк и имён в кавычках: внутри
-литерала меняется только его значение, а не структура выражения.
+Замены идут только вне строк '...' и имён "..." (ruleutils удваивает кавычки внутри них): имя в кавычках
+и литерал nextval проверяются такими, какие они есть. Комментарии, подзапросы и незакрытые кавычки
+ruleutils в плане не печатает — такой текст не разбирается (fail closed).
 """
 
 import re
@@ -66,6 +67,20 @@ _PLANNER_REFERENCES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bOVER \(\?\)"), "OVER ()"),
 )
 
+# Имя в кавычках или строка ('...', в том числе E'...' с экранированием \\): как их делит лексер Postgres.
+_QUOTED = re.compile(r"""(?:(?<![\w$])[eE]'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*'|"(?:[^"]|"")*")""", re.DOTALL)
+
+# Заглушка вместо строки или имени в кавычках на время замен: первый символ — кавычка (для просмотра вперёд
+# PARTIAL), дальше номер между \x00, которые в выражении плана не встречаются.
+_PLACEHOLDER = re.compile(r"[\"']\x00(\d+)\x00")
+
+# Вне кавычек: комментарий, dollar-строка ($ не перед цифрой параметра) или незакрытая кавычка.
+_UNQUOTED_FORBIDDEN = re.compile(r"--|/\*|\$(?!\d)|[\"']")
+
+# Как regclassout печатает имя отношения: [схема.]имя, каждое — идентификатор без кавычек или в кавычках.
+_IDENTIFIER = r'(?:[A-Za-z_\x80-\U0010ffff][\w$]*|"(?:[^"]|"")+")'
+_REGCLASS_NAME = re.compile(rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})?")
+
 # nextval('последовательность'::тип): так план печатает DEFAULT serial ('...'::regclass) и identity
 # ('...'::bigint). Литерал — имя отношения, проверяется как отношение, а не как вызов функции.
 _NEXTVAL: frozenset[QualifiedName] = frozenset({(None, "nextval"), ("pg_catalog", "nextval")})
@@ -94,14 +109,25 @@ def _qualified(parts: Iterable[Node]) -> QualifiedName | None:
 
 
 def sequence_name(text: str) -> QualifiedName | None:
-    """Имя отношения из литерала nextval: regclassout печатает его в кавычках по правилам идентификаторов."""
+    """Имя отношения из литерала nextval: regclassout печатает его в кавычках по правилам идентификаторов.
+
+    Принимается только [схема.]имя без пробелов, комментариев, ONLY и звёздочки наследования.
+    """
+    if _REGCLASS_NAME.fullmatch(text) is None:
+        return None
     # Текст только разбирается pglast, в Postgres не отправляется.
     statement = _single_select(f"SELECT 1 FROM {text}")  # noqa: S608
     relations = statement.fromClause or () if statement is not None else ()
     if statement is None or not _only(statement, "fromClause") or len(relations) != 1:
         return None
     relation = relations[0]
-    if not isinstance(relation, RangeVar) or relation.catalogname or relation.alias or not relation.relname:
+    if (
+        not isinstance(relation, RangeVar)
+        or relation.catalogname
+        or relation.alias
+        or not relation.relname
+        or not relation.inh
+    ):
         return None
     return relation.schemaname, relation.relname
 
@@ -126,6 +152,7 @@ class _Names(Visitor):
         self.types: list[QualifiedName] = []
         self.sequences: list[QualifiedName] = []
         self.verifiable = True
+        self._selects = 0
 
     def _add(self, found: list[QualifiedName], parts: Iterable[Node] | None) -> None:
         """Добавить имя; пустое имя (A_Expr без оператора, SortBy без USING) пропускается."""
@@ -149,6 +176,16 @@ class _Names(Visitor):
             self.verifiable = False
         else:
             self.sequences.append(sequence)
+
+    def visit_SelectStmt(self, _ancestors: object, _node: SelectStmt) -> None:  # noqa: N802
+        """Первый SELECT — обёртка разбора; любой следующий — подзапрос, которого ruleutils в плане не печатает."""
+        self._selects += 1
+        if self._selects > 1:
+            self.verifiable = False
+
+    def visit_RangeVar(self, _ancestors: object, _node: RangeVar) -> None:  # noqa: N802
+        """Отношение внутри выражения: его не проверить как узел плана."""
+        self.verifiable = False
 
     def visit_A_Expr(self, _ancestors: object, node: A_Expr) -> None:  # noqa: N802
         """Оператор выражения (OPERATOR(schema.op) — со схемой)."""
@@ -177,11 +214,26 @@ def _collect(statement: SelectStmt) -> ExpressionNames | None:
     )
 
 
-def _nullify_planner_references(text: str) -> str:
-    """Заменить ссылки планировщика на подпланы и формы ruleutils, которые не SQL."""
+def _nullify_planner_references(text: str) -> str | None:
+    """Заменить вне кавычек ссылки планировщика на подпланы и формы ruleutils, которые не SQL.
+
+    None — нулевой символ, незакрытая кавычка, комментарий или dollar-строка: так ruleutils не печатает.
+    """
+    if "\x00" in text:
+        return None
+    quoted: list[str] = []
+
+    def hide(match: re.Match[str]) -> str:
+        quoted.append(match.group())
+        quote = "'" if match.group()[0] in "eE" else match.group()[0]
+        return f"{quote}\x00{len(quoted) - 1}\x00"
+
+    masked = _QUOTED.sub(hide, text)
     for pattern, replacement in _PLANNER_REFERENCES:
-        text = pattern.sub(replacement, text)
-    return text
+        masked = pattern.sub(replacement, masked)
+    if _UNQUOTED_FORBIDDEN.search(_PLACEHOLDER.sub(" ", masked)):
+        return None
+    return _PLACEHOLDER.sub(lambda match: quoted[int(match.group(1))], masked)
 
 
 def _single_select(sql: str) -> SelectStmt | None:
@@ -213,15 +265,17 @@ def parse_target_list(text: object) -> SelectStmt | None:
 
 def parse_expression(text: str) -> ExpressionNames | None:
     """Выражение (или список выражений через запятую, как Cache Key) плана."""
-    statement = parse_target_list(_nullify_planner_references(text))
+    substituted = _nullify_planner_references(text)
+    statement = None if substituted is None else parse_target_list(substituted)
     return None if statement is None else _collect(statement)
 
 
 def parse_sort_key(text: str) -> ExpressionNames | None:
     """Ключ сортировки: выражение с COLLATE, DESC, NULLS FIRST/LAST или USING <оператор>."""
-    if not text.strip():
+    substituted = _nullify_planner_references(text)
+    if substituted is None or not substituted.strip():
         return None
-    statement = _single_select(f"SELECT 1 ORDER BY {_nullify_planner_references(text)}")
+    statement = _single_select(f"SELECT 1 ORDER BY {substituted}")
     if (
         statement is None
         or not _only(statement, "sortClause")
@@ -234,10 +288,11 @@ def parse_sort_key(text: str) -> ExpressionNames | None:
 
 def parse_table_function(text: str) -> ExpressionNames | None:
     """Table Function Call: XMLTABLE(...) или JSON_TABLE(...) — разбирается как элемент FROM."""
-    if not text.strip():
+    substituted = _nullify_planner_references(text)
+    if substituted is None or not substituted.strip():
         return None
     # Текст только разбирается pglast, в Postgres не отправляется.
-    statement = _single_select(f"SELECT * FROM {_nullify_planner_references(text)}")  # noqa: S608
+    statement = _single_select(f"SELECT * FROM {substituted}")  # noqa: S608
     sources = statement.fromClause or () if statement is not None else ()
     if (
         statement is None

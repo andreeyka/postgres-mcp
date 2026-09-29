@@ -638,3 +638,28 @@ async def test_type_hint_names_the_allowed_schema() -> None:
         await _guard(explain).check(_SELECT)
 
     assert "Only types from 'public' or built-in types are permitted." in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("expression", "kind", "name"),
+    [
+        ('"PARTIAL public".f(app_t.a)', "function", "PARTIAL public.f"),
+        ('NULL::"PARTIAL public".t', "type", "PARTIAL public.t"),
+        ('(app_t.a OPERATOR("PARTIAL public".+) 1)', "function", "PARTIAL public.+"),
+        ("""nextval('"PARTIAL public".s'::regclass)""", "relation", "PARTIAL public.s"),
+    ],
+)
+async def test_quoted_names_are_checked_as_they_are(expression: str, kind: str, name: str) -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=[expression])})
+
+    with pytest.raises(PlanAccessError) as exc_info:
+        await _guard(explain).check(_SELECT)
+
+    assert (exc_info.value.kind, exc_info.value.qualified_name) == (kind, name)
+
+
+async def test_quoted_sequence_without_the_prefix_is_rejected() -> None:
+    explain = _Explain({_EXPLAIN + _SELECT: _with(Output=["""nextval('"PARTIAL app_s"'::regclass)"""])})
+
+    with pytest.raises(PlanAccessError, match=r"relation 'public\.PARTIAL app_s'"):
+        await _guard(explain, table_prefix="app_").check(_SELECT)
