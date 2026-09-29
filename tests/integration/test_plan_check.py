@@ -634,3 +634,131 @@ async def test_table_named_like_a_cte_of_another_scope_is_checked(db_plan_check:
 async def test_cte_used_in_every_branch_of_its_statement_passes(db_plan_check: DbAccess) -> None:
     rows = await db_plan_check.sql_driver.execute("SELECT n FROM app_cte_items_view", readonly=True)
     assert len(rows) >= 2
+
+
+# Неявные вызовы типов (машинерия): функции ввода-вывода, приведения, классы операторов, CHECK доменов. Бросающие
+# функции доказывают «отклонено до выполнения»: без проверки PREPARE, EXPLAIN или выполнение получили бы их
+# исключение. Функции ввода-вывода — обёртки LANGUAGE internal (нужен суперпользователь): ввод int4in бросает на
+# 'abc', вывод enum_out бросает на любом значении, которое не метка перечисления. Операторы класса названы #<, #=
+# и т. д.: операторы public с именами =, < проверяются по имени, все перегрузки сразу, и затронули бы любые тесты.
+_DROP_IMPLICIT_CALLS = """
+DROP VIEW IF EXISTS public.app_ic_dom_view, public.app_ic_hidden_dom_view, public.app_ic_sorted_view;
+DROP TABLE IF EXISTS public.app_ic_cast_t, public.app_ic_io_t, public.app_ic_ct_t, public.app_ic_ok_t;
+DROP TYPE IF EXISTS public.app_ic_pair, public.app_ic_rr, public.app_ic_e, public.app_ic_ok CASCADE;
+DROP DOMAIN IF EXISTS public.app_ic_rd CASCADE;
+DROP TYPE IF EXISTS public.app_ic_t, public.app_ic_ct CASCADE;
+DROP OPERATOR IF EXISTS public.#~ (int, int);
+DROP FUNCTION IF EXISTS secret.ic_sel(internal, oid, internal, integer);
+"""
+_IC_BOOM_RETURNS = """
+CREATE OR REPLACE FUNCTION secret.ic_boom() RETURNS int LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RETURN 0; END$$;
+"""
+_IC_BOOM_RAISES = """
+CREATE OR REPLACE FUNCTION secret.ic_boom() RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_boom was executed'; END$$;
+"""
+_IMPLICIT_CALLS = """
+CREATE TYPE public.app_ic_e AS ENUM ('a');
+CREATE OR REPLACE FUNCTION secret.ic_to_e(n int) RETURNS public.app_ic_e
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_to_e was executed'; END$$;
+CREATE CAST (int AS public.app_ic_e) WITH FUNCTION secret.ic_to_e(int) AS ASSIGNMENT;
+CREATE TABLE public.app_ic_cast_t (e public.app_ic_e);
+CREATE TYPE public.app_ic_t;
+CREATE FUNCTION secret.ic_t_in(cstring) RETURNS public.app_ic_t AS 'int4in' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION secret.ic_t_out(public.app_ic_t) RETURNS cstring AS 'enum_out' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_t (INPUT = secret.ic_t_in, OUTPUT = secret.ic_t_out, LIKE = int4);
+CREATE TABLE public.app_ic_io_t (t public.app_ic_t);
+CREATE TYPE public.app_ic_pair AS (t public.app_ic_t);
+CREATE TYPE public.app_ic_ct;
+CREATE FUNCTION public.app_ic_ct_in(cstring) RETURNS public.app_ic_ct AS 'int4in' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.app_ic_ct_out(public.app_ic_ct) RETURNS cstring
+    AS 'int4out' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.app_ic_ct (INPUT = public.app_ic_ct_in, OUTPUT = public.app_ic_ct_out, LIKE = int4);
+CREATE CAST (public.app_ic_ct AS int4) WITHOUT FUNCTION;
+CREATE FUNCTION public.app_ic_lt(a public.app_ic_ct, b public.app_ic_ct) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 < b::int4';
+CREATE FUNCTION public.app_ic_le(a public.app_ic_ct, b public.app_ic_ct) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 <= b::int4';
+CREATE FUNCTION public.app_ic_eq(a public.app_ic_ct, b public.app_ic_ct) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 = b::int4';
+CREATE FUNCTION public.app_ic_ge(a public.app_ic_ct, b public.app_ic_ct) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 >= b::int4';
+CREATE FUNCTION public.app_ic_gt(a public.app_ic_ct, b public.app_ic_ct) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS 'SELECT a::int4 > b::int4';
+CREATE OPERATOR public.#< (LEFTARG = public.app_ic_ct, RIGHTARG = public.app_ic_ct, FUNCTION = public.app_ic_lt);
+CREATE OPERATOR public.#<= (LEFTARG = public.app_ic_ct, RIGHTARG = public.app_ic_ct, FUNCTION = public.app_ic_le);
+CREATE OPERATOR public.#= (LEFTARG = public.app_ic_ct, RIGHTARG = public.app_ic_ct, FUNCTION = public.app_ic_eq);
+CREATE OPERATOR public.#>= (LEFTARG = public.app_ic_ct, RIGHTARG = public.app_ic_ct, FUNCTION = public.app_ic_ge);
+CREATE OPERATOR public.#> (LEFTARG = public.app_ic_ct, RIGHTARG = public.app_ic_ct, FUNCTION = public.app_ic_gt);
+CREATE OR REPLACE FUNCTION secret.ic_cmp(a public.app_ic_ct, b public.app_ic_ct) RETURNS int
+    LANGUAGE plpgsql IMMUTABLE AS $$BEGIN RAISE EXCEPTION 'secret.ic_cmp was executed'; END$$;
+CREATE OPERATOR CLASS public.app_ic_ct_ops DEFAULT FOR TYPE public.app_ic_ct USING btree AS
+    OPERATOR 1 public.#<, OPERATOR 2 public.#<=, OPERATOR 3 public.#=, OPERATOR 4 public.#>=, OPERATOR 5 public.#>,
+    FUNCTION 1 secret.ic_cmp(public.app_ic_ct, public.app_ic_ct);
+CREATE TABLE public.app_ic_ct_t (c public.app_ic_ct);
+INSERT INTO public.app_ic_ct_t VALUES ('1'), ('2');
+CREATE DOMAIN public.app_ic_rd AS int CHECK (VALUE > secret.ic_boom());
+CREATE TYPE public.app_ic_rr AS RANGE (subtype = public.app_ic_rd);
+CREATE VIEW public.app_ic_dom_view AS SELECT 1::public.app_ic_rd AS d;
+CREATE VIEW public.app_ic_hidden_dom_view AS SELECT 1 AS n WHERE 1::public.app_ic_rd IS NOT NULL;
+CREATE VIEW public.app_ic_sorted_view AS SELECT 1 AS n FROM public.app_ic_ct_t ORDER BY c;
+CREATE FUNCTION secret.ic_sel(internal, oid, internal, integer) RETURNS float8 AS 'eqsel' LANGUAGE internal STABLE;
+CREATE OPERATOR public.#~ (LEFTARG = int, RIGHTARG = int, FUNCTION = public.app_close_to, RESTRICT = secret.ic_sel);
+CREATE TYPE public.app_ic_ok AS ENUM ('x', 'y');
+CREATE TABLE public.app_ic_ok_t (e public.app_ic_ok);
+INSERT INTO public.app_ic_ok_t VALUES ('y'), ('x');
+"""
+
+
+@pytest.fixture
+async def db_implicit_calls(db_plan_check: DbAccess, db_full: DbAccess) -> AsyncGenerator[DbAccess, None]:
+    """db_plan_check, пока в public есть типы, чья машинерия вызывает функции secret (большинство — бросающие)."""
+    await db_full.sql_driver.execute(
+        _IC_BOOM_RETURNS + _DROP_IMPLICIT_CALLS + _IMPLICIT_CALLS + _IC_BOOM_RAISES, readonly=False
+    )
+    try:
+        yield db_plan_check
+    finally:
+        await db_full.sql_driver.execute(_DROP_IMPLICIT_CALLS, readonly=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sql", "function"),
+    [
+        pytest.param("SELECT 1::app_ic_e AS e", "ic_to_e", id="explicit-cast"),
+        pytest.param("INSERT INTO app_ic_cast_t (e) VALUES (1)", "ic_to_e", id="assignment-cast"),
+        pytest.param("SELECT '5'::app_ic_t AS t", "ic_t_(in|out)", id="type-output-at-explain"),
+        pytest.param("INSERT INTO app_ic_io_t (t) VALUES ('abc')", "ic_t_(in|out)", id="type-input-at-prepare"),
+        pytest.param("SELECT '(abc)'::app_ic_pair AS p", "ic_t_(in|out)", id="composite-attribute-input"),
+        pytest.param("SELECT c FROM app_ic_ct_t ORDER BY c", "ic_cmp", id="opclass-order-by"),
+        pytest.param("SELECT GREATEST(c, c) AS g FROM app_ic_ct_t", "ic_cmp", id="opclass-greatest"),
+        pytest.param("SELECT GREATEST('1'::app_ic_ct, '2'::app_ic_ct) AS g", "ic_cmp", id="opclass-folded"),
+        pytest.param("SELECT 1::app_ic_rd AS d", "ic_boom", id="domain-cast"),
+        pytest.param("SELECT d FROM app_ic_dom_view", "ic_boom", id="domain-cast-in-view"),
+        pytest.param("SELECT n FROM app_ic_hidden_dom_view", "ic_boom", id="domain-cast-hidden-in-view"),
+        pytest.param("SELECT n FROM app_ic_sorted_view", "ic_cmp", id="opclass-of-a-view-base-table"),
+        pytest.param("SELECT '[1,2]'::app_ic_rr AS r", "ic_boom", id="range-over-domain-input"),
+        pytest.param("SELECT id FROM app_plan_items WHERE id #~ 1", "ic_sel", id="operator-estimator"),
+    ],
+)
+async def test_implicit_call_of_a_type_is_rejected_before_it_runs(
+    db_implicit_calls: DbAccess, sql: str, function: str
+) -> None:
+    """Приведение (явное и присваивания), ввод-вывод типа и атрибута составного типа, сравнение класса операторов
+    (ORDER BY, GREATEST), CHECK домена (в том числе в представлении и подтипа диапазона), оценка селективности
+    оператора: ни одного имени функции в тексте. Без проверки PREPARE (ввод), EXPLAIN (свёртка, печать констант)
+    или выполнение вызвали бы функцию secret и получили бы её ошибку; отказ приходит раньше.
+
+    Типы, которых нет ни в SQL агента, ни в колонках названных отношений (приведение внутри представления, колонка
+    базовой таблицы представления), находит чтение определений после PREPARE — по зависимостям правила и колонкам
+    заблокированных отношений."""
+    with pytest.raises(PlanAccessError, match=rf"function 'secret\.{function}'"):
+        await db_implicit_calls.sql_driver.execute(sql, readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_type_with_builtin_machinery_passes(db_implicit_calls: DbAccess) -> None:
+    """Перечисление public: ввод-вывод и сравнение — встроенные функции pg_catalog."""
+    rows = await db_implicit_calls.sql_driver.execute("SELECT e FROM app_ic_ok_t ORDER BY e", readonly=True)
+    assert [row.cells["e"] for row in rows] == ["x", "y"]
