@@ -475,11 +475,20 @@ def test_named_and_sort_operators_are_closed_over_commutators_and_negators() -> 
 def test_event_trigger_functions_are_read_for_ddl_events() -> None:
     """Включённые событийные триггеры на события команд DDL (не login), без фильтра тегов."""
     for fragment in (
-        "pg_catalog.pg_event_trigger e",
-        "e.evtfoid",
-        "e.evtenabled OPERATOR(pg_catalog.<>) 'D'",
+        "pg_catalog.pg_event_trigger t",
+        "t.evtfoid",
+        "t.evtenabled OPERATOR(pg_catalog.<>) 'D'",
         "'ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite'",
         "'function' AS kind",
     ):
         assert fragment in EVENT_TRIGGER_FUNCTIONS_SQL
     assert "evttags" not in EVENT_TRIGGER_FUNCTIONS_SQL
+
+
+def test_event_triggers_are_trusted_by_the_owning_extension() -> None:
+    """Триггер — член расширения доверен вместе с функцией; членство самой функции не в счёт (триггер DBA)."""
+    assert (
+        "e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_event_trigger'::pg_catalog.regclass::pg_catalog.oid "
+        "AND e.objid OPERATOR(pg_catalog.=) t.oid AND e.deptype OPERATOR(pg_catalog.=) 'e'"
+    ) in EVENT_TRIGGER_FUNCTIONS_SQL
+    assert "'pg_catalog.pg_proc'" not in EVENT_TRIGGER_FUNCTIONS_SQL

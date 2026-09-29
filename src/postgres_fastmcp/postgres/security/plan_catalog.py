@@ -543,13 +543,19 @@ DEFINITION_DEPENDENCIES_SQL = (
 # все такие триггеры, даже если тег команды под фильтр не попадает. Строки — вида function, как функция из
 # зависимостей определений: схема — по правилу функций, функция allowed_schema — её тело, умолчания и правило не-SQL
 # (функция событийного триггера не бывает на sql) следующим кругом по имени.
+#
+# Доверие — по объекту-владельцу, как у машинерии типов: триггер — член расширения (pg_depend, deptype 'e') доверен
+# вместе с функцией, строки нет. Триггер, созданный DBA, проверяется по обычным правилам, даже если его функция —
+# член расширения (функция вне allowed_schema — отказ по схеме; в allowed_schema правило не-SQL её пропускает).
+_PG_EVENT_TRIGGER = "'pg_catalog.pg_event_trigger'::pg_catalog.regclass::pg_catalog.oid"
 EVENT_TRIGGER_FUNCTIONS_SQL = (
-    "SELECT DISTINCT 'function' AS kind, fn.nspname AS schema, f.proname AS name "
-    "FROM pg_catalog.pg_event_trigger e "
-    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) e.evtfoid "
+    "SELECT DISTINCT 'function' AS kind, fn.nspname AS schema, f.proname AS name "  # noqa: S608
+    "FROM pg_catalog.pg_event_trigger t "
+    "JOIN pg_catalog.pg_proc f ON f.oid OPERATOR(pg_catalog.=) t.evtfoid "
     "JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) f.pronamespace "
-    "WHERE e.evtenabled OPERATOR(pg_catalog.<>) 'D' AND e.evtevent OPERATOR(pg_catalog.=) "
-    "ANY (ARRAY['ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite']::pg_catalog.name[])"
+    "WHERE t.evtenabled OPERATOR(pg_catalog.<>) 'D' AND t.evtevent OPERATOR(pg_catalog.=) "
+    "ANY (ARRAY['ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite']::pg_catalog.name[]) "
+    f"AND {_not_extension_member(_PG_EVENT_TRIGGER, 't.oid')}"
 )
 
 # Язык sql — по закреплённому oid (SQLlanguageId = 14 в pg_language.dat, один и тот же в PG 15–17), а не по имени:

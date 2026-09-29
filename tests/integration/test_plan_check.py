@@ -1401,3 +1401,59 @@ async def test_event_trigger_fired_by_create_extension_is_checked_before_it_runs
 async def test_create_extension_without_event_triggers_passes(db_plan_check: DbAccess) -> None:
     """Без включённых событийных триггеров CREATE EXTENSION под plan_check проходит."""
     await db_plan_check.sql_driver.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements", readonly=False)
+
+
+# Доверие по владельцу: событийный триггер — член расширения (pg_depend, deptype 'e') доверен вместе с функцией.
+# Ни одно расширение contrib событийных триггеров не ставит — членство имитируется ALTER EXTENSION ... ADD EVENT
+# TRIGGER (так его и записал бы скрипт расширения). Событийный триггер DBA над функцией — членом расширения
+# проверяется по обычным правилам: функция secret — отказ. Функции не бросают: доверенный триггер выполняется.
+_DROP_MEMBER_EVENT_TRIGGERS = """
+DO $$BEGIN
+    ALTER EXTENSION pg_stat_statements DROP EVENT TRIGGER app_evt_member;
+EXCEPTION WHEN undefined_object OR object_not_in_prerequisite_state THEN NULL; END$$;
+DO $$BEGIN
+    ALTER EXTENSION pg_stat_statements DROP FUNCTION secret.evt_member_fn();
+EXCEPTION WHEN undefined_function OR undefined_object OR object_not_in_prerequisite_state THEN NULL; END$$;
+DROP EVENT TRIGGER IF EXISTS app_evt_member;
+DROP EVENT TRIGGER IF EXISTS app_evt_dba;
+DROP FUNCTION IF EXISTS public.app_evt_member(), secret.evt_member_fn();
+"""
+_MEMBER_EVENT_TRIGGER = """
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE FUNCTION public.app_evt_member() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN END$$;
+CREATE EVENT TRIGGER app_evt_member ON ddl_command_start WHEN TAG IN ('CREATE EXTENSION')
+    EXECUTE FUNCTION public.app_evt_member();
+ALTER EXTENSION pg_stat_statements ADD EVENT TRIGGER app_evt_member;
+"""
+_DBA_EVENT_TRIGGER_OVER_MEMBER = """
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE FUNCTION secret.evt_member_fn() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN END$$;
+ALTER EXTENSION pg_stat_statements ADD FUNCTION secret.evt_member_fn();
+CREATE EVENT TRIGGER app_evt_dba ON ddl_command_start WHEN TAG IN ('CREATE EXTENSION')
+    EXECUTE FUNCTION secret.evt_member_fn();
+"""
+
+
+@pytest.fixture(params=["member-trigger", "dba-trigger-over-member-function"])
+async def extension_event_trigger(request: pytest.FixtureRequest, db_full: DbAccess) -> AsyncGenerator[str, None]:
+    """Событийный триггер — член расширения или триггер DBA над функцией — членом расширения (в secret)."""
+    setup = _MEMBER_EVENT_TRIGGER if request.param == "member-trigger" else _DBA_EVENT_TRIGGER_OVER_MEMBER
+    await db_full.sql_driver.execute(_DROP_MEMBER_EVENT_TRIGGERS + setup, readonly=False)
+    try:
+        yield request.param
+    finally:
+        await db_full.sql_driver.execute(_DROP_MEMBER_EVENT_TRIGGERS, readonly=False)
+
+
+@pytest.mark.asyncio
+async def test_event_trigger_is_trusted_by_its_owning_extension(
+    db_plan_check: DbAccess, extension_event_trigger: str
+) -> None:
+    """Триггер — член расширения: доверен с функцией (PL/pgSQL в public), CREATE EXTENSION проходит. Триггер DBA
+    над функцией расширения в secret — отказ по схеме функции: членство функции не в счёт."""
+    sql = "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+    if extension_event_trigger == "member-trigger":
+        await db_plan_check.sql_driver.execute(sql, readonly=False)
+    else:
+        with pytest.raises(PlanAccessError, match=r"function 'secret\.evt_member_fn'"):
+            await db_plan_check.sql_driver.execute(sql, readonly=False)
