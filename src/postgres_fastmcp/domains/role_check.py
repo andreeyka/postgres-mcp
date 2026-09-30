@@ -9,6 +9,7 @@ from psycopg import (
     Error as PsycopgError,
     OperationalError,
 )
+from psycopg.errors import InsufficientPrivilege
 
 from postgres_fastmcp.postgres.catalog import (
     QUERY_ROLE_ATTRIBUTES,
@@ -117,7 +118,9 @@ async def warn_about_basic_role(catalog: QueryExecutorPort, table_prefix: str | 
     """Одна строка WARNING, если роль может больше, чем basic.
 
     БД недоступна (подключение, таймаут, отмена) — одна строка INFO, сервер стартует дальше:
-    это ожидаемо на старте и не повод шуметь. Любая другая ошибка Postgres при выполнении
+    это ожидаемо на старте и не повод шуметь. Роли закрыто чтение каталога (например,
+    REVOKE SELECT ON pg_roles FROM PUBLIC) — тоже INFO: проверять нечего, и выдавать роли
+    доступ к каталогу ради этой проверки не нужно. Любая другая ошибка Postgres при выполнении
     шаблонов каталога (например, баг в одном из них) — одна строка WARNING «failed», а не
     тихий пропуск: иначе реальная дыра в проверке выглядела бы как штатный пропуск.
     ValueError/TypeError CatalogSqlExecutor — ошибка кода, а не БД, — не перехватываются здесь
@@ -131,6 +134,8 @@ async def warn_about_basic_role(catalog: QueryExecutorPort, table_prefix: str | 
         result = await basic_role_findings(catalog, table_prefix)
     except _UNREACHABLE_ERRORS as e:
         logger.info("Basic role check skipped: %s", obfuscate_password(str(e) or type(e).__name__))
+    except InsufficientPrivilege as e:
+        logger.info("Basic role check skipped: the role cannot read the catalog (%s)", str(e).strip())
     except PsycopgError as e:
         logger.warning("Basic role check failed: %s", obfuscate_password(str(e) or type(e).__name__))
     else:

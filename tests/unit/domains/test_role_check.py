@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from psycopg import OperationalError
-from psycopg.errors import UndefinedFunction
+from psycopg.errors import InsufficientPrivilege, UndefinedFunction
 
 from postgres_fastmcp.domains.role_check import RoleFindings, basic_role_findings, warn_about_basic_role
 from postgres_fastmcp.postgres.catalog import (
@@ -191,6 +191,20 @@ async def test_database_error_skips_the_check_with_info(caplog: pytest.LogCaptur
     assert record.levelname == "INFO"
     assert record.getMessage().startswith("Basic role check skipped: ")
     assert "hunter2" not in record.getMessage()
+
+
+async def test_no_access_to_the_catalog_skips_the_check_with_info(caplog: pytest.LogCaptureFixture) -> None:
+    """Роли закрыли чтение каталога (REVOKE SELECT ON pg_roles FROM PUBLIC): проверить нечего, это не сбой."""
+    error = InsufficientPrivilege("permission denied for view pg_roles")
+
+    with caplog.at_level(logging.INFO, logger=_LOGGER):
+        await warn_about_basic_role(_FailingCatalog(error), "app_")
+
+    [record] = [r for r in caplog.records if r.name == _LOGGER]
+    assert record.levelname == "INFO"
+    assert record.getMessage() == (
+        "Basic role check skipped: the role cannot read the catalog (permission denied for view pg_roles)"
+    )
 
 
 async def test_other_database_error_fails_with_warning(caplog: pytest.LogCaptureFixture) -> None:
