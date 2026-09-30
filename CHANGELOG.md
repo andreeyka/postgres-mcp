@@ -2,6 +2,13 @@
 
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/). До 1.0 минорная версия может ломать совместимость.
 
+## [0.2.2] — 2026-09-30
+
+### Изменено
+
+- Проверка роли basic на старте, которой роль не может прочитать каталог (например, `REVOKE SELECT ON pg_roles FROM PUBLIC`), пишет `INFO … skipped: the role cannot read the catalog` вместо `WARNING … failed`: это не сбой, и выдавать роли доступ к каталогу ради проверки не нужно.
+- `serverInfo.version` MCP и баннер при старте показывают версию postgres-fastmcp, а не FastMCP.
+
 ## [0.2.1] — 2026-09-29
 
 ### Добавлено
@@ -111,6 +118,7 @@
 
 Первый релиз форка: переход на FastMCP 4; библиотечный API — `PostgresProvider`, нативный `Provider` FastMCP для подключения тулов к своему серверу; аутентификация, выбираемая конфигом без кода, — `none`, `static`, `jwt`, `oidc`; сужение прав по claim токена с настраиваемым источником; консольный скрипт переименован в `postgres-fastmcp`.
 
+[0.2.2]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andreeyka/postgres-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/andreeyka/postgres-mcp/releases/tag/v0.1.0

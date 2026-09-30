@@ -121,7 +121,7 @@ uv run postgres-fastmcp
 
 #### Готовый образ Docker
 
-Каждый релиз публикует образ `ghcr.io/andreeyka/postgres-mcp` (linux/amd64 и linux/arm64) с тегами версии (`0.2.1`), минорной версии (`0.2`) и `latest`. Образ настраивается теми же переменными окружения; сервер в нём слушает `0.0.0.0:8000` по HTTP:
+Каждый релиз публикует образ `ghcr.io/andreeyka/postgres-mcp` (linux/amd64 и linux/arm64) с тегами версии (`0.2.2`), минорной версии (`0.2`) и `latest`. Образ настраивается теми же переменными окружения; сервер в нём слушает `0.0.0.0:8000` по HTTP:
 
 ```bash
 docker run --rm -p 8000:8000 \
@@ -130,7 +130,7 @@ docker run --rm -p 8000:8000 \
   -e MCP_DATABASE_PASSWORD=password \
   -e MCP_DATABASE_NAME=dbname \
   -e MCP_DATABASE_ACCESS_MODE=basic \
-  ghcr.io/andreeyka/postgres-mcp:0.2.1
+  ghcr.io/andreeyka/postgres-mcp:0.2.2
 ```
 
 Без аутентификации (`MCP_AUTH_MODE=none`) сервер доверяет каждому, кто до него дотянется: держите его за шлюзом, который проверяет доступ, или включите аутентификацию (см. «Аутентификация»).
