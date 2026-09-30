@@ -14,6 +14,7 @@ from fastmcp.server.providers import Provider
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from postgres_fastmcp import __version__
 from postgres_fastmcp.access import AccessResolver
 from postgres_fastmcp.app.auth import build_auth_provider
 from postgres_fastmcp.app.config import Settings
@@ -210,6 +211,8 @@ def create_server(  # noqa: PLR0913
     )
     mcp = FastMCP(
         name=settings.fastmcp.server_name,
+        # Версия пакета в serverInfo и баннере; без неё FastMCP подставляет свою
+        version=__version__,
         instructions=settings.fastmcp.instructions or None,
         auth=auth,
         providers=[provider, *extra_providers],
