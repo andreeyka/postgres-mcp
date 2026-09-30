@@ -14,6 +14,7 @@ from fastmcp.server.middleware.timing import TimingMiddleware
 from fastmcp.server.providers import LocalProvider
 from fastmcp.utilities.tests import asgi_server
 
+from postgres_fastmcp import __version__
 from postgres_fastmcp.access import EffectiveAccess
 from postgres_fastmcp.app.config import Settings
 from postgres_fastmcp.app.config.auth import AuthSettings
@@ -36,6 +37,14 @@ async def test_create_server_returns_fastmcp_instance() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_server_reports_the_package_version() -> None:
+    """ServerInfo и баннер FastMCP несут версию postgres-fastmcp, а не версию FastMCP."""
+    async with Client(create_server(_settings())) as client:
+        assert client.server_info is not None
+        assert client.server_info.version == __version__
+
+
 async def test_create_server_basic_mode_hides_full_tools() -> None:
     server = create_server(_settings(access_mode=AccessMode.BASIC))
     tools = await server.list_tools()
