@@ -18,6 +18,7 @@ from mcp.types import ToolAnnotations
 from postgres_fastmcp.domains.db_access import DatabaseConfigPort
 from postgres_fastmcp.postgres.security.driver import CLIENT_TIMEOUT_GRACE_SECONDS
 from postgres_fastmcp.shared.enums import AccessMode, ToolTag
+from postgres_fastmcp.tools.database_errors import expose_database_errors
 from postgres_fastmcp.tools.definitions import ToolSet
 from postgres_fastmcp.tools.params import HEALTH_TYPE_VALUES
 
@@ -85,6 +86,7 @@ def register_tools(
         full_tool_auth: Проверка прав на full-тулах (None — без проверки).
     """
     for spec in _all_tool_specs(toolset, ceiling, full_tool_auth):
+        spec["fn"] = expose_database_errors(spec["fn"])
         provider.add_tool(Tool.from_function(**spec))
 
 

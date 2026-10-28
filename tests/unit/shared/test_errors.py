@@ -5,13 +5,16 @@ from collections.abc import Callable
 
 import pytest
 from fastmcp.exceptions import ToolError
+from psycopg.errors import DivisionByZero
 
+from postgres_fastmcp.postgres.errors import PostgresQueryError
 from postgres_fastmcp.shared import errors
 
 
 # Пример каждого подкласса UserFacingError с тестовыми аргументами.
 # Новый подкласс без записи здесь роняет test_every_user_facing_error_has_a_sample.
 _SAMPLES: dict[str, Callable[[], errors.UserFacingError]] = {
+    "PostgresQueryError": lambda: PostgresQueryError(DivisionByZero()),
     "SchemaAccessError": lambda: errors.SchemaAccessError("private"),
     "SchemaNotAllowedError": lambda: errors.SchemaNotAllowedError("private", "public"),
     "TablePrefixAccessError": lambda: errors.TablePrefixAccessError("foo", "bar_"),
