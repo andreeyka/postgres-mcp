@@ -2,6 +2,16 @@
 
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/). До 1.0 минорная версия может ломать совместимость.
 
+## [0.2.3] — 2026-10-28
+
+### Исправлено
+
+- Ошибки PostgreSQL в MCP-инструментах, включая `explain_query`, возвращают
+  SQLSTATE и основное сообщение вместо общего `Error calling tool` (#30).
+- URI, параметры подключения и распознанные учётные данные в сообщениях
+  маскируются. Дополнительная диагностика и внутренний SQL не передаются;
+  ошибки подключения и аутентификации сохраняют SQLSTATE с общим сообщением.
+
 ## [0.2.2] — 2026-09-30
 
 ### Изменено
@@ -118,6 +128,7 @@
 
 Первый релиз форка: переход на FastMCP 4; библиотечный API — `PostgresProvider`, нативный `Provider` FastMCP для подключения тулов к своему серверу; аутентификация, выбираемая конфигом без кода, — `none`, `static`, `jwt`, `oidc`; сужение прав по claim токена с настраиваемым источником; консольный скрипт переименован в `postgres-fastmcp`.
 
+[0.2.3]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/andreeyka/postgres-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/andreeyka/postgres-mcp/compare/v0.1.0...v0.2.0
